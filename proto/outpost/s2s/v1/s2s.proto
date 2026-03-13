@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package outpost.s2s.v1;
 
-option go_package = "github.com/romashqua-labs/outpost/pkg/pb/outpost/s2s/v1;s2sv1";
+option go_package = "github.com/romashqua/outpost/pkg/pb/outpost/s2s/v1;s2sv1";
 
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";

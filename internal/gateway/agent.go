@@ -10,8 +10,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 
-	"github.com/romashqua-labs/outpost/internal/config"
-	gatewayv1 "github.com/romashqua-labs/outpost/pkg/pb/outpost/gateway/v1"
+	"github.com/romashqua/outpost/internal/config"
+	gatewayv1 "github.com/romashqua/outpost/pkg/pb/outpost/gateway/v1"
 )
 
 type Agent struct {
@@ -29,16 +29,32 @@ func NewAgent(cfg *config.Config, logger *slog.Logger) (*Agent, error) {
 }
 
 func (a *Agent) Run(ctx context.Context) error {
-	if err := a.connect(ctx); err != nil {
-		return fmt.Errorf("connect to core: %w", err)
+	// Retry connection to core with backoff.
+	var cfg *gatewayv1.GatewayConfig
+	for attempt := 1; ; attempt++ {
+		if err := a.connect(ctx); err != nil {
+			a.logger.Warn("failed to connect to core, retrying",
+				"error", err, "attempt", attempt)
+		} else {
+			var err error
+			cfg, err = a.fetchConfig(ctx)
+			if err != nil {
+				a.logger.Warn("failed to fetch config, retrying",
+					"error", err, "attempt", attempt)
+				a.conn.Close()
+			} else {
+				break
+			}
+		}
+
+		delay := time.Duration(min(attempt*2, 30)) * time.Second
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(delay):
+		}
 	}
 	defer a.conn.Close()
-
-	// Get initial configuration.
-	cfg, err := a.fetchConfig(ctx)
-	if err != nil {
-		return fmt.Errorf("fetch config: %w", err)
-	}
 
 	a.logger.Info("received gateway configuration",
 		"gateway_id", cfg.GatewayId,

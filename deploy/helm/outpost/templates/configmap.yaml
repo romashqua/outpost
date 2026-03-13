@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "outpost.configmapName" . }}
+  labels:
+    {{- include "outpost.labels" . | nindent 4 }}
+data:
+  LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  OUTPOST_CORE_URL: {{ .Values.config.coreUrl | quote }}
+  OUTPOST_CORE_GRPC_URL: {{ .Values.config.coreGrpcUrl | quote }}
+  DATABASE_HOST: {{ include "outpost.databaseHost" . | quote }}
+  DATABASE_PORT: {{ include "outpost.databasePort" . | quote }}
+  DATABASE_NAME: {{ include "outpost.databaseName" . | quote }}
+  DATABASE_USER: {{ include "outpost.databaseUser" . | quote }}
+  REDIS_HOST: {{ include "outpost.redisHost" . | quote }}
+  REDIS_PORT: {{ include "outpost.redisPort" . | quote }}

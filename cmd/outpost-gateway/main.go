@@ -6,10 +6,10 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/romashqua-labs/outpost/internal/config"
-	"github.com/romashqua-labs/outpost/internal/gateway"
-	"github.com/romashqua-labs/outpost/internal/observability"
-	"github.com/romashqua-labs/outpost/pkg/version"
+	"github.com/romashqua/outpost/internal/config"
+	"github.com/romashqua/outpost/internal/gateway"
+	"github.com/romashqua/outpost/internal/observability"
+	"github.com/romashqua/outpost/pkg/version"
 )
 
 func main() {

@@ -1,0 +1,16 @@
+apiVersion: v2
+name: outpost
+description: Outpost VPN — open-source WireGuard VPN & Identity Access Management platform
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - vpn
+  - wireguard
+  - iam
+  - identity
+home: https://github.com/romashqua/outpost
+sources:
+  - https://github.com/romashqua/outpost
+maintainers:
+  - name: romashqua

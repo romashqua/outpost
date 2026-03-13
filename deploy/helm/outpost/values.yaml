@@ -1,0 +1,169 @@
+## Global settings
+nameOverride: ""
+fullnameOverride: ""
+
+imagePullSecrets: []
+
+## outpost-core — main API server
+core:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/romashqua/outpost-core
+    tag: ""  # defaults to appVersion
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    httpPort: 8080
+    grpcPort: 9090
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  env: {}
+
+## outpost-gateway — WireGuard gateway agent
+gateway:
+  enabled: true
+  image:
+    repository: ghcr.io/romashqua/outpost-gateway
+    tag: ""
+    pullPolicy: IfNotPresent
+  service:
+    type: LoadBalancer
+    port: 51820
+  resources:
+    requests:
+      cpu: 100m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  env: {}
+
+## outpost-proxy — enrollment proxy (DMZ)
+proxy:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/romashqua/outpost-proxy
+    tag: ""
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8081
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  env: {}
+
+## Shared configuration
+config:
+  logLevel: info
+  ## Base URL that clients use to reach outpost-core
+  coreUrl: "http://outpost-core:8080"
+  ## gRPC endpoint for inter-service communication
+  coreGrpcUrl: "outpost-core:9090"
+
+## Secrets
+secret:
+  ## JWT signing key — set via --set or external secret
+  jwtSecret: ""
+  ## Database password
+  databasePassword: "outpost"
+  ## Redis password (leave empty if auth is disabled)
+  redisPassword: ""
+
+## Ingress for outpost-core HTTP API and UI
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+    # kubernetes.io/ingress.class: nginx
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: outpost.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: outpost-tls
+  #    hosts:
+  #      - outpost.example.com
+
+## Built-in PostgreSQL (for standalone / dev deployments)
+postgresql:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "17"
+    pullPolicy: IfNotPresent
+  auth:
+    database: outpost
+    username: outpost
+    ## password comes from secret.databasePassword
+  storage:
+    size: 5Gi
+    storageClassName: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+## Built-in Redis
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: "7"
+    pullPolicy: IfNotPresent
+  storage:
+    size: 1Gi
+    storageClassName: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+## External database connection (used when postgresql.enabled=false)
+externalDatabase:
+  host: ""
+  port: 5432
+  database: outpost
+  username: outpost
+  ## password comes from secret.databasePassword
+
+## External Redis connection (used when redis.enabled=false)
+externalRedis:
+  host: ""
+  port: 6379

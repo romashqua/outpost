@@ -5,15 +5,24 @@
 *.dll
 *.so
 *.dylib
+outpost-core
+outpost-gateway
+outpost-proxy
+outpost-client
+outpostctl
+outpost-client-*
 
 # Test
 *.test
 *.out
 coverage.txt
 coverage.html
+*.prof
 
 # Go
 vendor/
+go.work
+go.work.sum
 
 # IDE
 .idea/
@@ -21,10 +30,12 @@ vendor/
 *.swp
 *.swo
 *~
+*.sublime-*
 
 # OS
 .DS_Store
 Thumbs.db
+Desktop.ini
 
 # Environment
 .env
@@ -34,6 +45,7 @@ Thumbs.db
 # Frontend
 web-ui/node_modules/
 web-ui/dist/
+web-ui/.vite/
 
 # Generated
 pkg/pb/**/*.go
@@ -45,3 +57,26 @@ docker-compose.override.yml
 *.pem
 *.key
 !*.key.example
+*.crt
+*.p12
+*.jks
+
+# Terraform / IaC
+.terraform/
+*.tfstate
+*.tfstate.backup
+
+# Helm
+deploy/helm/outpost/charts/
+deploy/helm/outpost/*.tgz
+
+# Claude
+CLAUDE.md
+.claude/
+
+# Logs
+*.log
+
+# Temporary
+tmp/
+.tmp/

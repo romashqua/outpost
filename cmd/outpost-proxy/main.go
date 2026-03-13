@@ -6,9 +6,10 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/romashqua-labs/outpost/internal/config"
-	"github.com/romashqua-labs/outpost/internal/observability"
-	"github.com/romashqua-labs/outpost/pkg/version"
+	"github.com/romashqua/outpost/internal/config"
+	"github.com/romashqua/outpost/internal/observability"
+	"github.com/romashqua/outpost/internal/proxy"
+	"github.com/romashqua/outpost/pkg/version"
 )
 
 func main() {
@@ -23,9 +24,11 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// Proxy implementation will be added in Phase 5.
-	_ = ctx
-	_ = cfg
+	srv := proxy.NewServer(cfg, logger)
+	if err := srv.Run(ctx); err != nil {
+		logger.Error("proxy server error", "error", err)
+		os.Exit(1)
+	}
 
 	logger.Info("outpost-proxy stopped")
 }

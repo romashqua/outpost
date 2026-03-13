@@ -13,6 +13,9 @@ type Config struct {
 	Redis     Redis
 	WireGuard WireGuard
 	Auth      Auth
+	OIDC      OIDC
+	LDAP      LDAP
+	SAML      SAML
 	Gateway   Gateway
 	Proxy     Proxy
 	Log       Log
@@ -57,6 +60,36 @@ type Auth struct {
 	JWTSecret  string
 	TokenTTL   time.Duration
 	SessionTTL time.Duration
+}
+
+// OIDC holds built-in OpenID Connect provider configuration.
+type OIDC struct {
+	Issuer     string
+	SigningKey  string // path to RSA private key PEM file
+}
+
+// LDAP holds LDAP/Active Directory sync configuration.
+type LDAP struct {
+	Enabled      bool
+	URL          string
+	BindDN       string
+	BindPassword string
+	BaseDN       string
+	UserFilter   string
+	GroupFilter  string
+	TLS          bool
+	SkipVerify   bool
+	SyncInterval time.Duration
+}
+
+// SAML holds SAML 2.0 Service Provider configuration.
+type SAML struct {
+	Enabled        bool
+	EntityID       string
+	ACSURL         string
+	IDPMetadataURL string
+	CertFile       string
+	KeyFile        string
 }
 
 // Gateway holds configuration for the gateway component.
@@ -111,6 +144,30 @@ func Load() *Config {
 			JWTSecret:  env("OUTPOST_JWT_SECRET", ""),
 			TokenTTL:   envDuration("OUTPOST_TOKEN_TTL", 15*time.Minute),
 			SessionTTL: envDuration("OUTPOST_SESSION_TTL", 24*time.Hour),
+		},
+		OIDC: OIDC{
+			Issuer:    env("OUTPOST_OIDC_ISSUER", "http://localhost:8080"),
+			SigningKey: env("OUTPOST_OIDC_SIGNING_KEY", ""),
+		},
+		LDAP: LDAP{
+			Enabled:      env("OUTPOST_LDAP_ENABLED", "false") == "true",
+			URL:          env("OUTPOST_LDAP_URL", ""),
+			BindDN:       env("OUTPOST_LDAP_BIND_DN", ""),
+			BindPassword: env("OUTPOST_LDAP_BIND_PASSWORD", ""),
+			BaseDN:       env("OUTPOST_LDAP_BASE_DN", ""),
+			UserFilter:   env("OUTPOST_LDAP_USER_FILTER", "(objectClass=person)"),
+			GroupFilter:  env("OUTPOST_LDAP_GROUP_FILTER", "(objectClass=group)"),
+			TLS:          env("OUTPOST_LDAP_TLS", "false") == "true",
+			SkipVerify:   env("OUTPOST_LDAP_SKIP_VERIFY", "false") == "true",
+			SyncInterval: envDuration("OUTPOST_LDAP_SYNC_INTERVAL", 15*time.Minute),
+		},
+		SAML: SAML{
+			Enabled:        env("OUTPOST_SAML_ENABLED", "false") == "true",
+			EntityID:       env("OUTPOST_SAML_ENTITY_ID", ""),
+			ACSURL:         env("OUTPOST_SAML_ACS_URL", ""),
+			IDPMetadataURL: env("OUTPOST_SAML_IDP_METADATA_URL", ""),
+			CertFile:       env("OUTPOST_SAML_CERT_FILE", ""),
+			KeyFile:        env("OUTPOST_SAML_KEY_FILE", ""),
 		},
 		Gateway: Gateway{
 			Token:    env("OUTPOST_GATEWAY_TOKEN", ""),

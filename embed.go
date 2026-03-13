@@ -8,3 +8,8 @@ import "embed"
 //
 //go:embed all:web-ui/dist
 var WebUI embed.FS
+
+// Migrations contains the SQL migration files.
+//
+//go:embed migrations/*.sql
+var Migrations embed.FS

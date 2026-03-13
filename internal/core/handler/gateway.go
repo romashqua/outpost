@@ -11,7 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/romashqua-labs/outpost/internal/wireguard"
+	"github.com/romashqua/outpost/internal/wireguard"
 )
 
 // GatewayHandler provides endpoints for managing WireGuard gateways.

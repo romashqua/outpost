@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/romashqua-labs/outpost/internal/auth"
+	"github.com/romashqua/outpost/internal/auth"
 )
 
 // UserHandler provides CRUD endpoints for user management.

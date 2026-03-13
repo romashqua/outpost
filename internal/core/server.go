@@ -3,9 +3,11 @@ package core
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -14,9 +16,19 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 
-	"github.com/romashqua-labs/outpost/internal/auth"
-	"github.com/romashqua-labs/outpost/internal/config"
-	"github.com/romashqua-labs/outpost/internal/core/handler"
+	outpost "github.com/romashqua/outpost"
+	"github.com/romashqua/outpost/internal/analytics"
+	"github.com/romashqua/outpost/internal/auth"
+	"github.com/romashqua/outpost/internal/auth/mfa"
+	"github.com/romashqua/outpost/internal/auth/oidc"
+	"github.com/romashqua/outpost/internal/auth/saml"
+	"github.com/romashqua/outpost/internal/auth/scim"
+	"github.com/romashqua/outpost/internal/compliance"
+	"github.com/romashqua/outpost/internal/config"
+	"github.com/romashqua/outpost/internal/core/handler"
+	"github.com/romashqua/outpost/internal/observability"
+	"github.com/romashqua/outpost/internal/session"
+	"github.com/romashqua/outpost/internal/webhook"
 )
 
 type Server struct {
@@ -103,6 +115,10 @@ func (s *Server) setupHTTPRouter() chi.Router {
 	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.Timeout(30 * time.Second))
 
+	// Audit logging middleware (logs POST/PUT/PATCH/DELETE).
+	auditLogger := observability.NewAuditLogger(s.pool)
+	r.Use(observability.AuditMiddleware(auditLogger))
+
 	// Metrics endpoint (no auth).
 	r.Handle("/metrics", promhttp.Handler())
 
@@ -110,11 +126,30 @@ func (s *Server) setupHTTPRouter() chi.Router {
 	health := handler.NewHealthHandler(s.pool)
 	r.Mount("/", health.Routes())
 
+	// OIDC provider (no auth — public endpoints for relying parties).
+	oidcProvider := oidc.NewProvider(s.pool, s.cfg.OIDC.Issuer, nil)
+	r.Mount("/oidc", oidcProvider.Routes())
+
+	// SAML 2.0 SP endpoints (no auth — IDP-initiated callbacks).
+	if s.cfg.SAML.Enabled {
+		samlSP := saml.NewServiceProvider(saml.Config{
+			EntityID:       s.cfg.SAML.EntityID,
+			ACSURL:         s.cfg.SAML.ACSURL,
+			IDPMetadataURL: s.cfg.SAML.IDPMetadataURL,
+			CertFile:       s.cfg.SAML.CertFile,
+			KeyFile:        s.cfg.SAML.KeyFile,
+		}, s.pool, s.logger)
+		r.Mount("/saml", samlSP.Routes())
+	}
+
 	// API routes.
 	r.Route("/api/v1", func(r chi.Router) {
 		// Auth endpoints (no JWT required).
 		authHandler := handler.NewAuthHandler(s.pool, s.cfg.Auth.JWTSecret)
 		r.Mount("/auth", authHandler.Routes())
+
+		// SCIM 2.0 provisioning (bearer token auth handled internally).
+		r.Mount("/scim/v2", scim.NewHandler(s.pool, s.logger).Routes())
 
 		// Protected routes.
 		r.Group(func(r chi.Router) {
@@ -124,8 +159,49 @@ func (s *Server) setupHTTPRouter() chi.Router {
 			r.Mount("/networks", handler.NewNetworkHandler(s.pool).Routes())
 			r.Mount("/devices", handler.NewDeviceHandler(s.pool).Routes())
 			r.Mount("/gateways", handler.NewGatewayHandler(s.pool).Routes())
+
+			// MFA management.
+			mfaMgr := mfa.NewManager(s.pool)
+			mfaWebauthn := mfa.NewWebAuthnStore(s.pool)
+			r.Mount("/mfa", mfa.NewHandler(mfaMgr, mfaWebauthn).Routes())
+
+			// Session management.
+			sessionStore := session.NewMemoryStore()
+			sessionMgr := session.NewManager(sessionStore, s.pool, s.cfg.Auth.SessionTTL, s.logger)
+			r.Mount("/sessions", sessionMgr.Routes())
+
+			// Audit log viewer.
+			r.Mount("/audit", observability.NewAuditHandler(s.pool).Routes())
+
+			// Webhooks.
+			r.Mount("/webhooks", webhook.NewDispatcher(s.pool, s.logger).Routes())
+
+			// Killer feature routes.
+			r.Mount("/analytics", analytics.NewHandler(s.pool).Routes())
+			r.Mount("/compliance", compliance.NewHandler(s.pool).Routes())
 		})
 	})
+
+	// Serve embedded frontend (SPA with fallback to index.html).
+	frontendFS, err := fs.Sub(outpost.WebUI, "web-ui/dist")
+	if err == nil {
+		fileServer := http.FileServer(http.FS(frontendFS))
+		r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
+			// Try to serve the exact file first.
+			path := strings.TrimPrefix(r.URL.Path, "/")
+			if path == "" {
+				path = "index.html"
+			}
+			if f, err := frontendFS.Open(path); err == nil {
+				f.Close()
+				fileServer.ServeHTTP(w, r)
+				return
+			}
+			// Fallback to index.html for SPA client-side routing.
+			r.URL.Path = "/"
+			fileServer.ServeHTTP(w, r)
+		})
+	}
 
 	return r
 }

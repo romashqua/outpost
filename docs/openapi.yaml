@@ -1,0 +1,2231 @@
+openapi: 3.1.0
+info:
+  title: Outpost VPN API
+  description: |
+    Open-source WireGuard VPN & Zero-Trust Network Access platform.
+    All features available under Apache 2.0 — no enterprise paywalls.
+  version: 1.0.0
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+  contact:
+    name: Romashqua Labs
+    url: https://github.com/romashqua/outpost
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+  - url: https://vpn.example.com
+    description: Production
+
+tags:
+  - name: Health
+    description: Liveness and readiness probes
+  - name: Auth
+    description: Authentication and session management
+  - name: OIDC
+    description: Built-in OpenID Connect provider
+  - name: MFA
+    description: Multi-factor authentication management
+  - name: SAML
+    description: SAML 2.0 Service Provider
+  - name: SCIM
+    description: SCIM 2.0 user/group provisioning (RFC 7643/7644)
+  - name: Users
+    description: User management (CRUD)
+  - name: Networks
+    description: WireGuard network management
+  - name: Devices
+    description: Device (WireGuard peer) management
+  - name: Gateways
+    description: WireGuard gateway management
+  - name: Analytics
+    description: Traffic analytics and bandwidth monitoring
+  - name: Compliance
+    description: Automated compliance checks (SOC2, ISO27001, GDPR)
+
+paths:
+  # ── Health ──────────────────────────────────────────────────────────
+  /healthz:
+    get:
+      operationId: healthz
+      summary: Liveness probe
+      tags: [Health]
+      security: []
+      responses:
+        "200":
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusOK"
+
+  /readyz:
+    get:
+      operationId: readyz
+      summary: Readiness probe (checks DB connectivity)
+      tags: [Health]
+      security: []
+      responses:
+        "200":
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusOK"
+        "503":
+          description: Database unreachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /metrics:
+    get:
+      operationId: metrics
+      summary: Prometheus metrics
+      tags: [Health]
+      security: []
+      responses:
+        "200":
+          description: Prometheus text exposition format
+
+  # ── Auth ────────────────────────────────────────────────────────────
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      summary: Authenticate and obtain JWT token
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Authentication successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
+          description: Missing credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Account disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      summary: Logout (client-side token discard)
+      tags: [Auth]
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusOK"
+
+  # ── OIDC ────────────────────────────────────────────────────────────
+  /oidc/.well-known/openid-configuration:
+    get:
+      operationId: oidcDiscovery
+      summary: OpenID Connect Discovery document
+      tags: [OIDC]
+      security: []
+      responses:
+        "200":
+          description: OIDC discovery metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OIDCDiscovery"
+
+  /oidc/authorize:
+    get:
+      operationId: oidcAuthorize
+      summary: Authorization endpoint (Authorization Code + PKCE)
+      tags: [OIDC]
+      security: []
+      parameters:
+        - name: client_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: redirect_uri
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uri
+        - name: response_type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [code]
+        - name: scope
+          in: query
+          schema:
+            type: string
+            example: openid profile email
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: nonce
+          in: query
+          schema:
+            type: string
+        - name: code_challenge
+          in: query
+          description: PKCE code challenge (S256)
+          schema:
+            type: string
+        - name: code_challenge_method
+          in: query
+          schema:
+            type: string
+            enum: [S256]
+      responses:
+        "302":
+          description: Redirects to redirect_uri with authorization code
+        "400":
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /oidc/token:
+    post:
+      operationId: oidcToken
+      summary: Token endpoint (exchange code for tokens)
+      tags: [OIDC]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [grant_type, code, redirect_uri, client_id]
+              properties:
+                grant_type:
+                  type: string
+                  enum: [authorization_code]
+                code:
+                  type: string
+                redirect_uri:
+                  type: string
+                  format: uri
+                client_id:
+                  type: string
+                client_secret:
+                  type: string
+                  description: Required for confidential clients
+                code_verifier:
+                  type: string
+                  description: PKCE code verifier
+      responses:
+        "200":
+          description: Token response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OIDCTokenResponse"
+        "400":
+          description: Invalid grant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OIDCError"
+
+  /oidc/userinfo:
+    get:
+      operationId: oidcUserinfo
+      summary: UserInfo endpoint
+      tags: [OIDC]
+      responses:
+        "200":
+          description: User claims
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OIDCUserInfo"
+        "401":
+          description: Invalid or missing token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /oidc/jwks:
+    get:
+      operationId: oidcJWKS
+      summary: JSON Web Key Set (public signing keys)
+      tags: [OIDC]
+      security: []
+      responses:
+        "200":
+          description: JWKS document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JWKS"
+
+  # ── MFA ─────────────────────────────────────────────────────────────
+  /api/v1/mfa/status:
+    get:
+      operationId: getMFAStatus
+      summary: Get MFA status for authenticated user
+      tags: [MFA]
+      responses:
+        "200":
+          description: MFA status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MFAStatus"
+
+  /api/v1/mfa/totp/setup:
+    post:
+      operationId: setupTOTP
+      summary: Begin TOTP setup (returns secret + QR URL)
+      tags: [MFA]
+      responses:
+        "200":
+          description: TOTP setup data
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [secret, qr_url]
+                properties:
+                  secret:
+                    type: string
+                  qr_url:
+                    type: string
+                    format: uri
+
+  /api/v1/mfa/totp/verify:
+    post:
+      operationId: verifyTOTP
+      summary: Verify TOTP code (activates TOTP on first success)
+      tags: [MFA]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  pattern: "^[0-9]{6}$"
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [valid]
+                properties:
+                  valid:
+                    type: boolean
+
+  /api/v1/mfa/totp:
+    delete:
+      operationId: disableTOTP
+      summary: Disable TOTP for authenticated user
+      tags: [MFA]
+      responses:
+        "200":
+          description: TOTP disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusOK"
+
+  /api/v1/mfa/backup-codes:
+    post:
+      operationId: generateBackupCodes
+      summary: Generate new set of 10 backup codes
+      tags: [MFA]
+      responses:
+        "200":
+          description: Backup codes (store securely — shown only once)
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [codes]
+                properties:
+                  codes:
+                    type: array
+                    items:
+                      type: string
+                    example: ["A1B2C3D4", "E5F6G7H8"]
+
+  /api/v1/mfa/backup-codes/verify:
+    post:
+      operationId: verifyBackupCode
+      summary: Verify and consume a backup code (single-use)
+      tags: [MFA]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code:
+                  type: string
+      responses:
+        "200":
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [valid]
+                properties:
+                  valid:
+                    type: boolean
+
+  /api/v1/mfa/webauthn/credentials:
+    get:
+      operationId: listWebAuthnCredentials
+      summary: List registered WebAuthn credentials
+      tags: [MFA]
+      responses:
+        "200":
+          description: Credential list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WebAuthnCredential"
+
+    post:
+      operationId: registerWebAuthnCredential
+      summary: Register a new WebAuthn credential
+      tags: [MFA]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [credential_id, public_key, name]
+              properties:
+                credential_id:
+                  type: string
+                  format: byte
+                public_key:
+                  type: string
+                  format: byte
+                name:
+                  type: string
+                  example: YubiKey 5
+      responses:
+        "201":
+          description: Credential registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusOK"
+
+  /api/v1/mfa/webauthn/credentials/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+    delete:
+      operationId: deleteWebAuthnCredential
+      summary: Delete a WebAuthn credential
+      tags: [MFA]
+      responses:
+        "200":
+          description: Credential deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusOK"
+        "404":
+          description: Credential not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── SAML ────────────────────────────────────────────────────────────
+  /saml/metadata:
+    get:
+      operationId: samlMetadata
+      summary: SP metadata XML
+      tags: [SAML]
+      security: []
+      responses:
+        "200":
+          description: SAML SP metadata
+          content:
+            application/xml:
+              schema:
+                type: string
+
+  /saml/login:
+    get:
+      operationId: samlLogin
+      summary: Initiate SAML login (redirects to IDP)
+      tags: [SAML]
+      security: []
+      responses:
+        "302":
+          description: Redirect to Identity Provider
+
+  /saml/acs:
+    post:
+      operationId: samlACS
+      summary: Assertion Consumer Service (processes SAML response)
+      tags: [SAML]
+      security: []
+      requestBody:
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                SAMLResponse:
+                  type: string
+                RelayState:
+                  type: string
+      responses:
+        "302":
+          description: Redirect to application after successful SSO
+        "400":
+          description: Invalid SAML response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /saml/logout:
+    get:
+      operationId: samlLogout
+      summary: SAML Single Logout
+      tags: [SAML]
+      security: []
+      responses:
+        "302":
+          description: Redirect to IDP for logout
+
+  # ── SCIM ────────────────────────────────────────────────────────────
+  /api/v1/scim/v2/ServiceProviderConfig:
+    get:
+      operationId: scimConfig
+      summary: SCIM Service Provider configuration
+      tags: [SCIM]
+      security: []
+      responses:
+        "200":
+          description: SCIM configuration
+          content:
+            application/scim+json:
+              schema:
+                type: object
+
+  /api/v1/scim/v2/Schemas:
+    get:
+      operationId: scimSchemas
+      summary: SCIM schemas
+      tags: [SCIM]
+      security: []
+      responses:
+        "200":
+          description: Supported SCIM schemas
+          content:
+            application/scim+json:
+              schema:
+                type: object
+
+  /api/v1/scim/v2/Users:
+    get:
+      operationId: scimListUsers
+      summary: List users (SCIM format)
+      tags: [SCIM]
+      parameters:
+        - name: startIndex
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: count
+          in: query
+          schema:
+            type: integer
+            default: 100
+        - name: filter
+          in: query
+          description: "SCIM filter (e.g. userName eq \"john\")"
+          schema:
+            type: string
+      responses:
+        "200":
+          description: SCIM user list
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMListResponse"
+
+    post:
+      operationId: scimCreateUser
+      summary: Create user via SCIM
+      tags: [SCIM]
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: "#/components/schemas/SCIMUser"
+      responses:
+        "201":
+          description: User created
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMUser"
+        "409":
+          description: User already exists
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMError"
+
+  /api/v1/scim/v2/Users/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+
+    get:
+      operationId: scimGetUser
+      summary: Get user via SCIM
+      tags: [SCIM]
+      responses:
+        "200":
+          description: SCIM user
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMUser"
+        "404":
+          description: User not found
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMError"
+
+    put:
+      operationId: scimReplaceUser
+      summary: Replace user via SCIM
+      tags: [SCIM]
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: "#/components/schemas/SCIMUser"
+      responses:
+        "200":
+          description: User replaced
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMUser"
+
+    patch:
+      operationId: scimUpdateUser
+      summary: Patch user via SCIM
+      tags: [SCIM]
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              type: object
+              properties:
+                schemas:
+                  type: array
+                  items:
+                    type: string
+                Operations:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      op:
+                        type: string
+                        enum: [add, replace, remove]
+                      path:
+                        type: string
+                      value: {}
+      responses:
+        "200":
+          description: User updated
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMUser"
+
+    delete:
+      operationId: scimDeleteUser
+      summary: Deactivate user via SCIM
+      tags: [SCIM]
+      responses:
+        "204":
+          description: User deactivated
+
+  /api/v1/scim/v2/Groups:
+    get:
+      operationId: scimListGroups
+      summary: List groups (SCIM format)
+      tags: [SCIM]
+      parameters:
+        - name: startIndex
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: count
+          in: query
+          schema:
+            type: integer
+            default: 100
+      responses:
+        "200":
+          description: SCIM group list
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMListResponse"
+
+    post:
+      operationId: scimCreateGroup
+      summary: Create group via SCIM
+      tags: [SCIM]
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: "#/components/schemas/SCIMGroup"
+      responses:
+        "201":
+          description: Group created
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMGroup"
+
+  /api/v1/scim/v2/Groups/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+
+    get:
+      operationId: scimGetGroup
+      summary: Get group via SCIM
+      tags: [SCIM]
+      responses:
+        "200":
+          description: SCIM group
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMGroup"
+
+    put:
+      operationId: scimReplaceGroup
+      summary: Replace group via SCIM
+      tags: [SCIM]
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              $ref: "#/components/schemas/SCIMGroup"
+      responses:
+        "200":
+          description: Group replaced
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMGroup"
+
+    patch:
+      operationId: scimUpdateGroup
+      summary: Patch group via SCIM
+      tags: [SCIM]
+      requestBody:
+        required: true
+        content:
+          application/scim+json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Group updated
+          content:
+            application/scim+json:
+              schema:
+                $ref: "#/components/schemas/SCIMGroup"
+
+    delete:
+      operationId: scimDeleteGroup
+      summary: Delete group via SCIM
+      tags: [SCIM]
+      responses:
+        "204":
+          description: Group deleted
+
+  # ── Users ───────────────────────────────────────────────────────────
+  /api/v1/users:
+    get:
+      operationId: listUsers
+      summary: List all users
+      tags: [Users]
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          description: Paginated user list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserListResponse"
+
+    post:
+      operationId: createUser
+      summary: Create a new user
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: User already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/users/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+
+    get:
+      operationId: getUser
+      summary: Get user by ID
+      tags: [Users]
+      responses:
+        "200":
+          description: User found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    put:
+      operationId: updateUser
+      summary: Update a user
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    delete:
+      operationId: deleteUser
+      summary: Deactivate a user (soft delete)
+      tags: [Users]
+      responses:
+        "200":
+          description: User deactivated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: deactivated
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Networks ────────────────────────────────────────────────────────
+  /api/v1/networks:
+    get:
+      operationId: listNetworks
+      summary: List all VPN networks
+      tags: [Networks]
+      responses:
+        "200":
+          description: Network list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Network"
+
+    post:
+      operationId: createNetwork
+      summary: Create a new VPN network
+      tags: [Networks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateNetworkRequest"
+      responses:
+        "201":
+          description: Network created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Network"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Network already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/networks/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+
+    get:
+      operationId: getNetwork
+      summary: Get network by ID
+      tags: [Networks]
+      responses:
+        "200":
+          description: Network found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Network"
+        "404":
+          description: Network not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    put:
+      operationId: updateNetwork
+      summary: Update a network
+      tags: [Networks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateNetworkRequest"
+      responses:
+        "200":
+          description: Network updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Network"
+        "404":
+          description: Network not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    delete:
+      operationId: deleteNetwork
+      summary: Delete a network
+      tags: [Networks]
+      responses:
+        "204":
+          description: Network deleted
+        "404":
+          description: Network not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Devices ─────────────────────────────────────────────────────────
+  /api/v1/devices:
+    get:
+      operationId: listDevices
+      summary: List all devices
+      tags: [Devices]
+      responses:
+        "200":
+          description: Device list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Device"
+
+    post:
+      operationId: createDevice
+      summary: Register a new device
+      tags: [Devices]
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDeviceRequest"
+      responses:
+        "201":
+          description: Device registered (IP auto-assigned)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Device"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Device already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/devices/my:
+    get:
+      operationId: listMyDevices
+      summary: List devices for the authenticated user
+      tags: [Devices]
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: User's device list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Device"
+        "400":
+          description: Missing user_id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/devices/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+
+    get:
+      operationId: getDevice
+      summary: Get device by ID
+      tags: [Devices]
+      responses:
+        "200":
+          description: Device found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Device"
+        "404":
+          description: Device not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    delete:
+      operationId: deleteDevice
+      summary: Delete a device
+      tags: [Devices]
+      responses:
+        "204":
+          description: Device deleted
+        "404":
+          description: Device not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/devices/{id}/approve:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+    post:
+      operationId: approveDevice
+      summary: Approve device for VPN access
+      tags: [Devices]
+      responses:
+        "200":
+          description: Device approved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: approved
+        "404":
+          description: Device not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/devices/{id}/revoke:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+    post:
+      operationId: revokeDevice
+      summary: Revoke device VPN access
+      tags: [Devices]
+      responses:
+        "200":
+          description: Device revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: revoked
+        "404":
+          description: Device not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Gateways ────────────────────────────────────────────────────────
+  /api/v1/gateways:
+    get:
+      operationId: listGateways
+      summary: List all WireGuard gateways
+      tags: [Gateways]
+      responses:
+        "200":
+          description: Gateway list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Gateway"
+
+    post:
+      operationId: createGateway
+      summary: Create a new gateway (auto-generates WG keypair)
+      tags: [Gateways]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateGatewayRequest"
+      responses:
+        "201":
+          description: Gateway created with credentials (token & private_key returned only once)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GatewayWithCredentials"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/gateways/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+
+    get:
+      operationId: getGateway
+      summary: Get gateway by ID
+      tags: [Gateways]
+      responses:
+        "200":
+          description: Gateway found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Gateway"
+        "404":
+          description: Gateway not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+    delete:
+      operationId: deleteGateway
+      summary: Delete a gateway
+      tags: [Gateways]
+      responses:
+        "204":
+          description: Gateway deleted
+        "404":
+          description: Gateway not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Analytics ───────────────────────────────────────────────────────
+  /api/v1/analytics/bandwidth:
+    get:
+      operationId: getBandwidth
+      summary: Bandwidth usage over time
+      tags: [Analytics]
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: bucket
+          in: query
+          description: "Aggregation bucket size (Go duration, e.g. `1h`, `15m`)"
+          schema:
+            type: string
+            default: "1h"
+            example: "1h"
+      responses:
+        "200":
+          description: Bandwidth time series
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BandwidthBucket"
+        "400":
+          description: Invalid time range or bucket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/analytics/top-users:
+    get:
+      operationId: getTopUsers
+      summary: Top users by traffic volume
+      tags: [Analytics]
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+        - name: limit
+          in: query
+          description: Number of users to return
+          schema:
+            type: integer
+            default: 10
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Top users ranked by traffic
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UserBandwidth"
+        "400":
+          description: Invalid time range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/analytics/connections-heatmap:
+    get:
+      operationId: getConnectionsHeatmap
+      summary: Connection count by hour of day
+      tags: [Analytics]
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+      responses:
+        "200":
+          description: Hourly connection counts (0-23)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HourlyConnections"
+        "400":
+          description: Invalid time range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/analytics/summary:
+    get:
+      operationId: getAnalyticsSummary
+      summary: Dashboard summary statistics
+      tags: [Analytics]
+      parameters:
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+      responses:
+        "200":
+          description: Aggregate traffic statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalyticsSummary"
+        "400":
+          description: Invalid time range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Compliance ──────────────────────────────────────────────────────
+  /api/v1/compliance/report:
+    get:
+      operationId: getComplianceReport
+      summary: Full compliance report (all frameworks)
+      tags: [Compliance]
+      responses:
+        "200":
+          description: Compliance report with overall score
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ComplianceReport"
+        "500":
+          description: Check execution failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/compliance/soc2:
+    get:
+      operationId: getSOC2Checks
+      summary: SOC2 compliance checks
+      tags: [Compliance]
+      responses:
+        "200":
+          description: SOC2 check results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ComplianceCheck"
+        "500":
+          description: Check execution failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/compliance/iso27001:
+    get:
+      operationId: getISO27001Checks
+      summary: ISO 27001 compliance checks
+      tags: [Compliance]
+      responses:
+        "200":
+          description: ISO 27001 check results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ComplianceCheck"
+        "500":
+          description: Check execution failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/compliance/gdpr:
+    get:
+      operationId: getGDPRChecks
+      summary: GDPR compliance checks
+      tags: [Compliance]
+      responses:
+        "200":
+          description: GDPR check results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ComplianceCheck"
+        "500":
+          description: Check execution failed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+# ══════════════════════════════════════════════════════════════════════
+# Components
+# ══════════════════════════════════════════════════════════════════════
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained via POST /api/v1/auth/login
+
+  parameters:
+    ResourceID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+    Page:
+      name: page
+      in: query
+      description: Page number (1-based)
+      schema:
+        type: integer
+        default: 1
+        minimum: 1
+
+    PerPage:
+      name: per_page
+      in: query
+      description: Items per page
+      schema:
+        type: integer
+        default: 50
+        minimum: 1
+        maximum: 100
+
+    From:
+      name: from
+      in: query
+      description: "Start of time range (RFC 3339). Defaults to 24h ago."
+      schema:
+        type: string
+        format: date-time
+        example: "2026-03-12T00:00:00Z"
+
+    To:
+      name: to
+      in: query
+      description: "End of time range (RFC 3339). Defaults to now."
+      schema:
+        type: string
+        format: date-time
+        example: "2026-03-13T00:00:00Z"
+
+  schemas:
+    # ── Common ──────────────────────────────────────────────────────
+    StatusOK:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          example: ok
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: something went wrong
+
+    # ── Auth ────────────────────────────────────────────────────────
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          example: admin
+        password:
+          type: string
+          format: password
+          minLength: 1
+          example: secret123
+
+    LoginResponse:
+      type: object
+      required: [token, expires_at]
+      properties:
+        token:
+          type: string
+          description: JWT bearer token
+        expires_at:
+          type: integer
+          format: int64
+          description: Unix timestamp when the token expires
+
+    # ── Users ───────────────────────────────────────────────────────
+    User:
+      type: object
+      required: [id, username, email, is_active, is_admin, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        first_name:
+          type: string
+        last_name:
+          type: string
+        phone:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+        is_admin:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    UserListResponse:
+      type: object
+      required: [data, page, per_page]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/User"
+        page:
+          type: integer
+        per_page:
+          type: integer
+
+    CreateUserRequest:
+      type: object
+      required: [username, email, password]
+      properties:
+        username:
+          type: string
+          minLength: 1
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+          minLength: 8
+        first_name:
+          type: string
+        last_name:
+          type: string
+        is_admin:
+          type: boolean
+          default: false
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        first_name:
+          type: string
+        last_name:
+          type: string
+        phone:
+          type: string
+        is_active:
+          type: boolean
+        is_admin:
+          type: boolean
+
+    # ── Networks ────────────────────────────────────────────────────
+    Network:
+      type: object
+      required: [id, name, address, port, keepalive, is_active, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        address:
+          type: string
+          description: CIDR notation
+          example: 10.10.0.0/24
+        dns:
+          type: array
+          items:
+            type: string
+          example: ["1.1.1.1", "8.8.8.8"]
+        port:
+          type: integer
+          example: 51820
+        keepalive:
+          type: integer
+          description: PersistentKeepalive interval in seconds
+          example: 25
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateNetworkRequest:
+      type: object
+      required: [name, address]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        address:
+          type: string
+          description: CIDR notation
+          example: 10.10.0.0/24
+        dns:
+          type: array
+          items:
+            type: string
+        port:
+          type: integer
+          default: 51820
+        keepalive:
+          type: integer
+          default: 25
+
+    UpdateNetworkRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        address:
+          type: string
+        dns:
+          type: array
+          items:
+            type: string
+        port:
+          type: integer
+        keepalive:
+          type: integer
+        is_active:
+          type: boolean
+
+    # ── Devices ─────────────────────────────────────────────────────
+    Device:
+      type: object
+      required: [id, user_id, name, wireguard_pubkey, is_approved, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        wireguard_pubkey:
+          type: string
+          description: WireGuard public key (base64)
+        assigned_ip:
+          type: string
+          description: Auto-assigned VPN IP address
+          example: 10.10.0.2
+        is_approved:
+          type: boolean
+        last_handshake:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateDeviceRequest:
+      type: object
+      required: [name, wireguard_pubkey]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          example: MacBook Pro
+        wireguard_pubkey:
+          type: string
+          description: WireGuard public key (base64)
+
+    # ── Gateways ────────────────────────────────────────────────────
+    Gateway:
+      type: object
+      required: [id, network_id, name, wireguard_pubkey, endpoint, is_active, priority, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        network_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        wireguard_pubkey:
+          type: string
+          description: WireGuard public key (base64)
+        endpoint:
+          type: string
+          description: "host:port for WireGuard"
+          example: vpn.example.com:51820
+        is_active:
+          type: boolean
+        priority:
+          type: integer
+          description: Failover priority (lower = preferred)
+        last_seen:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    GatewayWithCredentials:
+      description: Returned only on gateway creation — credentials are never retrievable again
+      allOf:
+        - $ref: "#/components/schemas/Gateway"
+        - type: object
+          required: [token, private_key]
+          properties:
+            token:
+              type: string
+              description: Authentication token for the gateway agent
+            private_key:
+              type: string
+              description: WireGuard private key (base64) — store securely
+
+    CreateGatewayRequest:
+      type: object
+      required: [name, network_id, endpoint]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        network_id:
+          type: string
+          format: uuid
+        endpoint:
+          type: string
+          description: "host:port for WireGuard"
+          example: gw1.example.com:51820
+
+    # ── Analytics ───────────────────────────────────────────────────
+    BandwidthBucket:
+      type: object
+      required: [timestamp, bytes_sent, bytes_recv]
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        bytes_sent:
+          type: integer
+          format: int64
+        bytes_recv:
+          type: integer
+          format: int64
+
+    UserBandwidth:
+      type: object
+      required: [user_id, bytes_sent, bytes_recv, total]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        bytes_sent:
+          type: integer
+          format: int64
+        bytes_recv:
+          type: integer
+          format: int64
+        total:
+          type: integer
+          format: int64
+
+    HourlyConnections:
+      type: object
+      required: [hour, count]
+      properties:
+        hour:
+          type: integer
+          description: Hour of day (0-23)
+          minimum: 0
+          maximum: 23
+        count:
+          type: integer
+
+    AnalyticsSummary:
+      type: object
+      required: [total_bytes_sent, total_bytes_recv, total_flows, unique_users, unique_devices]
+      properties:
+        total_bytes_sent:
+          type: integer
+          format: int64
+        total_bytes_recv:
+          type: integer
+          format: int64
+        total_flows:
+          type: integer
+        unique_users:
+          type: integer
+        unique_devices:
+          type: integer
+
+    # ── Compliance ──────────────────────────────────────────────────
+    ComplianceReport:
+      type: object
+      required:
+        - overall_score
+        - mfa_adoption
+        - encryption_rate
+        - posture_rate
+        - audit_log_enabled
+        - password_policy
+        - session_timeout
+        - checks
+      properties:
+        overall_score:
+          type: integer
+          description: Weighted compliance score (0-100)
+          minimum: 0
+          maximum: 100
+        mfa_adoption:
+          type: number
+          format: double
+          description: Percentage of users with MFA enabled
+        encryption_rate:
+          type: number
+          format: double
+          description: Percentage of devices with disk encryption
+        posture_rate:
+          type: number
+          format: double
+          description: Percentage of devices passing posture checks
+        audit_log_enabled:
+          type: boolean
+        password_policy:
+          type: boolean
+        session_timeout:
+          type: boolean
+        checks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ComplianceCheck"
+
+    ComplianceCheck:
+      type: object
+      required: [id, category, name, description, status, details]
+      properties:
+        id:
+          type: string
+          example: soc2-mfa
+        category:
+          type: string
+          enum: [SOC2, ISO27001, GDPR]
+        name:
+          type: string
+          example: Multi-Factor Authentication
+        description:
+          type: string
+        status:
+          type: string
+          enum: [pass, fail, warning]
+        details:
+          type: string
+
+    # ── OIDC ────────────────────────────────────────────────────────
+    OIDCDiscovery:
+      type: object
+      properties:
+        issuer:
+          type: string
+          format: uri
+        authorization_endpoint:
+          type: string
+          format: uri
+        token_endpoint:
+          type: string
+          format: uri
+        userinfo_endpoint:
+          type: string
+          format: uri
+        jwks_uri:
+          type: string
+          format: uri
+        scopes_supported:
+          type: array
+          items:
+            type: string
+        response_types_supported:
+          type: array
+          items:
+            type: string
+        grant_types_supported:
+          type: array
+          items:
+            type: string
+        id_token_signing_alg_values_supported:
+          type: array
+          items:
+            type: string
+        subject_types_supported:
+          type: array
+          items:
+            type: string
+        code_challenge_methods_supported:
+          type: array
+          items:
+            type: string
+
+    OIDCTokenResponse:
+      type: object
+      required: [access_token, token_type, expires_in, id_token]
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          example: Bearer
+        expires_in:
+          type: integer
+          example: 3600
+        id_token:
+          type: string
+          description: RS256-signed JWT with user claims
+
+    OIDCError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [invalid_request, invalid_client, invalid_grant, unauthorized_client, unsupported_grant_type]
+        error_description:
+          type: string
+
+    OIDCUserInfo:
+      type: object
+      properties:
+        sub:
+          type: string
+          format: uuid
+        name:
+          type: string
+        preferred_username:
+          type: string
+        email:
+          type: string
+          format: email
+        email_verified:
+          type: boolean
+        groups:
+          type: array
+          items:
+            type: string
+
+    JWKS:
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items:
+            type: object
+            properties:
+              kty:
+                type: string
+                example: RSA
+              kid:
+                type: string
+              alg:
+                type: string
+                example: RS256
+              use:
+                type: string
+                example: sig
+              n:
+                type: string
+                description: RSA modulus (base64url)
+              e:
+                type: string
+                description: RSA exponent (base64url)
+
+    # ── MFA ─────────────────────────────────────────────────────────
+    MFAStatus:
+      type: object
+      required: [totp_enabled, webauthn_enabled, backup_codes_remaining, mfa_enabled]
+      properties:
+        totp_enabled:
+          type: boolean
+        totp_verified:
+          type: boolean
+        webauthn_enabled:
+          type: boolean
+        webauthn_credentials:
+          type: integer
+          description: Number of registered WebAuthn credentials
+        backup_codes_remaining:
+          type: integer
+        mfa_enabled:
+          type: boolean
+          description: Whether MFA is globally enabled for this user
+
+    WebAuthnCredential:
+      type: object
+      required: [id, name, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: YubiKey 5
+        sign_count:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+
+    # ── SCIM ────────────────────────────────────────────────────────
+    SCIMListResponse:
+      type: object
+      required: [schemas, totalResults, Resources]
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+          example: ["urn:ietf:params:scim:api:messages:2.0:ListResponse"]
+        totalResults:
+          type: integer
+        startIndex:
+          type: integer
+        itemsPerPage:
+          type: integer
+        Resources:
+          type: array
+          items:
+            type: object
+
+    SCIMUser:
+      type: object
+      required: [schemas, userName]
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+          example: ["urn:ietf:params:scim:schemas:core:2.0:User"]
+        id:
+          type: string
+          format: uuid
+        externalId:
+          type: string
+        userName:
+          type: string
+        name:
+          type: object
+          properties:
+            givenName:
+              type: string
+            familyName:
+              type: string
+        emails:
+          type: array
+          items:
+            type: object
+            properties:
+              value:
+                type: string
+                format: email
+              primary:
+                type: boolean
+        active:
+          type: boolean
+        meta:
+          type: object
+          properties:
+            resourceType:
+              type: string
+              example: User
+            created:
+              type: string
+              format: date-time
+            lastModified:
+              type: string
+              format: date-time
+
+    SCIMGroup:
+      type: object
+      required: [schemas, displayName]
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+          example: ["urn:ietf:params:scim:schemas:core:2.0:Group"]
+        id:
+          type: string
+          format: uuid
+        displayName:
+          type: string
+        members:
+          type: array
+          items:
+            type: object
+            properties:
+              value:
+                type: string
+                format: uuid
+              display:
+                type: string
+        meta:
+          type: object
+          properties:
+            resourceType:
+              type: string
+              example: Group
+            created:
+              type: string
+              format: date-time
+
+    SCIMError:
+      type: object
+      required: [schemas, status, detail]
+      properties:
+        schemas:
+          type: array
+          items:
+            type: string
+          example: ["urn:ietf:params:scim:api:messages:2.0:Error"]
+        status:
+          type: string
+          example: "409"
+        detail:
+          type: string
+
+security:
+  - BearerAuth: []

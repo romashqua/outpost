@@ -1,0 +1,804 @@
+// Package scim implements SCIM 2.0 provisioning endpoints (RFC 7643/7644)
+// for Outpost VPN. These endpoints allow identity providers like Okta and
+// Azure AD to automatically provision and de-provision users and groups.
+package scim
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/romashqua/outpost/internal/auth"
+)
+
+const (
+	// SCIM media type per RFC 7644 section 3.1.
+	scimMediaType = "application/scim+json"
+
+	// SCIM schema URIs.
+	schemaUser              = "urn:ietf:params:scim:schemas:core:2.0:User"
+	schemaGroup             = "urn:ietf:params:scim:schemas:core:2.0:Group"
+	schemaListResponse      = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
+	schemaError             = "urn:ietf:params:scim:api:messages:2.0:Error"
+	schemaPatchOp           = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
+	schemaServiceProviderCfg = "urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"
+	schemaSchema            = "urn:ietf:params:scim:schemas:core:2.0:Schema"
+
+	defaultCount = 100
+)
+
+// Handler provides SCIM 2.0 provisioning endpoints.
+type Handler struct {
+	pool   *pgxpool.Pool
+	logger *slog.Logger
+}
+
+// NewHandler creates a new SCIM handler.
+func NewHandler(pool *pgxpool.Pool, logger *slog.Logger) *Handler {
+	return &Handler{pool: pool, logger: logger}
+}
+
+// Routes returns a chi.Router with all SCIM 2.0 endpoints mounted.
+func (h *Handler) Routes() chi.Router {
+	r := chi.NewRouter()
+
+	// User endpoints.
+	r.Get("/Users", h.listUsers)
+	r.Post("/Users", h.createUser)
+	r.Route("/Users/{id}", func(r chi.Router) {
+		r.Get("/", h.getUser)
+		r.Put("/", h.replaceUser)
+		r.Patch("/", h.patchUser)
+		r.Delete("/", h.deleteUser)
+	})
+
+	// Group endpoints.
+	r.Get("/Groups", h.listGroups)
+	r.Post("/Groups", h.createGroup)
+	r.Route("/Groups/{id}", func(r chi.Router) {
+		r.Get("/", h.getGroup)
+		r.Put("/", h.replaceGroup)
+		r.Patch("/", h.patchGroup)
+		r.Delete("/", h.deleteGroup)
+	})
+
+	// Discovery endpoints.
+	r.Get("/ServiceProviderConfig", h.serviceProviderConfig)
+	r.Get("/Schemas", h.schemas)
+
+	return r
+}
+
+// --- SCIM Resource Types ---
+
+// SCIMUser represents a SCIM 2.0 User resource (RFC 7643 section 4.1).
+type SCIMUser struct {
+	Schemas    []string    `json:"schemas"`
+	ID         string      `json:"id"`
+	ExternalID string      `json:"externalId,omitempty"`
+	UserName   string      `json:"userName"`
+	Name       *SCIMName   `json:"name,omitempty"`
+	Emails     []SCIMEmail `json:"emails,omitempty"`
+	Active     bool        `json:"active"`
+	Meta       SCIMMeta    `json:"meta"`
+}
+
+// SCIMName represents a user's name components.
+type SCIMName struct {
+	GivenName  string `json:"givenName,omitempty"`
+	FamilyName string `json:"familyName,omitempty"`
+	Formatted  string `json:"formatted,omitempty"`
+}
+
+// SCIMEmail represents an email address entry.
+type SCIMEmail struct {
+	Value   string `json:"value"`
+	Type    string `json:"type,omitempty"`
+	Primary bool   `json:"primary,omitempty"`
+}
+
+// SCIMMeta holds resource metadata per RFC 7643 section 3.1.
+type SCIMMeta struct {
+	ResourceType string `json:"resourceType"`
+	Created      string `json:"created,omitempty"`
+	LastModified string `json:"lastModified,omitempty"`
+	Location     string `json:"location,omitempty"`
+}
+
+// SCIMGroup represents a SCIM 2.0 Group resource.
+type SCIMGroup struct {
+	Schemas []string     `json:"schemas"`
+	ID      string       `json:"id"`
+	Name    string       `json:"displayName"`
+	Members []SCIMMember `json:"members,omitempty"`
+	Meta    SCIMMeta     `json:"meta"`
+}
+
+// SCIMMember represents a group member reference.
+type SCIMMember struct {
+	Value   string `json:"value"`
+	Display string `json:"display,omitempty"`
+	Ref     string `json:"$ref,omitempty"`
+}
+
+// SCIMListResponse wraps a list of SCIM resources (RFC 7644 section 3.4.2).
+type SCIMListResponse struct {
+	Schemas      []string `json:"schemas"`
+	TotalResults int      `json:"totalResults"`
+	StartIndex   int      `json:"startIndex"`
+	ItemsPerPage int      `json:"itemsPerPage"`
+	Resources    any      `json:"Resources"`
+}
+
+// SCIMError represents a SCIM error response (RFC 7644 section 3.12).
+type SCIMError struct {
+	Schemas []string `json:"schemas"`
+	Detail  string   `json:"detail"`
+	Status  string   `json:"status"`
+}
+
+// SCIMPatchOp represents a SCIM PATCH request (RFC 7644 section 3.5.2).
+type SCIMPatchOp struct {
+	Schemas    []string        `json:"schemas"`
+	Operations []PatchOperation `json:"Operations"`
+}
+
+// PatchOperation represents a single SCIM PATCH operation.
+type PatchOperation struct {
+	Op    string `json:"op"`
+	Path  string `json:"path,omitempty"`
+	Value any    `json:"value,omitempty"`
+}
+
+// CreateUserRequest is the incoming SCIM user creation payload.
+type CreateUserRequest struct {
+	Schemas    []string    `json:"schemas"`
+	ExternalID string      `json:"externalId,omitempty"`
+	UserName   string      `json:"userName"`
+	Name       *SCIMName   `json:"name,omitempty"`
+	Emails     []SCIMEmail `json:"emails,omitempty"`
+	Active     *bool       `json:"active,omitempty"`
+	Password   string      `json:"password,omitempty"`
+}
+
+// --- Response Helpers ---
+
+func respondSCIM(w http.ResponseWriter, status int, data any) {
+	w.Header().Set("Content-Type", scimMediaType)
+	w.WriteHeader(status)
+	if data != nil {
+		_ = json.NewEncoder(w).Encode(data)
+	}
+}
+
+func respondSCIMError(w http.ResponseWriter, status int, detail string) {
+	respondSCIM(w, status, SCIMError{
+		Schemas: []string{schemaError},
+		Detail:  detail,
+		Status:  strconv.Itoa(status),
+	})
+}
+
+func parseSCIMBody(r *http.Request, dst any) error {
+	if r.Body == nil {
+		return fmt.Errorf("request body is empty")
+	}
+	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+		return fmt.Errorf("invalid JSON: %w", err)
+	}
+	return nil
+}
+
+// parseSCIMPagination extracts startIndex and count from SCIM query params.
+func parseSCIMPagination(r *http.Request) (startIndex, count int) {
+	startIndex = queryIntDefault(r, "startIndex", 1)
+	count = queryIntDefault(r, "count", defaultCount)
+	if startIndex < 1 {
+		startIndex = 1
+	}
+	if count < 1 {
+		count = defaultCount
+	}
+	return startIndex, count
+}
+
+func queryIntDefault(r *http.Request, key string, fallback int) int {
+	v := r.URL.Query().Get(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fallback
+	}
+	return n
+}
+
+// dbUserToSCIM converts database user fields into a SCIM User resource.
+func dbUserToSCIM(id uuid.UUID, username, email, firstName, lastName string, isActive bool,
+	externalID *string, createdAt, updatedAt time.Time) SCIMUser {
+	u := SCIMUser{
+		Schemas:  []string{schemaUser},
+		ID:       id.String(),
+		UserName: username,
+		Active:   isActive,
+		Name: &SCIMName{
+			GivenName:  firstName,
+			FamilyName: lastName,
+			Formatted:  firstName + " " + lastName,
+		},
+		Meta: SCIMMeta{
+			ResourceType: "User",
+			Created:      createdAt.UTC().Format(time.RFC3339),
+			LastModified: updatedAt.UTC().Format(time.RFC3339),
+		},
+	}
+	if email != "" {
+		u.Emails = []SCIMEmail{{Value: email, Type: "work", Primary: true}}
+	}
+	if externalID != nil {
+		u.ExternalID = *externalID
+	}
+	return u
+}
+
+// --- User Endpoints ---
+
+func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
+	startIndex, count := parseSCIMPagination(r)
+	offset := startIndex - 1 // SCIM is 1-indexed
+
+	// Retrieve total count.
+	var total int
+	if err := h.pool.QueryRow(r.Context(), `SELECT count(*) FROM users`).Scan(&total); err != nil {
+		h.logger.Error("scim: counting users", "error", err)
+		respondSCIMError(w, http.StatusInternalServerError, "failed to count users")
+		return
+	}
+
+	rows, err := h.pool.Query(r.Context(),
+		`SELECT id, username, email, first_name, last_name, is_active, scim_external_id, created_at, updated_at
+		 FROM users
+		 ORDER BY created_at
+		 LIMIT $1 OFFSET $2`, count, offset)
+	if err != nil {
+		h.logger.Error("scim: listing users", "error", err)
+		respondSCIMError(w, http.StatusInternalServerError, "failed to list users")
+		return
+	}
+	defer rows.Close()
+
+	users := make([]SCIMUser, 0)
+	for rows.Next() {
+		var (
+			id         uuid.UUID
+			username   string
+			email      string
+			firstName  string
+			lastName   string
+			isActive   bool
+			externalID *string
+			createdAt  time.Time
+			updatedAt  time.Time
+		)
+		if err := rows.Scan(&id, &username, &email, &firstName, &lastName,
+			&isActive, &externalID, &createdAt, &updatedAt); err != nil {
+			h.logger.Error("scim: scanning user", "error", err)
+			respondSCIMError(w, http.StatusInternalServerError, "failed to read user")
+			return
+		}
+		users = append(users, dbUserToSCIM(id, username, email, firstName, lastName, isActive, externalID, createdAt, updatedAt))
+	}
+	if err := rows.Err(); err != nil {
+		h.logger.Error("scim: iterating users", "error", err)
+		respondSCIMError(w, http.StatusInternalServerError, "failed to iterate users")
+		return
+	}
+
+	respondSCIM(w, http.StatusOK, SCIMListResponse{
+		Schemas:      []string{schemaListResponse},
+		TotalResults: total,
+		StartIndex:   startIndex,
+		ItemsPerPage: len(users),
+		Resources:    users,
+	})
+}
+
+func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
+	var req CreateUserRequest
+	if err := parseSCIMBody(r, &req); err != nil {
+		respondSCIMError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if req.UserName == "" {
+		respondSCIMError(w, http.StatusBadRequest, "userName is required")
+		return
+	}
+
+	// Extract primary email.
+	var email string
+	for _, e := range req.Emails {
+		if e.Primary || email == "" {
+			email = e.Value
+		}
+	}
+
+	var firstName, lastName string
+	if req.Name != nil {
+		firstName = req.Name.GivenName
+		lastName = req.Name.FamilyName
+	}
+
+	isActive := true
+	if req.Active != nil {
+		isActive = *req.Active
+	}
+
+	// Generate a random password for SCIM-provisioned users.
+	password := req.Password
+	if password == "" {
+		password = fmt.Sprintf("scim-%s-%d", req.UserName, time.Now().UnixNano())
+	}
+	hash, err := auth.HashPassword(password)
+	if err != nil {
+		h.logger.Error("scim: hashing password", "error", err)
+		respondSCIMError(w, http.StatusInternalServerError, "failed to create user")
+		return
+	}
+
+	var (
+		id        uuid.UUID
+		createdAt time.Time
+		updatedAt time.Time
+	)
+	err = h.pool.QueryRow(r.Context(),
+		`INSERT INTO users (username, email, password_hash, first_name, last_name, is_active, scim_external_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 RETURNING id, created_at, updated_at`,
+		req.UserName, email, hash, firstName, lastName, isActive, strPtrOrNil(req.ExternalID),
+	).Scan(&id, &createdAt, &updatedAt)
+	if err != nil {
+		h.logger.Error("scim: creating user", "error", err, "username", req.UserName)
+		respondSCIMError(w, http.StatusConflict, "user already exists or invalid data")
+		return
+	}
+
+	h.logger.Info("scim: user created", "id", id, "username", req.UserName)
+	user := dbUserToSCIM(id, req.UserName, email, firstName, lastName, isActive, strPtrOrNil(req.ExternalID), createdAt, updatedAt)
+	respondSCIM(w, http.StatusCreated, user)
+}
+
+func (h *Handler) getUser(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respondSCIMError(w, http.StatusBadRequest, "invalid user ID")
+		return
+	}
+
+	var (
+		username   string
+		email      string
+		firstName  string
+		lastName   string
+		isActive   bool
+		externalID *string
+		createdAt  time.Time
+		updatedAt  time.Time
+	)
+	err = h.pool.QueryRow(r.Context(),
+		`SELECT username, email, first_name, last_name, is_active, scim_external_id, created_at, updated_at
+		 FROM users WHERE id = $1`, id,
+	).Scan(&username, &email, &firstName, &lastName, &isActive, &externalID, &createdAt, &updatedAt)
+	if err != nil {
+		respondSCIMError(w, http.StatusNotFound, "user not found")
+		return
+	}
+
+	respondSCIM(w, http.StatusOK, dbUserToSCIM(id, username, email, firstName, lastName, isActive, externalID, createdAt, updatedAt))
+}
+
+func (h *Handler) replaceUser(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respondSCIMError(w, http.StatusBadRequest, "invalid user ID")
+		return
+	}
+
+	var req CreateUserRequest
+	if err := parseSCIMBody(r, &req); err != nil {
+		respondSCIMError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var email string
+	for _, e := range req.Emails {
+		if e.Primary || email == "" {
+			email = e.Value
+		}
+	}
+
+	var firstName, lastName string
+	if req.Name != nil {
+		firstName = req.Name.GivenName
+		lastName = req.Name.FamilyName
+	}
+
+	isActive := true
+	if req.Active != nil {
+		isActive = *req.Active
+	}
+
+	var (
+		createdAt  time.Time
+		updatedAt  time.Time
+		externalID *string
+	)
+	err = h.pool.QueryRow(r.Context(),
+		`UPDATE users SET
+			username          = $2,
+			email             = $3,
+			first_name        = $4,
+			last_name         = $5,
+			is_active         = $6,
+			scim_external_id  = $7,
+			updated_at        = now()
+		 WHERE id = $1
+		 RETURNING created_at, updated_at, scim_external_id`,
+		id, req.UserName, email, firstName, lastName, isActive, strPtrOrNil(req.ExternalID),
+	).Scan(&createdAt, &updatedAt, &externalID)
+	if err != nil {
+		respondSCIMError(w, http.StatusNotFound, "user not found")
+		return
+	}
+
+	h.logger.Info("scim: user replaced", "id", id, "username", req.UserName)
+	respondSCIM(w, http.StatusOK, dbUserToSCIM(id, req.UserName, email, firstName, lastName, isActive, externalID, createdAt, updatedAt))
+}
+
+func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respondSCIMError(w, http.StatusBadRequest, "invalid user ID")
+		return
+	}
+
+	var patch SCIMPatchOp
+	if err := parseSCIMBody(r, &patch); err != nil {
+		respondSCIMError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Process each patch operation.
+	for _, op := range patch.Operations {
+		switch op.Op {
+		case "replace", "Replace":
+			if err := h.applyUserReplace(r.Context(), id, op); err != nil {
+				h.logger.Error("scim: patch replace failed", "error", err, "id", id, "path", op.Path)
+				respondSCIMError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+		case "add", "Add":
+			if err := h.applyUserReplace(r.Context(), id, op); err != nil {
+				h.logger.Error("scim: patch add failed", "error", err, "id", id, "path", op.Path)
+				respondSCIMError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+		case "remove", "Remove":
+			// Handle remove by setting the field to empty/null.
+			op.Value = nil
+			if err := h.applyUserReplace(r.Context(), id, op); err != nil {
+				h.logger.Error("scim: patch remove failed", "error", err, "id", id, "path", op.Path)
+				respondSCIMError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+		default:
+			respondSCIMError(w, http.StatusBadRequest, fmt.Sprintf("unsupported operation: %s", op.Op))
+			return
+		}
+	}
+
+	h.logger.Info("scim: user patched", "id", id)
+
+	// Return the updated user.
+	h.getUser(w, r)
+}
+
+// applyUserReplace applies a replace/add patch operation to a user.
+func (h *Handler) applyUserReplace(ctx context.Context, id uuid.UUID, op PatchOperation) error {
+	switch op.Path {
+	case "active", "Active":
+		active, ok := op.Value.(bool)
+		if !ok {
+			return fmt.Errorf("invalid value for active: expected boolean")
+		}
+		_, err := h.pool.Exec(ctx,
+			`UPDATE users SET is_active = $2, updated_at = now() WHERE id = $1`, id, active)
+		return err
+
+	case "userName":
+		val, ok := op.Value.(string)
+		if !ok {
+			return fmt.Errorf("invalid value for userName: expected string")
+		}
+		_, err := h.pool.Exec(ctx,
+			`UPDATE users SET username = $2, updated_at = now() WHERE id = $1`, id, val)
+		return err
+
+	case "name.givenName":
+		val, ok := op.Value.(string)
+		if !ok {
+			return fmt.Errorf("invalid value for name.givenName: expected string")
+		}
+		_, err := h.pool.Exec(ctx,
+			`UPDATE users SET first_name = $2, updated_at = now() WHERE id = $1`, id, val)
+		return err
+
+	case "name.familyName":
+		val, ok := op.Value.(string)
+		if !ok {
+			return fmt.Errorf("invalid value for name.familyName: expected string")
+		}
+		_, err := h.pool.Exec(ctx,
+			`UPDATE users SET last_name = $2, updated_at = now() WHERE id = $1`, id, val)
+		return err
+
+	case "emails":
+		// Handle emails as an array — extract primary email.
+		emails, err := patchValueToEmails(op.Value)
+		if err != nil {
+			return err
+		}
+		var primary string
+		for _, e := range emails {
+			if e.Primary || primary == "" {
+				primary = e.Value
+			}
+		}
+		_, err = h.pool.Exec(ctx,
+			`UPDATE users SET email = $2, updated_at = now() WHERE id = $1`, id, primary)
+		return err
+
+	case "externalId":
+		val, _ := op.Value.(string)
+		_, err := h.pool.Exec(ctx,
+			`UPDATE users SET scim_external_id = $2, updated_at = now() WHERE id = $1`, id, nilIfEmpty(&val))
+		return err
+
+	case "":
+		// No path — the value is a map of attributes to set.
+		valueMap, ok := op.Value.(map[string]any)
+		if !ok {
+			return fmt.Errorf("expected object value when path is empty")
+		}
+		for key, val := range valueMap {
+			subOp := PatchOperation{Op: op.Op, Path: key, Value: val}
+			if err := h.applyUserReplace(ctx, id, subOp); err != nil {
+				return err
+			}
+		}
+		return nil
+
+	default:
+		return fmt.Errorf("unsupported patch path: %s", op.Path)
+	}
+}
+
+// patchValueToEmails converts a PATCH value to a slice of SCIMEmail.
+func patchValueToEmails(value any) ([]SCIMEmail, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("invalid emails value: %w", err)
+	}
+	var emails []SCIMEmail
+	if err := json.Unmarshal(raw, &emails); err != nil {
+		return nil, fmt.Errorf("invalid emails format: %w", err)
+	}
+	return emails, nil
+}
+
+func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respondSCIMError(w, http.StatusBadRequest, "invalid user ID")
+		return
+	}
+
+	// SCIM DELETE deactivates, not hard-deletes.
+	tag, err := h.pool.Exec(r.Context(),
+		`UPDATE users SET is_active = false, updated_at = now() WHERE id = $1`, id)
+	if err != nil {
+		h.logger.Error("scim: deleting user", "error", err, "id", id)
+		respondSCIMError(w, http.StatusInternalServerError, "failed to deactivate user")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		respondSCIMError(w, http.StatusNotFound, "user not found")
+		return
+	}
+
+	h.logger.Info("scim: user deactivated", "id", id)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Group Endpoints (stubs) ---
+
+func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
+	_ = r
+	respondSCIM(w, http.StatusOK, SCIMListResponse{
+		Schemas:      []string{schemaListResponse},
+		TotalResults: 0,
+		StartIndex:   1,
+		ItemsPerPage: 0,
+		Resources:    []SCIMGroup{},
+	})
+}
+
+func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Schemas     []string     `json:"schemas"`
+		DisplayName string       `json:"displayName"`
+		Members     []SCIMMember `json:"members,omitempty"`
+	}
+	if err := parseSCIMBody(r, &body); err != nil {
+		respondSCIMError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if body.DisplayName == "" {
+		respondSCIMError(w, http.StatusBadRequest, "displayName is required")
+		return
+	}
+
+	// TODO: Insert group into groups table when the schema is available.
+	id := uuid.New()
+	now := time.Now().UTC()
+	respondSCIM(w, http.StatusCreated, SCIMGroup{
+		Schemas: []string{schemaGroup},
+		ID:      id.String(),
+		Name:    body.DisplayName,
+		Members: body.Members,
+		Meta: SCIMMeta{
+			ResourceType: "Group",
+			Created:      now.Format(time.RFC3339),
+			LastModified: now.Format(time.RFC3339),
+		},
+	})
+}
+
+func (h *Handler) getGroup(w http.ResponseWriter, r *http.Request) {
+	_ = r
+	respondSCIMError(w, http.StatusNotFound, "group not found")
+}
+
+func (h *Handler) replaceGroup(w http.ResponseWriter, r *http.Request) {
+	_ = r
+	respondSCIMError(w, http.StatusNotFound, "group not found")
+}
+
+func (h *Handler) patchGroup(w http.ResponseWriter, r *http.Request) {
+	_ = r
+	respondSCIMError(w, http.StatusNotFound, "group not found")
+}
+
+func (h *Handler) deleteGroup(w http.ResponseWriter, r *http.Request) {
+	_ = r
+	respondSCIMError(w, http.StatusNotFound, "group not found")
+}
+
+// --- Discovery Endpoints ---
+
+func (h *Handler) serviceProviderConfig(w http.ResponseWriter, r *http.Request) {
+	_ = r
+	respondSCIM(w, http.StatusOK, map[string]any{
+		"schemas": []string{schemaServiceProviderCfg},
+		"documentationUri": "https://outpost.example.com/docs/scim",
+		"patch": map[string]any{
+			"supported": true,
+		},
+		"bulk": map[string]any{
+			"supported":  false,
+			"maxOperations": 0,
+			"maxPayloadSize": 0,
+		},
+		"filter": map[string]any{
+			"supported":  true,
+			"maxResults": 200,
+		},
+		"changePassword": map[string]any{
+			"supported": false,
+		},
+		"sort": map[string]any{
+			"supported": false,
+		},
+		"etag": map[string]any{
+			"supported": false,
+		},
+		"authenticationSchemes": []map[string]any{
+			{
+				"name":        "OAuth Bearer Token",
+				"description": "Authentication scheme using the OAuth Bearer Token Standard",
+				"specUri":     "https://www.rfc-editor.org/info/rfc6750",
+				"type":        "oauthbearertoken",
+				"primary":     true,
+			},
+		},
+	})
+}
+
+func (h *Handler) schemas(w http.ResponseWriter, r *http.Request) {
+	_ = r
+	respondSCIM(w, http.StatusOK, SCIMListResponse{
+		Schemas:      []string{schemaListResponse},
+		TotalResults: 2,
+		StartIndex:   1,
+		ItemsPerPage: 2,
+		Resources: []map[string]any{
+			{
+				"schemas":     []string{schemaSchema},
+				"id":          schemaUser,
+				"name":        "User",
+				"description": "User Account",
+				"attributes": []map[string]any{
+					{"name": "userName", "type": "string", "multiValued": false, "required": true, "uniqueness": "server"},
+					{"name": "name", "type": "complex", "multiValued": false, "required": false,
+						"subAttributes": []map[string]any{
+							{"name": "givenName", "type": "string", "multiValued": false},
+							{"name": "familyName", "type": "string", "multiValued": false},
+							{"name": "formatted", "type": "string", "multiValued": false},
+						},
+					},
+					{"name": "emails", "type": "complex", "multiValued": true, "required": false,
+						"subAttributes": []map[string]any{
+							{"name": "value", "type": "string", "multiValued": false},
+							{"name": "type", "type": "string", "multiValued": false},
+							{"name": "primary", "type": "boolean", "multiValued": false},
+						},
+					},
+					{"name": "active", "type": "boolean", "multiValued": false, "required": false},
+					{"name": "externalId", "type": "string", "multiValued": false, "required": false},
+				},
+			},
+			{
+				"schemas":     []string{schemaSchema},
+				"id":          schemaGroup,
+				"name":        "Group",
+				"description": "Group",
+				"attributes": []map[string]any{
+					{"name": "displayName", "type": "string", "multiValued": false, "required": true},
+					{"name": "members", "type": "complex", "multiValued": true, "required": false,
+						"subAttributes": []map[string]any{
+							{"name": "value", "type": "string", "multiValued": false},
+							{"name": "display", "type": "string", "multiValued": false},
+							{"name": "$ref", "type": "reference", "multiValued": false},
+						},
+					},
+				},
+			},
+		},
+	})
+}
+
+// strPtrOrNil returns a pointer to s if non-empty, or nil.
+func strPtrOrNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// nilIfEmpty returns nil if the string pointer is nil or empty, otherwise
+// returns the pointer as-is.
+func nilIfEmpty(s *string) *string {
+	if s == nil || *s == "" {
+		return nil
+	}
+	return s
+}

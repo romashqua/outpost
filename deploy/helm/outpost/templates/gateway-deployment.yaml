@@ -1,0 +1,95 @@
+{{- if .Values.gateway.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "outpost.fullname" . }}-gateway
+  labels:
+    {{- include "outpost.labels" . | nindent 4 }}
+    {{- include "outpost.selectorLabels" (dict "root" . "component" "gateway") | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "outpost.selectorLabels" (dict "root" . "component" "gateway") | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.gateway.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "outpost.labels" . | nindent 8 }}
+        {{- include "outpost.selectorLabels" (dict "root" . "component" "gateway") | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: gateway
+          image: {{ include "outpost.image" (dict "image" .Values.gateway.image "appVersion" .Chart.AppVersion) }}
+          imagePullPolicy: {{ .Values.gateway.image.pullPolicy }}
+          ports:
+            - name: wireguard
+              containerPort: 51820
+              protocol: UDP
+          envFrom:
+            - configMapRef:
+                name: {{ include "outpost.configmapName" . }}
+          env:
+            - name: OUTPOST_GATEWAY_GRPC_URL
+              value: {{ .Values.config.coreGrpcUrl | quote }}
+            {{- range $key, $value := .Values.gateway.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN
+              drop:
+                - ALL
+          volumeMounts:
+            - name: dev-net-tun
+              mountPath: /dev/net/tun
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - wg show | grep -q interface
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - wg show | grep -q interface
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.gateway.resources | nindent 12 }}
+      volumes:
+        - name: dev-net-tun
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice
+      {{- with .Values.gateway.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.gateway.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.gateway.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

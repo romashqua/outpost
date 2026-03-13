@@ -7,7 +7,7 @@ COPY web-ui/ ./
 RUN pnpm build 2>/dev/null || mkdir -p dist && echo '<!DOCTYPE html><html><body>Outpost</body></html>' > dist/index.html
 
 # Stage 2: Build Go binary
-FROM golang:1.24-alpine AS builder
+FROM golang:1.25-alpine AS builder
 RUN apk add --no-cache git
 WORKDIR /app
 COPY go.mod go.sum ./
