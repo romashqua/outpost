@@ -37,11 +37,12 @@ func NewManager(pool *pgxpool.Pool) *Manager {
 }
 
 // EnableTOTP generates a new TOTP secret for the user and stores it
-// (unverified) in the database. Returns the raw secret and an otpauth:// URL.
-func (m *Manager) EnableTOTP(ctx context.Context, userID, issuer string) (string, string, error) {
-	secret, qrURL, err := m.totp.GenerateSecret(issuer, userID)
+// (unverified) in the database. Returns the raw secret, otpauth:// URL,
+// and a base64-encoded QR code image.
+func (m *Manager) EnableTOTP(ctx context.Context, userID, issuer string) (string, string, string, error) {
+	secret, qrURL, qrImage, err := m.totp.GenerateSecret(issuer, userID)
 	if err != nil {
-		return "", "", fmt.Errorf("generating TOTP secret: %w", err)
+		return "", "", "", fmt.Errorf("generating TOTP secret: %w", err)
 	}
 
 	id := uuid.New()
@@ -53,10 +54,10 @@ func (m *Manager) EnableTOTP(ctx context.Context, userID, issuer string) (string
 		id, userID, []byte(secret), time.Now().UTC(),
 	)
 	if err != nil {
-		return "", "", fmt.Errorf("storing TOTP secret: %w", err)
+		return "", "", "", fmt.Errorf("storing TOTP secret: %w", err)
 	}
 
-	return secret, qrURL, nil
+	return secret, qrURL, qrImage, nil
 }
 
 // VerifyTOTP validates a TOTP code for the user. On the first successful

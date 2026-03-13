@@ -11,14 +11,17 @@ import { api } from '@/api/client'
 import { useToastStore } from '@/store/toast'
 
 interface MfaStatus {
-  totp_enabled: boolean
-  webauthn_enabled: boolean
-  backup_codes_remaining: number
+  mfa_enabled: boolean
+  totp_configured: boolean
+  totp_verified: boolean
+  webauthn_count: number
+  backup_codes_left: number
 }
 
 interface TotpSetupResponse {
   secret: string
   qr_url: string
+  qr_image: string
 }
 
 interface WebAuthnCredential {
@@ -511,25 +514,25 @@ export default function SettingsPage() {
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-[var(--text-muted)]">SMTP:</span>
           <Badge variant={smtpConnected ? 'online' : 'offline'} pulse>
-            {smtpConnected ? 'Connected' : 'Not configured'}
+            {smtpConnected ? t('settings.connected') : t('settings.notConfigured')}
           </Badge>
         </div>
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-[var(--text-muted)]">OIDC:</span>
           <Badge variant={oidcConnected ? 'online' : 'offline'} pulse>
-            {oidcConnected ? 'Connected' : 'Not configured'}
+            {oidcConnected ? t('settings.connected') : t('settings.notConfigured')}
           </Badge>
         </div>
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-[var(--text-muted)]">LDAP:</span>
           <Badge variant={ldapConnected ? 'online' : 'offline'} pulse>
-            {ldapConnected ? 'Connected' : 'Not configured'}
+            {ldapConnected ? t('settings.connected') : t('settings.notConfigured')}
           </Badge>
         </div>
         <div className="flex items-center gap-1.5">
           <span className="text-xs text-[var(--text-muted)]">SAML:</span>
           <Badge variant={samlConnected ? 'online' : 'offline'} pulse>
-            {samlConnected ? 'Connected' : 'Not configured'}
+            {samlConnected ? t('settings.connected') : t('settings.notConfigured')}
           </Badge>
         </div>
       </div>
@@ -810,12 +813,12 @@ export default function SettingsPage() {
               <div className="border border-[var(--border)] rounded-lg p-4 space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-medium text-[var(--text-primary)] font-mono">TOTP</h3>
-                  <Badge variant={mfaStatus?.totp_enabled ? 'online' : 'offline'} pulse>
-                    {mfaStatus?.totp_enabled ? t('settings.totpEnabled') : t('settings.totpDisabled')}
+                  <Badge variant={mfaStatus?.totp_configured ? 'online' : 'offline'} pulse>
+                    {mfaStatus?.totp_configured ? t('settings.totpEnabled') : t('settings.totpDisabled')}
                   </Badge>
                 </div>
 
-                {!mfaStatus?.totp_enabled && !totpSetup && (
+                {!mfaStatus?.totp_configured && !totpSetup && (
                   <Button
                     onClick={() => setupTotpMutation.mutate()}
                     disabled={setupTotpMutation.isPending}
@@ -828,9 +831,19 @@ export default function SettingsPage() {
                   <div className="space-y-4">
                     <p className="text-xs text-[var(--text-muted)]">{t('settings.scanQr')}</p>
 
+                    {totpSetup.qr_image && (
+                      <div className="flex justify-center">
+                        <img
+                          src={totpSetup.qr_image}
+                          alt="TOTP QR Code"
+                          className="w-48 h-48 rounded-lg border border-[var(--border)] bg-white p-2"
+                        />
+                      </div>
+                    )}
+
                     <div className="rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3 space-y-2">
                       <div>
-                        <span className="text-xs text-[var(--text-muted)] block mb-1">Provisioning URI</span>
+                        <span className="text-xs text-[var(--text-muted)] block mb-1">{t('settings.provisioningUri')}</span>
                         <code className="text-xs text-[var(--accent)] break-all select-all block">{totpSetup.qr_url}</code>
                       </div>
                       <div>
@@ -859,7 +872,7 @@ export default function SettingsPage() {
                   </div>
                 )}
 
-                {mfaStatus?.totp_enabled && (
+                {mfaStatus?.totp_configured && (
                   <Button
                     variant="danger"
                     onClick={() => setShowDisableConfirm(true)}
@@ -873,9 +886,9 @@ export default function SettingsPage() {
               <div className="border border-[var(--border)] rounded-lg p-4 space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-medium text-[var(--text-primary)] font-mono">{t('settings.backupCodes')}</h3>
-                  {mfaStatus && mfaStatus.backup_codes_remaining > 0 && (
+                  {mfaStatus && mfaStatus.backup_codes_left > 0 && (
                     <Badge variant="info">
-                      {mfaStatus.backup_codes_remaining} remaining
+                      {mfaStatus.backup_codes_left} {t('settings.remaining')}
                     </Badge>
                   )}
                 </div>
@@ -905,10 +918,10 @@ export default function SettingsPage() {
                             className="text-xs text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors cursor-pointer ml-2"
                             onClick={() => {
                               navigator.clipboard.writeText(code)
-                              addToast('Copied', 'success')
+                              addToast(t('common.copy'), 'success')
                             }}
                           >
-                            Copy
+                            {t('common.copy')}
                           </button>
                         </div>
                       ))}

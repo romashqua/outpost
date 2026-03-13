@@ -66,6 +66,23 @@ func TestMain(m *testing.M) {
 	}
 	defer pool.Close()
 
+	// Ensure the admin user exists (may have been deleted by previous test
+	// runs). We use the same SQL as migration 000004 but with DO UPDATE to
+	// reset the password in case it was changed.
+	_, _ = pool.Exec(ctx,
+		`INSERT INTO users (username, email, password_hash, first_name, last_name, is_active, is_admin)
+		 VALUES ('admin', 'admin@outpost.local', crypt('admin', gen_salt('bf')), 'Admin', 'User', true, true)
+		 ON CONFLICT (username) DO UPDATE SET
+			password_hash = crypt('admin', gen_salt('bf')),
+			is_active = true,
+			is_admin = true`)
+
+	// Ensure the default network exists.
+	_, _ = pool.Exec(ctx,
+		`INSERT INTO networks (name, address, dns, port)
+		 VALUES ('default', '10.10.0.0/16', ARRAY['1.1.1.1', '8.8.8.8'], 51820)
+		 ON CONFLICT (name) DO NOTHING`)
+
 	// Build a minimal config for the server.
 	cfg := &config.Config{}
 	cfg.Auth.JWTSecret = "e2e-test-secret-key-change-me"

@@ -64,8 +64,9 @@ type setupTOTPRequest struct {
 
 // setupTOTPResponse is the response body for TOTP setup.
 type setupTOTPResponse struct {
-	Secret string `json:"secret"`
-	QRURL  string `json:"qr_url"`
+	Secret  string `json:"secret"`
+	QRURL   string `json:"qr_url"`
+	QRImage string `json:"qr_image"`
 }
 
 // setupTOTP begins TOTP enrollment by generating a secret.
@@ -85,13 +86,13 @@ func (h *Handler) setupTOTP(w http.ResponseWriter, r *http.Request) {
 		req.Issuer = "Outpost VPN"
 	}
 
-	secret, qrURL, err := h.mgr.EnableTOTP(r.Context(), claims.UserID, req.Issuer)
+	secret, qrURL, qrImage, err := h.mgr.EnableTOTP(r.Context(), claims.UserID, req.Issuer)
 	if err != nil {
 		http.Error(w, "failed to setup TOTP", http.StatusInternalServerError)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, setupTOTPResponse{Secret: secret, QRURL: qrURL})
+	writeJSON(w, http.StatusOK, setupTOTPResponse{Secret: secret, QRURL: qrURL, QRImage: qrImage})
 }
 
 // codeRequest is a shared request body for code-based verification endpoints.
