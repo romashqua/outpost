@@ -181,7 +181,11 @@ func (s *Server) setupHTTPRouter() chi.Router {
 		r.Group(func(r chi.Router) {
 			r.Use(auth.JWTMiddleware(s.cfg.Auth.JWTSecret))
 
-			r.Mount("/users", handler.NewUserHandler(s.pool, s.logger).Routes())
+			userHandlerOpts := []handler.Mailer{}
+			if s.mailer != nil {
+				userHandlerOpts = append(userHandlerOpts, s.mailer)
+			}
+			r.Mount("/users", handler.NewUserHandler(s.pool, s.logger, userHandlerOpts...).Routes())
 			r.Mount("/networks", handler.NewNetworkHandler(s.pool, s.logger).Routes())
 			r.Mount("/devices", handler.NewDeviceHandler(s.pool, s.logger).Routes())
 			r.Mount("/gateways", handler.NewGatewayHandler(s.pool, s.logger).Routes())

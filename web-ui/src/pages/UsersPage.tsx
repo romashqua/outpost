@@ -47,15 +47,15 @@ export default function UsersPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null)
   const [editTarget, setEditTarget] = useState<User | null>(null)
-  const [editForm, setEditForm] = useState({ email: '', first_name: '', last_name: '', is_admin: false, is_active: true })
+  const [editForm, setEditForm] = useState({ email: '', first_name: '', last_name: '', role: 'user' as 'admin' | 'user' | 'viewer', is_active: true })
 
-  const [formData, setFormData] = useState<CreateUserPayload>({
+  const [formRole, setFormRole] = useState<'admin' | 'user' | 'viewer'>('user')
+  const [formData, setFormData] = useState<Omit<CreateUserPayload, 'is_admin'>>({
     username: '',
     email: '',
     password: '',
     first_name: '',
     last_name: '',
-    is_admin: false,
   })
 
   const { data, isLoading, error } = useQuery<UsersResponse>({
@@ -68,8 +68,9 @@ export default function UsersPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] })
       setShowCreate(false)
-      setFormData({ username: '', email: '', password: '', first_name: '', last_name: '', is_admin: false })
-      addToast('User created', 'success')
+      setFormData({ username: '', email: '', password: '', first_name: '', last_name: '' })
+      setFormRole('user')
+      addToast(t('users.userCreated'), 'success')
     },
     onError: (err) => {
       addToast((err as Error).message, 'error')
@@ -81,7 +82,7 @@ export default function UsersPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] })
       setDeleteTarget(null)
-      addToast('User deleted', 'success')
+      addToast(t('users.userDeleted'), 'success')
     },
     onError: (err) => {
       addToast((err as Error).message, 'error')
@@ -94,7 +95,7 @@ export default function UsersPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] })
       setEditTarget(null)
-      addToast('User updated', 'success')
+      addToast(t('users.userUpdated'), 'success')
     },
     onError: (err) => {
       addToast((err as Error).message, 'error')
@@ -112,7 +113,7 @@ export default function UsersPage() {
 
   const handleCreateSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    createMutation.mutate(formData)
+    createMutation.mutate({ ...formData, is_admin: formRole === 'admin' })
   }
 
   const columns = [
@@ -130,7 +131,7 @@ export default function UsersPage() {
       header: t('users.role'),
       render: (row: User) => (
         <Badge variant={row.is_admin ? 'info' : 'default'}>
-          {row.is_admin ? 'admin' : 'user'}
+          {row.is_admin ? t('users.admin') : t('users.user')}
         </Badge>
       ),
     },
@@ -174,7 +175,7 @@ export default function UsersPage() {
             onClick={(e) => {
               e.stopPropagation()
               updateMutation.reset()
-              setEditForm({ email: row.email, first_name: row.first_name, last_name: row.last_name, is_admin: row.is_admin, is_active: row.is_active })
+              setEditForm({ email: row.email, first_name: row.first_name, last_name: row.last_name, role: row.is_admin ? 'admin' : 'user', is_active: row.is_active })
               setEditTarget(row)
             }}
           >
@@ -199,7 +200,7 @@ export default function UsersPage() {
   if (error) {
     return (
       <div className="text-center py-12 text-[var(--danger)]">
-        Failed to load users: {(error as Error).message}
+        {t('users.failedToLoad')} {(error as Error).message}
       </div>
     )
   }
@@ -227,7 +228,7 @@ export default function UsersPage() {
       </div>
 
       {isLoading ? (
-        <div className="text-center py-12 text-[var(--text-muted)]">Loading...</div>
+        <div className="text-center py-12 text-[var(--text-muted)]">{t('common.loading')}</div>
       ) : (
         <Table columns={columns} data={filtered} />
       )}
@@ -272,14 +273,17 @@ export default function UsersPage() {
             onChange={(e) => setFormData({ ...formData, password: e.target.value })}
             required
           />
-          <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
-            <input
-              type="checkbox"
-              checked={formData.is_admin}
-              onChange={(e) => setFormData({ ...formData, is_admin: e.target.checked })}
-              className="rounded"
-            />
-            Admin
+          <label className="flex flex-col gap-1 text-sm text-[var(--text-secondary)]">
+            {t('users.role')}
+            <select
+              value={formRole}
+              onChange={(e) => setFormRole(e.target.value as 'admin' | 'user' | 'viewer')}
+              className="rounded border border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-primary)] px-3 py-2 text-sm"
+            >
+              <option value="admin">{t('users.admin')}</option>
+              <option value="user">{t('users.user')}</option>
+              <option value="viewer">{t('users.viewer')}</option>
+            </select>
           </label>
           {createMutation.error && (
             <p className="text-sm text-[var(--danger)]">
@@ -291,7 +295,7 @@ export default function UsersPage() {
               {t('common.cancel')}
             </Button>
             <Button type="submit" disabled={createMutation.isPending}>
-              {createMutation.isPending ? 'Creating...' : t('common.create')}
+              {createMutation.isPending ? t('users.creating') : t('common.create')}
             </Button>
           </div>
         </form>
@@ -301,10 +305,10 @@ export default function UsersPage() {
       <Modal
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
-        title={t('users.deleteUser') || 'Delete user'}
+        title={t('users.deleteUser')}
       >
         <p className="text-[var(--text-secondary)] mb-6">
-          Are you sure you want to deactivate user{' '}
+          {t('users.confirmDeactivate')}{' '}
           <span className="font-mono text-[var(--accent)]">{deleteTarget?.username}</span>?
         </p>
         {deleteMutation.error && (
@@ -321,16 +325,16 @@ export default function UsersPage() {
             disabled={deleteMutation.isPending}
             onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
           >
-            {deleteMutation.isPending ? 'Deleting...' : t('common.delete') || 'Delete'}
+            {deleteMutation.isPending ? t('users.deleting') : t('common.delete')}
           </Button>
         </div>
       </Modal>
 
       {/* Edit User Modal */}
-      <Modal open={!!editTarget} onClose={() => setEditTarget(null)} title={t('users.editUser') || 'Edit user'}>
+      <Modal open={!!editTarget} onClose={() => setEditTarget(null)} title={t('users.editUser')}>
         <form className="flex flex-col gap-4" onSubmit={(e) => {
           e.preventDefault()
-          if (editTarget) updateMutation.mutate({ id: editTarget.id, ...editForm })
+          if (editTarget) updateMutation.mutate({ id: editTarget.id, email: editForm.email, first_name: editForm.first_name, last_name: editForm.last_name, is_admin: editForm.role === 'admin', is_active: editForm.is_active })
         }}>
           <Input
             label={t('users.email')}
@@ -354,14 +358,17 @@ export default function UsersPage() {
               onChange={(e) => setEditForm({ ...editForm, last_name: e.target.value })}
             />
           </div>
-          <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
-            <input
-              type="checkbox"
-              checked={editForm.is_admin}
-              onChange={(e) => setEditForm({ ...editForm, is_admin: e.target.checked })}
-              className="rounded"
-            />
-            Admin
+          <label className="flex flex-col gap-1 text-sm text-[var(--text-secondary)]">
+            {t('users.role')}
+            <select
+              value={editForm.role}
+              onChange={(e) => setEditForm({ ...editForm, role: e.target.value as 'admin' | 'user' | 'viewer' })}
+              className="rounded border border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-primary)] px-3 py-2 text-sm"
+            >
+              <option value="admin">{t('users.admin')}</option>
+              <option value="user">{t('users.user')}</option>
+              <option value="viewer">{t('users.viewer')}</option>
+            </select>
           </label>
           <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
             <input
@@ -370,7 +377,7 @@ export default function UsersPage() {
               onChange={(e) => setEditForm({ ...editForm, is_active: e.target.checked })}
               className="rounded"
             />
-            Active
+            {t('status.active')}
           </label>
           {updateMutation.error && (
             <p className="text-sm text-[var(--danger)]">
@@ -382,7 +389,7 @@ export default function UsersPage() {
               {t('common.cancel')}
             </Button>
             <Button type="submit" disabled={updateMutation.isPending}>
-              {updateMutation.isPending ? 'Saving...' : t('common.save') || 'Save'}
+              {updateMutation.isPending ? t('users.saving') : t('common.save')}
             </Button>
           </div>
         </form>

@@ -5,11 +5,11 @@
 *.dll
 *.so
 *.dylib
-outpost-core
-outpost-gateway
-outpost-proxy
-outpost-client
-outpostctl
+/outpost-core
+/outpost-gateway
+/outpost-proxy
+/outpost-client
+/outpostctl
 outpost-client-*
 outpost-core-*
 outpost-gateway-*

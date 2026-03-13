@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
-import { Users, Laptop2, AlertCircle, Loader2, Network, Shield } from 'lucide-react'
+import { Users, Laptop2, AlertCircle, Loader2, Network, Shield, Clock } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { api } from '@/api/client'
 import Stats from '@/components/ui/Stats'
@@ -29,6 +29,17 @@ interface TopUser {
   username: string
   rx_bytes: number
   tx_bytes: number
+}
+
+interface AuditEntry {
+  id: string
+  user_id: string
+  username: string
+  action: string
+  resource: string
+  resource_id: string
+  ip_address: string
+  created_at: string
 }
 
 function formatBytes(bytes: number): string {
@@ -93,6 +104,11 @@ export default function DashboardPage() {
     queryFn: () => api.get('/analytics/top-users?limit=5'),
   })
 
+  const auditQuery = useQuery<AuditEntry[]>({
+    queryKey: ['audit', 'recent'],
+    queryFn: () => api.get('/audit?limit=5'),
+  })
+
   const stats = statsQuery.data
 
   const chartData = (bandwidthQuery.data ?? []).map((b) => ({
@@ -153,6 +169,10 @@ export default function DashboardPage() {
               <LoadingState />
             ) : bandwidthQuery.isError ? (
               <ErrorState message={bandwidthQuery.error.message} />
+            ) : chartData.length === 0 ? (
+              <div className="flex items-center justify-center h-full text-[var(--text-muted)]">
+                <span className="text-sm font-mono">{t('analytics.noBandwidthData')}</span>
+              </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={chartData}>
@@ -225,14 +245,39 @@ export default function DashboardPage() {
           )}
         </Card>
 
-        {/* Summary card */}
+        {/* Recent Activity */}
         <Card>
           <h2 className="text-sm font-medium text-[var(--text-primary)] mb-4 font-mono">
-            {t('dashboard.networkMap')}
+            <Clock size={14} className="inline mr-2" />
+            {t('dashboard.recentActivity')}
           </h2>
-          <div className="h-[300px]">
-            <NetworkMap />
-          </div>
+          {auditQuery.isLoading ? (
+            <LoadingState />
+          ) : auditQuery.isError ? (
+            <ErrorState message={auditQuery.error.message} />
+          ) : (auditQuery.data ?? []).length === 0 ? (
+            <div className="flex items-center justify-center py-12 text-[var(--text-muted)]">
+              <span className="text-sm font-mono">{t('common.noData')}</span>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {(auditQuery.data ?? []).map((entry) => (
+                <div
+                  key={entry.id}
+                  className="flex items-center justify-between py-2 border-b border-[var(--border)] last:border-0"
+                >
+                  <div className="flex-1 min-w-0">
+                    <span className="text-xs font-mono text-[var(--accent)]">{entry.username}</span>
+                    <span className="text-xs text-[var(--text-muted)] mx-2">—</span>
+                    <span className="text-xs font-mono text-[var(--text-secondary)]">{entry.action}</span>
+                  </div>
+                  <span className="text-xs font-mono text-[var(--text-muted)] ml-2 shrink-0">
+                    {new Date(entry.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </Card>
       </div>
     </div>

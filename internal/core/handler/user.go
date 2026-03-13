@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -16,19 +17,31 @@ import (
 	"github.com/romashqua/outpost/internal/auth"
 )
 
+// Mailer is the interface for sending emails (satisfied by mail.Mailer).
+type Mailer interface {
+	SendWelcome(ctx context.Context, to, username, instanceName string) error
+	SendEnrollmentInvite(ctx context.Context, to, enrollURL, instanceName string) error
+}
+
 // UserHandler provides CRUD endpoints for user management.
 type UserHandler struct {
-	pool *pgxpool.Pool
-	log  *slog.Logger
+	pool   *pgxpool.Pool
+	log    *slog.Logger
+	mailer Mailer
 }
 
 // NewUserHandler creates a UserHandler backed by the given connection pool.
-func NewUserHandler(pool *pgxpool.Pool, logger ...*slog.Logger) *UserHandler {
+// An optional mailer can be provided to send welcome emails on user creation.
+func NewUserHandler(pool *pgxpool.Pool, logger *slog.Logger, mailer ...Mailer) *UserHandler {
 	l := slog.Default()
-	if len(logger) > 0 && logger[0] != nil {
-		l = logger[0]
+	if logger != nil {
+		l = logger
 	}
-	return &UserHandler{pool: pool, log: l.With("handler", "user")}
+	h := &UserHandler{pool: pool, log: l.With("handler", "user")}
+	if len(mailer) > 0 {
+		h.mailer = mailer[0]
+	}
+	return h
 }
 
 // Routes returns a chi.Router with user CRUD endpoints mounted.
@@ -162,6 +175,25 @@ func (h *UserHandler) create(w http.ResponseWriter, r *http.Request) {
 		}
 		respondError(w, http.StatusInternalServerError, "failed to create user")
 		return
+	}
+
+	// Assign role based on is_admin flag.
+	roleName := "user"
+	if req.IsAdmin {
+		roleName = "admin"
+	}
+	_, _ = h.pool.Exec(r.Context(),
+		`INSERT INTO user_roles (user_id, role_id)
+		 SELECT $1, id FROM roles WHERE name = $2
+		 ON CONFLICT DO NOTHING`, u.ID, roleName)
+
+	// Send welcome email asynchronously (best-effort).
+	if h.mailer != nil {
+		go func() {
+			if err := h.mailer.SendWelcome(context.Background(), u.Email, u.Username, "Outpost VPN"); err != nil {
+				h.log.Error("failed to send welcome email", "user", u.Username, "error", err)
+			}
+		}()
 	}
 
 	h.log.Info("user created", "id", u.ID, "username", u.Username, "email", u.Email, "is_admin", u.IsAdmin)

@@ -10,6 +10,13 @@ import Button from '@/components/ui/Button'
 import Modal from '@/components/ui/Modal'
 import Input from '@/components/ui/Input'
 
+interface Network {
+  id: string
+  name: string
+  address: string
+  is_active: boolean
+}
+
 interface Gateway {
   id: string
   network_id: string
@@ -48,6 +55,11 @@ export default function GatewaysPage() {
     queryFn: () => api.get<Gateway[]>('/gateways'),
   })
 
+  const { data: networks = [] } = useQuery({
+    queryKey: ['networks'],
+    queryFn: () => api.get<Network[]>('/networks'),
+  })
+
   const createMutation = useMutation({
     mutationFn: (body: { name: string; network_id: string; endpoint: string; public_ip?: string; priority?: number }) =>
       api.post<CreateGatewayResponse>('/gateways', body),
@@ -56,7 +68,7 @@ export default function GatewaysPage() {
       setShowCreate(false)
       setShowToken(data.token)
       resetForm()
-      addToast('Gateway created', 'success')
+      addToast(t('gateways.gatewayCreated'), 'success')
     },
     onError: (err) => {
       addToast((err as Error).message, 'error')
@@ -68,7 +80,7 @@ export default function GatewaysPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['gateways'] })
       setDeleteId(null)
-      addToast('Gateway deleted', 'success')
+      addToast(t('gateways.gatewayDeleted'), 'success')
     },
     onError: (err) => {
       addToast((err as Error).message, 'error')
@@ -106,12 +118,12 @@ export default function GatewaysPage() {
     if (!lastSeen) return '--'
     const diff = Date.now() - new Date(lastSeen).getTime()
     const minutes = Math.floor(diff / 60_000)
-    if (minutes < 1) return 'just now'
-    if (minutes < 60) return `${minutes}m ago`
+    if (minutes < 1) return t('gateways.justNow')
+    if (minutes < 60) return t('gateways.minutesAgo', { count: minutes })
     const hours = Math.floor(minutes / 60)
-    if (hours < 24) return `${hours}h ago`
+    if (hours < 24) return t('gateways.hoursAgo', { count: hours })
     const days = Math.floor(hours / 24)
-    return `${days}d ago`
+    return t('gateways.daysAgo', { count: days })
   }
 
   const columns = [
@@ -132,7 +144,7 @@ export default function GatewaysPage() {
     },
     {
       key: 'public_ip',
-      header: 'Public IP',
+      header: t('gateways.publicIp'),
       render: (row: Gateway) => (
         <span className="font-mono text-xs text-[var(--text-muted)]">{row.public_ip || '--'}</span>
       ),
@@ -152,7 +164,7 @@ export default function GatewaysPage() {
     },
     {
       key: 'priority',
-      header: 'Priority',
+      header: t('gateways.priority'),
       sortable: true,
       render: (row: Gateway) => (
         <span className="font-mono text-xs text-[var(--text-muted)]">{row.priority}</span>
@@ -160,7 +172,7 @@ export default function GatewaysPage() {
     },
     {
       key: 'last_seen',
-      header: 'Last Seen',
+      header: t('gateways.lastSeen'),
       render: (row: Gateway) => (
         <span className="font-mono text-xs text-[var(--text-muted)]">{formatLastSeen(row.last_seen)}</span>
       ),
@@ -188,7 +200,7 @@ export default function GatewaysPage() {
           {t('gateways.title')}
         </h1>
         <div className="rounded-lg border border-[var(--danger)] bg-[var(--bg-card)] p-6 text-center text-[var(--danger)]">
-          Failed to load gateways: {(error as Error).message}
+          {t('gateways.failedToLoad')} {(error as Error).message}
         </div>
       </div>
     )
@@ -209,7 +221,7 @@ export default function GatewaysPage() {
 
       {isLoading ? (
         <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-8 text-center text-[var(--text-muted)]">
-          Loading gateways...
+          {t('gateways.loadingGateways')}
         </div>
       ) : (
         <Table columns={columns} data={gateways} />
@@ -225,13 +237,24 @@ export default function GatewaysPage() {
             onChange={(e) => setFormName(e.target.value)}
             required
           />
-          <Input
-            label="Network ID"
-            placeholder="network-uuid"
-            value={formNetworkId}
-            onChange={(e) => setFormNetworkId(e.target.value)}
-            required
-          />
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-[var(--text-secondary)]">
+              {t('gateways.networkId')}
+            </label>
+            <select
+              className="rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-sm text-[var(--text-primary)]"
+              value={formNetworkId}
+              onChange={(e) => setFormNetworkId(e.target.value)}
+              required
+            >
+              <option value="">{t('gateways.selectNetwork')}</option>
+              {networks.map((net) => (
+                <option key={net.id} value={net.id}>
+                  {net.name} ({net.address})
+                </option>
+              ))}
+            </select>
+          </div>
           <Input
             label={t('gateways.endpoint')}
             placeholder="185.12.34.10:51820"
@@ -240,13 +263,13 @@ export default function GatewaysPage() {
             required
           />
           <Input
-            label="Public IP"
+            label={t('gateways.publicIp')}
             placeholder="185.12.34.10 (optional)"
             value={formPublicIp}
             onChange={(e) => setFormPublicIp(e.target.value)}
           />
           <Input
-            label="Priority"
+            label={t('gateways.priority')}
             placeholder="0 (optional)"
             type="number"
             value={formPriority}
@@ -262,7 +285,7 @@ export default function GatewaysPage() {
               {t('common.cancel')}
             </Button>
             <Button type="submit" disabled={createMutation.isPending}>
-              {createMutation.isPending ? 'Creating...' : t('common.create')}
+              {createMutation.isPending ? t('gateways.creating') : t('common.create')}
             </Button>
           </div>
         </form>
@@ -272,11 +295,11 @@ export default function GatewaysPage() {
       <Modal
         open={showToken !== null}
         onClose={() => { setShowToken(null); setCopiedToken(false) }}
-        title="Gateway Token"
+        title={t('gateways.gatewayToken')}
       >
         <div className="flex flex-col gap-4">
           <p className="text-sm text-[var(--warning)]">
-            This token will only be shown once. Copy it now and store it securely.
+            {t('gateways.tokenWarning')}
           </p>
           <div className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3">
             <code className="flex-1 text-xs font-mono text-[var(--accent)] break-all select-all">
@@ -288,7 +311,7 @@ export default function GatewaysPage() {
           </div>
           <div className="flex justify-end">
             <Button onClick={() => { setShowToken(null); setCopiedToken(false) }}>
-              Done
+              {t('common.done')}
             </Button>
           </div>
         </div>
@@ -298,11 +321,11 @@ export default function GatewaysPage() {
       <Modal
         open={deleteId !== null}
         onClose={() => setDeleteId(null)}
-        title="Delete Gateway"
+        title={t('gateways.deleteGateway')}
       >
         <div className="flex flex-col gap-4">
           <p className="text-sm text-[var(--text-secondary)]">
-            Are you sure you want to delete this gateway? This action cannot be undone.
+            {t('gateways.confirmDelete')}
           </p>
           {deleteMutation.isError && (
             <div className="text-xs text-[var(--danger)]">
@@ -318,7 +341,7 @@ export default function GatewaysPage() {
               disabled={deleteMutation.isPending}
               onClick={() => deleteId && deleteMutation.mutate(deleteId)}
             >
-              {deleteMutation.isPending ? 'Deleting...' : 'Delete'}
+              {deleteMutation.isPending ? t('gateways.deleting') : t('common.delete')}
             </Button>
           </div>
         </div>

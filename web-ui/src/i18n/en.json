@@ -26,7 +26,12 @@
     "recentActivity": "Recent Activity",
     "liveConnections": "Live Connections",
     "bandwidthChart": "Bandwidth Usage",
-    "topUsers": "Top Users"
+    "topUsers": "Top Users",
+    "noDataYet": "No data yet",
+    "noActivity": "No activity",
+    "action": "Action",
+    "time": "Time",
+    "user": "User"
   },
   "users": {
     "title": "User Management",
@@ -45,8 +50,13 @@
     "search": "Search users...",
     "admin": "Admin",
     "user": "User",
+    "viewer": "Viewer",
+    "editUser": "Edit User",
     "failedToLoad": "Failed to load users",
     "confirmDeactivate": "Are you sure you want to deactivate user",
+    "userCreated": "User created",
+    "userDeleted": "User deleted",
+    "userUpdated": "User updated",
     "creating": "Creating...",
     "deleting": "Deleting...",
     "saving": "Saving..."
@@ -125,7 +135,11 @@
     "justNow": "just now",
     "minutesAgo": "m ago",
     "hoursAgo": "h ago",
-    "daysAgo": "d ago"
+    "daysAgo": "d ago",
+    "gatewayCreated": "Gateway created",
+    "gatewayDeleted": "Gateway deleted",
+    "selectNetwork": "Select a network...",
+    "noNetworks": "No networks available"
   },
   "s2s": {
     "title": "Site-to-Site Tunnels",
@@ -149,7 +163,29 @@
     "failedToLoad": "Failed to load tunnels",
     "confirmDelete": "Are you sure you want to delete this tunnel? This action cannot be undone.",
     "newTunnel": "New Tunnel",
-    "createS2STunnel": "Create S2S Tunnel"
+    "createS2STunnel": "Create S2S Tunnel",
+    "tunnelDetails": "Tunnel Details",
+    "members": "Members",
+    "routes": "Routes",
+    "allowedDomains": "Allowed Domains",
+    "addMember": "Add Member",
+    "removeMember": "Remove Member",
+    "addRoute": "Add Route",
+    "removeRoute": "Remove Route",
+    "addDomain": "Add Domain",
+    "removeDomain": "Remove Domain",
+    "selectGateway": "Select a gateway...",
+    "noMembers": "No members yet. Add a gateway to this tunnel.",
+    "noRoutes": "No routes configured for this tunnel.",
+    "noDomains": "No allowed domains configured.",
+    "routeCidr": "CIDR",
+    "routeDescription": "Description (optional)",
+    "domainName": "Domain name",
+    "adding": "Adding...",
+    "removing": "Removing...",
+    "comingSoon": "This feature is coming soon. The API is not yet available.",
+    "gateway": "Gateway",
+    "hubGateway": "Hub Gateway"
   },
   "analytics": {
     "title": "Traffic Analytics",
