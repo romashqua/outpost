@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { UserPlus, Search, Shield, ShieldCheck, Trash2 } from 'lucide-react'
+import { UserPlus, Search, Shield, ShieldCheck, Trash2, Pencil } from 'lucide-react'
 import Table from '@/components/ui/Table'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
 import Modal from '@/components/ui/Modal'
 import { api } from '@/api/client'
+import { useToastStore } from '@/store/toast'
 
 interface User {
   id: string
@@ -41,9 +42,12 @@ interface CreateUserPayload {
 export default function UsersPage() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const addToast = useToastStore((s) => s.addToast)
   const [search, setSearch] = useState('')
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null)
+  const [editTarget, setEditTarget] = useState<User | null>(null)
+  const [editForm, setEditForm] = useState({ email: '', first_name: '', last_name: '', is_admin: false, is_active: true })
 
   const [formData, setFormData] = useState<CreateUserPayload>({
     username: '',
@@ -65,6 +69,10 @@ export default function UsersPage() {
       queryClient.invalidateQueries({ queryKey: ['users'] })
       setShowCreate(false)
       setFormData({ username: '', email: '', password: '', first_name: '', last_name: '', is_admin: false })
+      addToast('User created', 'success')
+    },
+    onError: (err) => {
+      addToast((err as Error).message, 'error')
     },
   })
 
@@ -73,6 +81,23 @@ export default function UsersPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] })
       setDeleteTarget(null)
+      addToast('User deleted', 'success')
+    },
+    onError: (err) => {
+      addToast((err as Error).message, 'error')
+    },
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: (payload: { id: string; email: string; first_name: string; last_name: string; is_admin: boolean; is_active: boolean }) =>
+      api.put(`/users/${payload.id}`, { email: payload.email, first_name: payload.first_name, last_name: payload.last_name, is_admin: payload.is_admin, is_active: payload.is_active }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['users'] })
+      setEditTarget(null)
+      addToast('User updated', 'success')
+    },
+    onError: (err) => {
+      addToast((err as Error).message, 'error')
     },
   })
 
@@ -142,16 +167,31 @@ export default function UsersPage() {
       key: 'actions',
       header: '',
       render: (row: User) => (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={(e) => {
-            e.stopPropagation()
-            setDeleteTarget(row)
-          }}
-        >
-          <Trash2 size={14} className="text-[var(--danger)]" />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation()
+              updateMutation.reset()
+              setEditForm({ email: row.email, first_name: row.first_name, last_name: row.last_name, is_admin: row.is_admin, is_active: row.is_active })
+              setEditTarget(row)
+            }}
+          >
+            <Pencil size={14} className="text-[var(--accent)]" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation()
+              deleteMutation.reset()
+              setDeleteTarget(row)
+            }}
+          >
+            <Trash2 size={14} className="text-[var(--danger)]" />
+          </Button>
+        </div>
       ),
     },
   ]
@@ -171,7 +211,7 @@ export default function UsersPage() {
           <span className="font-mono text-[var(--accent)] mr-2">&gt;_</span>
           {t('users.title')}
         </h1>
-        <Button onClick={() => setShowCreate(true)}>
+        <Button onClick={() => { createMutation.reset(); setShowCreate(true) }}>
           <UserPlus size={16} />
           {t('users.createUser')}
         </Button>
@@ -284,6 +324,68 @@ export default function UsersPage() {
             {deleteMutation.isPending ? 'Deleting...' : t('common.delete') || 'Delete'}
           </Button>
         </div>
+      </Modal>
+
+      {/* Edit User Modal */}
+      <Modal open={!!editTarget} onClose={() => setEditTarget(null)} title={t('users.editUser') || 'Edit user'}>
+        <form className="flex flex-col gap-4" onSubmit={(e) => {
+          e.preventDefault()
+          if (editTarget) updateMutation.mutate({ id: editTarget.id, ...editForm })
+        }}>
+          <Input
+            label={t('users.email')}
+            placeholder="user@corp.ru"
+            type="email"
+            value={editForm.email}
+            onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+            required
+          />
+          <div className="grid grid-cols-2 gap-4">
+            <Input
+              label={t('users.firstName') || 'First name'}
+              placeholder="First name"
+              value={editForm.first_name}
+              onChange={(e) => setEditForm({ ...editForm, first_name: e.target.value })}
+            />
+            <Input
+              label={t('users.lastName') || 'Last name'}
+              placeholder="Last name"
+              value={editForm.last_name}
+              onChange={(e) => setEditForm({ ...editForm, last_name: e.target.value })}
+            />
+          </div>
+          <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
+            <input
+              type="checkbox"
+              checked={editForm.is_admin}
+              onChange={(e) => setEditForm({ ...editForm, is_admin: e.target.checked })}
+              className="rounded"
+            />
+            Admin
+          </label>
+          <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
+            <input
+              type="checkbox"
+              checked={editForm.is_active}
+              onChange={(e) => setEditForm({ ...editForm, is_active: e.target.checked })}
+              className="rounded"
+            />
+            Active
+          </label>
+          {updateMutation.error && (
+            <p className="text-sm text-[var(--danger)]">
+              {(updateMutation.error as Error).message}
+            </p>
+          )}
+          <div className="flex gap-3 justify-end mt-2">
+            <Button variant="secondary" type="button" onClick={() => setEditTarget(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button type="submit" disabled={updateMutation.isPending}>
+              {updateMutation.isPending ? 'Saving...' : t('common.save') || 'Save'}
+            </Button>
+          </div>
+        </form>
       </Modal>
     </div>
   )

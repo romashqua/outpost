@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { CheckCircle, XCircle, Trash2 } from 'lucide-react'
+import { CheckCircle, XCircle, Trash2, Plus, Download, Copy, FileDown } from 'lucide-react'
 import Table from '@/components/ui/Table'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
+import Input from '@/components/ui/Input'
 import Modal from '@/components/ui/Modal'
 import { api } from '@/api/client'
+import { useToastStore } from '@/store/toast'
 
 interface Device {
   id: string
@@ -19,20 +21,64 @@ interface Device {
   created_at: string
 }
 
+interface User {
+  id: string
+  username: string
+  email: string
+  first_name: string
+  last_name: string
+  is_admin: boolean
+  is_active: boolean
+}
+
+interface UsersResponse {
+  users: User[]
+  total: number
+  page: number
+  per_page: number
+}
+
+interface ConfigResponse {
+  config: string
+  private_key: string
+  public_key: string
+}
+
 export default function DevicesPage() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const addToast = useToastStore((s) => s.addToast)
   const [deleteTarget, setDeleteTarget] = useState<Device | null>(null)
+  const [showCreateModal, setShowCreateModal] = useState(false)
+  const [showConfigModal, setShowConfigModal] = useState(false)
+  const [configText, setConfigText] = useState('')
+  const [createForm, setCreateForm] = useState({
+    name: '',
+    user_id: '',
+    autoGenerateKey: true,
+    wireguard_pubkey: '',
+  })
 
   const { data: devices = [], isLoading, error } = useQuery<Device[]>({
     queryKey: ['devices'],
     queryFn: () => api.get('/devices'),
   })
 
+  const { data: usersData } = useQuery<UsersResponse>({
+    queryKey: ['users'],
+    queryFn: () => api.get('/users'),
+  })
+
+  const users = usersData?.users ?? []
+
   const approveMutation = useMutation({
     mutationFn: (id: string) => api.post(`/devices/${id}/approve`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['devices'] })
+      addToast(t('devices.approve'), 'success')
+    },
+    onError: (err) => {
+      addToast((err as Error).message, 'error')
     },
   })
 
@@ -40,6 +86,10 @@ export default function DevicesPage() {
     mutationFn: (id: string) => api.post(`/devices/${id}/revoke`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['devices'] })
+      addToast(t('devices.revoke'), 'success')
+    },
+    onError: (err) => {
+      addToast((err as Error).message, 'error')
     },
   })
 
@@ -48,8 +98,82 @@ export default function DevicesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['devices'] })
       setDeleteTarget(null)
+      addToast(t('common.delete'), 'success')
+    },
+    onError: (err) => {
+      addToast((err as Error).message, 'error')
     },
   })
+
+  const createMutation = useMutation({
+    mutationFn: async (form: typeof createForm) => {
+      let pubkey = form.wireguard_pubkey
+
+      if (form.autoGenerateKey) {
+        pubkey = 'auto-generated'
+      }
+
+      const device = await api.post<Device>('/devices', {
+        name: form.name,
+        user_id: form.user_id,
+        wireguard_pubkey: pubkey,
+      })
+
+      if (form.autoGenerateKey) {
+        const configResp = await api.get<ConfigResponse>(`/devices/${device.id}/config`)
+        return { device, config: configResp }
+      }
+
+      return { device, config: null }
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['devices'] })
+      setShowCreateModal(false)
+      setCreateForm({ name: '', user_id: '', autoGenerateKey: true, wireguard_pubkey: '' })
+      addToast(t('devices.createDevice'), 'success')
+
+      if (result.config) {
+        setConfigText(result.config.config)
+        setShowConfigModal(true)
+      }
+    },
+    onError: (err) => {
+      addToast((err as Error).message, 'error')
+    },
+  })
+
+  const downloadConfigMutation = useMutation({
+    mutationFn: (id: string) => api.get<ConfigResponse>(`/devices/${id}/config`),
+    onSuccess: (resp) => {
+      queryClient.invalidateQueries({ queryKey: ['devices'] })
+      setConfigText(resp.config)
+      setShowConfigModal(true)
+    },
+    onError: (err) => {
+      addToast((err as Error).message, 'error')
+    },
+  })
+
+  const copyConfig = async () => {
+    try {
+      await navigator.clipboard.writeText(configText)
+      addToast(t('devices.copy'), 'success')
+    } catch {
+      addToast('Failed to copy', 'error')
+    }
+  }
+
+  const downloadConfigFile = () => {
+    const blob = new Blob([configText], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'wg-outpost.conf'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
 
   const truncatePubkey = (key: string) => {
     if (key.length <= 16) return key
@@ -87,7 +211,7 @@ export default function DevicesPage() {
     },
     {
       key: 'assigned_ip',
-      header: t('devices.assignedIp') || 'Assigned IP',
+      header: t('devices.assignedIp'),
       render: (row: Device) => (
         <span className="font-mono text-xs">{row.assigned_ip}</span>
       ),
@@ -97,7 +221,7 @@ export default function DevicesPage() {
       header: t('devices.status'),
       render: (row: Device) => (
         <Badge variant={row.is_approved ? 'online' : 'offline'} pulse>
-          {row.is_approved ? t('status.approved') || 'Approved' : t('status.pending') || 'Pending'}
+          {row.is_approved ? t('status.approved') : t('status.pending')}
         </Badge>
       ),
     },
@@ -115,11 +239,23 @@ export default function DevicesPage() {
       header: '',
       render: (row: Device) => (
         <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            title={t('devices.downloadConfig')}
+            disabled={downloadConfigMutation.isPending}
+            onClick={(e) => {
+              e.stopPropagation()
+              downloadConfigMutation.mutate(row.id)
+            }}
+          >
+            <Download size={14} className="text-[var(--accent)]" />
+          </Button>
           {!row.is_approved ? (
             <Button
               variant="ghost"
               size="sm"
-              title="Approve"
+              title={t('devices.approve')}
               disabled={approveMutation.isPending}
               onClick={(e) => {
                 e.stopPropagation()
@@ -132,7 +268,7 @@ export default function DevicesPage() {
             <Button
               variant="ghost"
               size="sm"
-              title="Revoke"
+              title={t('devices.revoke')}
               disabled={revokeMutation.isPending}
               onClick={(e) => {
                 e.stopPropagation()
@@ -145,9 +281,10 @@ export default function DevicesPage() {
           <Button
             variant="ghost"
             size="sm"
-            title="Delete"
+            title={t('common.delete')}
             onClick={(e) => {
               e.stopPropagation()
+              deleteMutation.reset()
               setDeleteTarget(row)
             }}
           >
@@ -161,32 +298,154 @@ export default function DevicesPage() {
   if (error) {
     return (
       <div className="text-center py-12 text-[var(--danger)]">
-        Failed to load devices: {(error as Error).message}
+        {t('devices.failedToLoad')}: {(error as Error).message}
       </div>
     )
   }
 
   return (
     <div>
-      <h1 className="text-xl font-semibold text-[var(--text-primary)] mb-6">
-        <span className="font-mono text-[var(--accent)] mr-2">&gt;_</span>
-        {t('devices.title')}
-      </h1>
+      <div className="flex items-center justify-between mb-6">
+        <h1 className="text-xl font-semibold text-[var(--text-primary)]">
+          <span className="font-mono text-[var(--accent)] mr-2">&gt;_</span>
+          {t('devices.title')}
+        </h1>
+        <Button onClick={() => { createMutation.reset(); setShowCreateModal(true) }}>
+          <Plus size={16} className="mr-1" />
+          {t('devices.addDevice')}
+        </Button>
+      </div>
 
       {isLoading ? (
-        <div className="text-center py-12 text-[var(--text-muted)]">Loading...</div>
+        <div className="text-center py-12 text-[var(--text-muted)]">{t('common.loading')}</div>
       ) : (
         <Table columns={columns} data={devices} />
       )}
+
+      {/* Create Device Modal */}
+      <Modal
+        open={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+        title={t('devices.addDevice')}
+      >
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (!createForm.name || !createForm.user_id) return
+            if (!createForm.autoGenerateKey && !createForm.wireguard_pubkey) return
+            createMutation.mutate(createForm)
+          }}
+        >
+          <div className="flex flex-col gap-4 mb-6">
+            <Input
+              label={t('devices.name')}
+              placeholder="e.g. laptop-work"
+              value={createForm.name}
+              onChange={(e) => setCreateForm((f) => ({ ...f, name: e.target.value }))}
+              required
+            />
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
+                {t('devices.user')}
+              </label>
+              <select
+                className="w-full rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-sm text-[var(--text-primary)] font-mono glow-focus transition-all duration-150"
+                value={createForm.user_id}
+                onChange={(e) => setCreateForm((f) => ({ ...f, user_id: e.target.value }))}
+                required
+              >
+                <option value="">{t('devices.selectUser')}</option>
+                {users.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.username} ({u.email})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="autoGenKey"
+                checked={createForm.autoGenerateKey}
+                onChange={(e) =>
+                  setCreateForm((f) => ({ ...f, autoGenerateKey: e.target.checked }))
+                }
+                className="rounded border-[var(--border)] bg-[var(--bg-secondary)]"
+              />
+              <label
+                htmlFor="autoGenKey"
+                className="text-sm text-[var(--text-secondary)] cursor-pointer"
+              >
+                {t('devices.autoGenerateKey')}
+              </label>
+            </div>
+
+            {!createForm.autoGenerateKey && (
+              <Input
+                label={t('devices.wireguardPubkey')}
+                placeholder="Base64-encoded public key"
+                value={createForm.wireguard_pubkey}
+                onChange={(e) =>
+                  setCreateForm((f) => ({ ...f, wireguard_pubkey: e.target.value }))
+                }
+                required
+              />
+            )}
+          </div>
+
+          {createMutation.error && (
+            <p className="text-sm text-[var(--danger)] mb-4">
+              {(createMutation.error as Error).message}
+            </p>
+          )}
+
+          <div className="flex gap-3 justify-end">
+            <Button variant="secondary" type="button" onClick={() => setShowCreateModal(false)}>
+              {t('common.cancel')}
+            </Button>
+            <Button type="submit" disabled={createMutation.isPending}>
+              {createMutation.isPending ? t('devices.creating') : t('devices.createDevice')}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* WireGuard Config Modal */}
+      <Modal
+        open={showConfigModal}
+        onClose={() => setShowConfigModal(false)}
+        title={t('devices.wireguardConfig')}
+      >
+        <div className="flex flex-col gap-4">
+          <div className="relative">
+            <pre className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-md p-4 text-xs font-mono text-[var(--text-primary)] overflow-x-auto whitespace-pre-wrap max-h-80 overflow-y-auto">
+              {configText}
+            </pre>
+          </div>
+
+          <div className="flex gap-3 justify-end">
+            <Button variant="secondary" onClick={copyConfig}>
+              <Copy size={14} className="mr-1" />
+              {t('devices.copy')}
+            </Button>
+            <Button onClick={downloadConfigFile}>
+              <FileDown size={14} className="mr-1" />
+              {t('devices.downloadConf')}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Delete Confirmation Modal */}
       <Modal
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
-        title={t('devices.deleteDevice') || 'Delete device'}
+        title={t('devices.deleteDevice')}
       >
         <p className="text-[var(--text-secondary)] mb-6">
-          Are you sure you want to delete device{' '}
+          {t('devices.confirmDelete')}{' '}
           <span className="font-mono text-[var(--accent)]">{deleteTarget?.name}</span>?
         </p>
         {deleteMutation.error && (
@@ -203,7 +462,7 @@ export default function DevicesPage() {
             disabled={deleteMutation.isPending}
             onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
           >
-            {deleteMutation.isPending ? 'Deleting...' : t('common.delete') || 'Delete'}
+            {deleteMutation.isPending ? t('devices.deleting') : t('common.delete')}
           </Button>
         </div>
       </Modal>

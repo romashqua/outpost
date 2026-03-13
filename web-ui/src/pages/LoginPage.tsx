@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Lock, User, Terminal, ShieldCheck } from 'lucide-react'
 import { useAuthStore } from '@/store/auth'
+import { useToastStore } from '@/store/toast'
 import Input from '@/components/ui/Input'
 import Button from '@/components/ui/Button'
 
@@ -18,6 +19,7 @@ const RAIN_COLUMNS = Array.from({ length: 20 }, (_, i) => ({
 export default function LoginPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const addToast = useToastStore((s) => s.addToast)
   const login = useAuthStore((s) => s.login)
   const verifyMFA = useAuthStore((s) => s.verifyMFA)
   const needsMFA = useAuthStore((s) => s.needsMFA)
@@ -40,7 +42,9 @@ export default function LoginPage() {
         navigate('/')
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('login.error'))
+      const msg = err instanceof Error ? err.message : t('login.error')
+      setError(msg)
+      addToast(msg, 'error')
     } finally {
       setLoading(false)
     }
@@ -55,7 +59,9 @@ export default function LoginPage() {
       await verifyMFA(mfaCode)
       navigate('/')
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('login.error'))
+      const msg = err instanceof Error ? err.message : t('login.error')
+      setError(msg)
+      addToast(msg, 'error')
     } finally {
       setLoading(false)
     }

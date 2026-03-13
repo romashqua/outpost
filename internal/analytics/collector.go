@@ -25,23 +25,25 @@ type FlowRecord struct {
 
 // UserBandwidth contains aggregate bandwidth for a user.
 type UserBandwidth struct {
-	UserID    string `json:"user_id"`
-	BytesSent int64  `json:"bytes_sent"`
-	BytesRecv int64  `json:"bytes_recv"`
-	Total     int64  `json:"total"`
+	UserID   string `json:"user_id"`
+	Username string `json:"username"`
+	RxBytes  int64  `json:"rx_bytes"`
+	TxBytes  int64  `json:"tx_bytes"`
+	Total    int64  `json:"total"`
 }
 
 // BandwidthBucket contains bandwidth aggregated into a time bucket.
 type BandwidthBucket struct {
-	Timestamp time.Time `json:"timestamp"`
-	BytesSent int64     `json:"bytes_sent"`
-	BytesRecv int64     `json:"bytes_recv"`
+	Bucket  time.Time `json:"bucket"`
+	RxBytes int64     `json:"rx_bytes"`
+	TxBytes int64     `json:"tx_bytes"`
 }
 
-// HourlyConnections contains connection count for a specific hour of day.
+// HourlyConnections contains connection count for a specific hour/day of week.
 type HourlyConnections struct {
-	Hour  int `json:"hour"` // 0-23
-	Count int `json:"count"`
+	Hour      int `json:"hour"`       // 0-23
+	DayOfWeek int `json:"day_of_week"` // 0=Mon, 6=Sun
+	Count     int `json:"count"`
 }
 
 // Collector aggregates flow records and produces analytics.
@@ -75,13 +77,15 @@ func (c *Collector) Record(ctx context.Context, flow FlowRecord) error {
 // TopUsers returns top N users by total bandwidth in a time range.
 func (c *Collector) TopUsers(ctx context.Context, from, to time.Time, limit int) ([]UserBandwidth, error) {
 	rows, err := c.pool.Query(ctx,
-		`SELECT user_id,
-			SUM(bytes_sent) AS bytes_sent,
-			SUM(bytes_recv) AS bytes_recv,
-			SUM(bytes_sent + bytes_recv) AS total
-		 FROM flow_records
-		 WHERE recorded_at >= $1 AND recorded_at < $2
-		 GROUP BY user_id
+		`SELECT fr.user_id,
+			COALESCE(u.username, fr.user_id::text) AS username,
+			SUM(fr.bytes_recv) AS rx_bytes,
+			SUM(fr.bytes_sent) AS tx_bytes,
+			SUM(fr.bytes_sent + fr.bytes_recv) AS total
+		 FROM flow_records fr
+		 LEFT JOIN users u ON u.id = fr.user_id
+		 WHERE fr.recorded_at >= $1 AND fr.recorded_at < $2
+		 GROUP BY fr.user_id, u.username
 		 ORDER BY total DESC
 		 LIMIT $3`,
 		from, to, limit,
@@ -91,10 +95,10 @@ func (c *Collector) TopUsers(ctx context.Context, from, to time.Time, limit int)
 	}
 	defer rows.Close()
 
-	var results []UserBandwidth
+	results := make([]UserBandwidth, 0)
 	for rows.Next() {
 		var ub UserBandwidth
-		if err := rows.Scan(&ub.UserID, &ub.BytesSent, &ub.BytesRecv, &ub.Total); err != nil {
+		if err := rows.Scan(&ub.UserID, &ub.Username, &ub.RxBytes, &ub.TxBytes, &ub.Total); err != nil {
 			return nil, fmt.Errorf("scan top users row: %w", err)
 		}
 		results = append(results, ub)
@@ -117,8 +121,8 @@ func (c *Collector) BandwidthOverTime(ctx context.Context, from, to time.Time, b
 	rows, err := c.pool.Query(ctx,
 		`SELECT
 			to_timestamp(FLOOR(EXTRACT(EPOCH FROM recorded_at) / $3) * $3) AS bucket,
-			SUM(bytes_sent) AS bytes_sent,
-			SUM(bytes_recv) AS bytes_recv
+			SUM(bytes_recv) AS rx_bytes,
+			SUM(bytes_sent) AS tx_bytes
 		 FROM flow_records
 		 WHERE recorded_at >= $1 AND recorded_at < $2
 		 GROUP BY bucket
@@ -130,10 +134,10 @@ func (c *Collector) BandwidthOverTime(ctx context.Context, from, to time.Time, b
 	}
 	defer rows.Close()
 
-	var results []BandwidthBucket
+	results := make([]BandwidthBucket, 0)
 	for rows.Next() {
 		var bb BandwidthBucket
-		if err := rows.Scan(&bb.Timestamp, &bb.BytesSent, &bb.BytesRecv); err != nil {
+		if err := rows.Scan(&bb.Bucket, &bb.RxBytes, &bb.TxBytes); err != nil {
 			return nil, fmt.Errorf("scan bandwidth bucket: %w", err)
 		}
 		results = append(results, bb)
@@ -146,15 +150,16 @@ func (c *Collector) BandwidthOverTime(ctx context.Context, from, to time.Time, b
 	return results, nil
 }
 
-// ConnectionsByHour returns connection counts grouped by hour of day (for heatmap).
+// ConnectionsByHour returns connection counts grouped by day of week and hour (for heatmap).
 func (c *Collector) ConnectionsByHour(ctx context.Context, from, to time.Time) ([]HourlyConnections, error) {
 	rows, err := c.pool.Query(ctx,
 		`SELECT EXTRACT(HOUR FROM recorded_at)::int AS hour,
+			(EXTRACT(ISODOW FROM recorded_at)::int - 1) AS day_of_week,
 			COUNT(*) AS count
 		 FROM flow_records
 		 WHERE recorded_at >= $1 AND recorded_at < $2
-		 GROUP BY hour
-		 ORDER BY hour`,
+		 GROUP BY hour, day_of_week
+		 ORDER BY day_of_week, hour`,
 		from, to,
 	)
 	if err != nil {
@@ -162,10 +167,10 @@ func (c *Collector) ConnectionsByHour(ctx context.Context, from, to time.Time) (
 	}
 	defer rows.Close()
 
-	var results []HourlyConnections
+	results := make([]HourlyConnections, 0)
 	for rows.Next() {
 		var hc HourlyConnections
-		if err := rows.Scan(&hc.Hour, &hc.Count); err != nil {
+		if err := rows.Scan(&hc.Hour, &hc.DayOfWeek, &hc.Count); err != nil {
 			return nil, fmt.Errorf("scan hourly connections: %w", err)
 		}
 		results = append(results, hc)

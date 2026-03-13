@@ -43,6 +43,20 @@ tags:
     description: Traffic analytics and bandwidth monitoring
   - name: Compliance
     description: Automated compliance checks (SOC2, ISO27001, GDPR)
+  - name: Dashboard
+    description: Dashboard summary statistics
+  - name: S2STunnels
+    description: Site-to-site VPN tunnel management
+  - name: Settings
+    description: Application settings management
+  - name: Mail
+    description: Email operations
+  - name: SmartRoutes
+    description: Smart routing (selective proxy bypass)
+  - name: Webhooks
+    description: Outbound webhook subscription management
+  - name: Audit
+    description: Audit log viewer and export
 
 paths:
   # ── Health ──────────────────────────────────────────────────────────
@@ -1462,6 +1476,967 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  # ── Auth (MFA Verify & Refresh) ─────────────────────────────────────
+  /api/v1/auth/mfa/verify:
+    post:
+      operationId: verifyMFA
+      summary: Verify MFA code and obtain full JWT token
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MFAVerifyRequest"
+      responses:
+        "200":
+          description: MFA verification successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "400":
+          description: Missing mfa_token or code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Invalid or expired MFA token / invalid code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: MFA not configured or internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/auth/refresh:
+    post:
+      operationId: refreshToken
+      summary: Refresh JWT token
+      tags: [Auth]
+      responses:
+        "200":
+          description: New token issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "401":
+          description: Invalid or expired token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: Account disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Dashboard ────────────────────────────────────────────────────────
+  /api/v1/dashboard/stats:
+    get:
+      operationId: getDashboardStats
+      summary: Dashboard summary statistics
+      tags: [Dashboard]
+      security: []
+      responses:
+        "200":
+          description: Dashboard statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardStats"
+
+  # ── User Activate ────────────────────────────────────────────────────
+  /api/v1/users/{id}/activate:
+    patch:
+      operationId: activateUser
+      summary: Reactivate a deactivated user
+      tags: [Users]
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: User reactivated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          description: Invalid UUID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Device Enrollment ────────────────────────────────────────────────
+  /api/v1/devices/enroll:
+    post:
+      operationId: enrollDevice
+      summary: Self-service device enrollment
+      tags: [Devices]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnrollDeviceRequest"
+      responses:
+        "201":
+          description: Device enrolled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnrollDeviceResponse"
+        "400":
+          description: Missing required fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Device already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: IP allocation or internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Device Config Download ───────────────────────────────────────────
+  /api/v1/devices/{id}/config:
+    get:
+      operationId: downloadDeviceConfig
+      summary: Download WireGuard configuration for a device
+      tags: [Devices]
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: WireGuard configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceConfigResponse"
+        "400":
+          description: Invalid UUID
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Device not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Key generation or network error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── S2S Tunnels ──────────────────────────────────────────────────────
+  /api/v1/s2s-tunnels:
+    get:
+      operationId: listS2STunnels
+      summary: List site-to-site tunnels
+      tags: [S2STunnels]
+      responses:
+        "200":
+          description: List of S2S tunnels
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/S2STunnel"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: createS2STunnel
+      summary: Create a site-to-site tunnel
+      tags: [S2STunnels]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateS2STunnelRequest"
+      responses:
+        "201":
+          description: Tunnel created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/S2STunnel"
+        "400":
+          description: Missing or invalid fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Tunnel with this name already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/s2s-tunnels/{id}:
+    get:
+      operationId: getS2STunnel
+      summary: Get a site-to-site tunnel
+      tags: [S2STunnels]
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: Tunnel details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/S2STunnel"
+        "404":
+          description: Tunnel not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteS2STunnel
+      summary: Delete a site-to-site tunnel
+      tags: [S2STunnels]
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "204":
+          description: Tunnel deleted
+        "404":
+          description: Tunnel not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Settings ─────────────────────────────────────────────────────────
+  /api/v1/settings:
+    get:
+      operationId: getAllSettings
+      summary: Get all settings as key-value map
+      tags: [Settings]
+      responses:
+        "200":
+          description: All settings
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    put:
+      operationId: batchSetSettings
+      summary: Batch upsert settings
+      tags: [Settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              description: Key-value pairs to upsert
+      responses:
+        "200":
+          description: Settings saved
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        "400":
+          description: Empty body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/settings/{key}:
+    get:
+      operationId: getSetting
+      summary: Get a single setting by key
+      tags: [Settings]
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Setting value
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingEntry"
+        "404":
+          description: Setting not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    put:
+      operationId: setSetting
+      summary: Set a single setting by key
+      tags: [Settings]
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value: {}
+      responses:
+        "200":
+          description: Setting saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingEntry"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteSetting
+      summary: Delete a setting by key
+      tags: [Settings]
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Setting deleted
+        "404":
+          description: Setting not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/settings/smtp/test:
+    post:
+      operationId: testSMTPSettings
+      summary: Send a test email via configured SMTP
+      tags: [Settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TestEmailRequest"
+      responses:
+        "200":
+          description: Test email sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusOK"
+        "400":
+          description: SMTP not configured or missing recipient
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Failed to send
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Mail ─────────────────────────────────────────────────────────────
+  /api/v1/mail/test:
+    post:
+      operationId: testMailSend
+      summary: Send a test email
+      tags: [Mail]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TestEmailRequest"
+      responses:
+        "200":
+          description: Test email sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusOK"
+        "400":
+          description: SMTP not configured or missing recipient
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Failed to send
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Smart Routes ─────────────────────────────────────────────────────
+  /api/v1/smart-routes:
+    get:
+      operationId: listSmartRoutes
+      summary: List smart routes
+      tags: [SmartRoutes]
+      responses:
+        "200":
+          description: List of smart routes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SmartRoute"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: createSmartRoute
+      summary: Create a smart route
+      tags: [SmartRoutes]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSmartRouteRequest"
+      responses:
+        "201":
+          description: Smart route created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SmartRoute"
+        "400":
+          description: Missing name
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Duplicate name
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/smart-routes/{id}:
+    get:
+      operationId: getSmartRoute
+      summary: Get a smart route with entries
+      tags: [SmartRoutes]
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "200":
+          description: Smart route with entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SmartRoute"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    put:
+      operationId: updateSmartRoute
+      summary: Update a smart route
+      tags: [SmartRoutes]
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSmartRouteRequest"
+      responses:
+        "200":
+          description: Smart route updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SmartRoute"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Duplicate name
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteSmartRoute
+      summary: Delete a smart route
+      tags: [SmartRoutes]
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/smart-routes/{id}/entries:
+    post:
+      operationId: addSmartRouteEntry
+      summary: Add an entry to a smart route
+      tags: [SmartRoutes]
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSmartRouteEntryRequest"
+      responses:
+        "201":
+          description: Entry added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SmartRouteEntry"
+        "400":
+          description: Invalid fields or missing proxy_id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Duplicate entry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/smart-routes/{id}/entries/{entryId}:
+    delete:
+      operationId: deleteSmartRouteEntry
+      summary: Remove an entry from a smart route
+      tags: [SmartRoutes]
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+        - name: entryId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Entry deleted
+        "404":
+          description: Entry not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/smart-routes/proxy-servers:
+    get:
+      operationId: listProxyServers
+      summary: List proxy servers
+      tags: [SmartRoutes]
+      responses:
+        "200":
+          description: List of proxy servers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProxyServer"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: createProxyServer
+      summary: Create a proxy server
+      tags: [SmartRoutes]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProxyServerRequest"
+      responses:
+        "201":
+          description: Proxy server created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProxyServer"
+        "400":
+          description: Missing or invalid fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Duplicate proxy server
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/smart-routes/proxy-servers/{id}:
+    delete:
+      operationId: deleteProxyServer
+      summary: Delete a proxy server
+      tags: [SmartRoutes]
+      parameters:
+        - $ref: "#/components/parameters/ResourceID"
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Referenced by route entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Webhooks ──────────────────────────────────────────────────────────
+  /api/v1/webhooks:
+    get:
+      operationId: listWebhooks
+      summary: List webhook subscriptions
+      tags: [Webhooks]
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Array of webhook subscriptions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WebhookSubscription"
+    post:
+      operationId: createWebhook
+      summary: Create a webhook subscription
+      tags: [Webhooks]
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, secret]
+              properties:
+                url:
+                  type: string
+                  format: uri
+                secret:
+                  type: string
+                events:
+                  type: array
+                  items:
+                    type: string
+                  default: ["*"]
+      responses:
+        "201":
+          description: Webhook created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookSubscription"
+
+  /api/v1/webhooks/{id}:
+    get:
+      operationId: getWebhook
+      summary: Get a webhook subscription
+      tags: [Webhooks]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Webhook subscription
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookSubscription"
+        "404":
+          description: Not found
+    delete:
+      operationId: deleteWebhook
+      summary: Delete a webhook subscription
+      tags: [Webhooks]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "204":
+          description: Deleted
+
+  /api/v1/webhooks/{id}/test:
+    post:
+      operationId: testWebhook
+      summary: Send a test event to the webhook
+      tags: [Webhooks]
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Test event sent
+
+  # ── Audit Log ────────────────────────────────────────────────────────
+  /api/v1/audit:
+    get:
+      operationId: listAuditLogs
+      summary: List audit log entries (paginated)
+      tags: [Audit]
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - name: user_id
+          in: query
+          schema:
+            type: string
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: resource
+          in: query
+          schema:
+            type: string
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+      responses:
+        "200":
+          description: Paginated audit log
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditListResponse"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/audit/export:
+    get:
+      operationId: exportAuditLogs
+      summary: Export audit logs (JSON or CSV)
+      tags: [Audit]
+      parameters:
+        - name: format
+          in: query
+          description: Export format (json or csv)
+          schema:
+            type: string
+            enum: [json, csv]
+            default: json
+        - name: user_id
+          in: query
+          schema:
+            type: string
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: resource
+          in: query
+          schema:
+            type: string
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+      responses:
+        "200":
+          description: Audit log export
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AuditEntry"
+            text/csv:
+              schema:
+                type: string
+
+  /api/v1/audit/stats:
+    get:
+      operationId: getAuditStats
+      summary: Audit event counts grouped by action and time bucket
+      tags: [Audit]
+      parameters:
+        - name: user_id
+          in: query
+          schema:
+            type: string
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: resource
+          in: query
+          schema:
+            type: string
+        - $ref: "#/components/parameters/From"
+        - $ref: "#/components/parameters/To"
+      responses:
+        "200":
+          description: Audit statistics
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AuditStat"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 # ══════════════════════════════════════════════════════════════════════
 # Components
 # ══════════════════════════════════════════════════════════════════════
@@ -1554,15 +2529,36 @@ components:
 
     LoginResponse:
       type: object
-      required: [token, expires_at]
       properties:
         token:
           type: string
-          description: JWT bearer token
+          description: JWT bearer token (empty when mfa_required is true)
         expires_at:
           type: integer
           format: int64
           description: Unix timestamp when the token expires
+        mfa_required:
+          type: boolean
+          description: Whether MFA verification is needed
+        mfa_token:
+          type: string
+          description: Short-lived token for MFA verification step
+
+    MFAVerifyRequest:
+      type: object
+      required: [mfa_token, code]
+      properties:
+        mfa_token:
+          type: string
+          description: MFA token received from login
+        code:
+          type: string
+          description: TOTP code or backup code
+          example: "123456"
+        method:
+          type: string
+          enum: [totp, email, backup]
+          description: MFA method (defaults to totp)
 
     # ── Users ───────────────────────────────────────────────────────
     User:
@@ -2226,6 +3222,392 @@ components:
           example: "409"
         detail:
           type: string
+
+    # ── Dashboard ────────────────────────────────────────────────────
+    DashboardStats:
+      type: object
+      required:
+        - active_users
+        - total_users
+        - active_devices
+        - total_devices
+        - active_gateways
+        - total_gateways
+        - active_networks
+        - s2s_tunnels
+      properties:
+        active_users:
+          type: integer
+        total_users:
+          type: integer
+        active_devices:
+          type: integer
+        total_devices:
+          type: integer
+        active_gateways:
+          type: integer
+        total_gateways:
+          type: integer
+        active_networks:
+          type: integer
+        s2s_tunnels:
+          type: integer
+
+    # ── Device Enrollment / Config ───────────────────────────────────
+    EnrollDeviceRequest:
+      type: object
+      required: [name, wireguard_pubkey]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          example: iPhone 15
+        wireguard_pubkey:
+          type: string
+          description: WireGuard public key (base64)
+
+    EnrollDeviceResponse:
+      type: object
+      required: [device_id, address, dns, endpoint, server_public_key, allowed_ips, persistent_keepalive]
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        address:
+          type: string
+          description: Assigned VPN address with mask
+          example: 10.10.0.3/24
+        dns:
+          type: array
+          items:
+            type: string
+          example: ["1.1.1.1"]
+        endpoint:
+          type: string
+          example: vpn.example.com:51820
+        server_public_key:
+          type: string
+        allowed_ips:
+          type: array
+          items:
+            type: string
+          example: ["0.0.0.0/0"]
+        persistent_keepalive:
+          type: integer
+          example: 25
+
+    DeviceConfigResponse:
+      type: object
+      required: [config, private_key, public_key]
+      properties:
+        config:
+          type: string
+          description: WireGuard INI-format configuration
+        private_key:
+          type: string
+          description: WireGuard private key (base64)
+        public_key:
+          type: string
+          description: WireGuard public key (base64)
+
+    # ── S2S Tunnels ──────────────────────────────────────────────────
+    S2STunnel:
+      type: object
+      required: [id, name, topology, is_active, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        topology:
+          type: string
+          enum: [mesh, hub_spoke]
+        hub_gateway_id:
+          type: string
+          format: uuid
+          nullable: true
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateS2STunnelRequest:
+      type: object
+      required: [name, topology]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        topology:
+          type: string
+          enum: [mesh, hub_spoke]
+        hub_gateway_id:
+          type: string
+          format: uuid
+          description: Required for hub_spoke topology
+
+    # ── Settings ─────────────────────────────────────────────────────
+    SettingEntry:
+      type: object
+      required: [key, value]
+      properties:
+        key:
+          type: string
+        value: {}
+
+    TestEmailRequest:
+      type: object
+      required: [to]
+      properties:
+        to:
+          type: string
+          format: email
+          description: Recipient email address
+
+    # ── Smart Routes ─────────────────────────────────────────────────
+    SmartRoute:
+      type: object
+      required: [id, name, is_active, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/SmartRouteEntry"
+
+    SmartRouteEntry:
+      type: object
+      required: [id, smart_route_id, entry_type, value, action, priority, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        smart_route_id:
+          type: string
+          format: uuid
+        entry_type:
+          type: string
+          enum: [domain, cidr, domain_suffix]
+        value:
+          type: string
+          example: "*.google.com"
+        action:
+          type: string
+          enum: [proxy, direct, block]
+        proxy_id:
+          type: string
+          format: uuid
+          nullable: true
+        proxy_name:
+          type: string
+          nullable: true
+        priority:
+          type: integer
+          example: 100
+        created_at:
+          type: string
+          format: date-time
+
+    CreateSmartRouteRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+
+    UpdateSmartRouteRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        is_active:
+          type: boolean
+
+    CreateSmartRouteEntryRequest:
+      type: object
+      required: [entry_type, value, action]
+      properties:
+        entry_type:
+          type: string
+          enum: [domain, cidr, domain_suffix]
+        value:
+          type: string
+        action:
+          type: string
+          enum: [proxy, direct, block]
+        proxy_id:
+          type: string
+          format: uuid
+          description: Required when action is 'proxy'
+        priority:
+          type: integer
+          default: 100
+
+    ProxyServer:
+      type: object
+      required: [id, name, type, address, port, is_active, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        type:
+          type: string
+          enum: [socks5, http, shadowsocks, vless]
+        address:
+          type: string
+        port:
+          type: integer
+        username:
+          type: string
+          nullable: true
+        password:
+          type: string
+          nullable: true
+        extra_config:
+          type: string
+          nullable: true
+          description: JSON-encoded extra configuration
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateProxyServerRequest:
+      type: object
+      required: [name, type, address, port]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        type:
+          type: string
+          enum: [socks5, http, shadowsocks, vless]
+        address:
+          type: string
+        port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+        username:
+          type: string
+        password:
+          type: string
+        extra_config:
+          type: string
+          description: JSON string
+
+    # ── Webhook ───────────────────────────────────────────────────────
+    WebhookSubscription:
+      type: object
+      required: [id, url, events, is_active, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        url:
+          type: string
+          format: uri
+        secret:
+          type: string
+        events:
+          type: array
+          items:
+            type: string
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    # ── Audit ────────────────────────────────────────────────────────
+    AuditEntry:
+      type: object
+      required: [id, timestamp, action, resource, ip_address, user_agent]
+      properties:
+        id:
+          type: integer
+          format: int64
+        timestamp:
+          type: string
+          format: date-time
+        user_id:
+          type: string
+          nullable: true
+        action:
+          type: string
+        resource:
+          type: string
+        details:
+          description: Arbitrary JSON details
+        ip_address:
+          type: string
+        user_agent:
+          type: string
+
+    AuditListResponse:
+      type: object
+      required: [data, total, page, per_page, total_pages]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditEntry"
+        total:
+          type: integer
+          format: int64
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total_pages:
+          type: integer
+
+    AuditStat:
+      type: object
+      required: [action, bucket, count]
+      properties:
+        action:
+          type: string
+        bucket:
+          type: string
+          format: date-time
+        count:
+          type: integer
+          format: int64
 
 security:
   - BearerAuth: []

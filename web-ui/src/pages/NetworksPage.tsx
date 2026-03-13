@@ -8,14 +8,15 @@ import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
 import Modal from '@/components/ui/Modal'
 import { api } from '@/api/client'
+import { useToastStore } from '@/store/toast'
 
 interface Network {
   id: string
   name: string
   address: string
-  dns: string | null
-  port: number | null
-  keepalive: number | null
+  dns: string[]
+  port: number
+  keepalive: number
   is_active: boolean
   created_at: string
   updated_at: string
@@ -24,7 +25,7 @@ interface Network {
 interface CreateNetworkPayload {
   name: string
   address: string
-  dns?: string
+  dns: string
   port?: number
   keepalive?: number
 }
@@ -32,6 +33,7 @@ interface CreateNetworkPayload {
 export default function NetworksPage() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const addToast = useToastStore((s) => s.addToast)
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Network | null>(null)
 
@@ -51,7 +53,12 @@ export default function NetworksPage() {
   const createMutation = useMutation({
     mutationFn: (payload: CreateNetworkPayload) => {
       const body: Record<string, unknown> = { name: payload.name, address: payload.address }
-      if (payload.dns) body.dns = payload.dns
+      // Backend expects dns as string array
+      if (payload.dns) {
+        body.dns = payload.dns.split(',').map((s) => s.trim()).filter(Boolean)
+      } else {
+        body.dns = []
+      }
       if (payload.port) body.port = payload.port
       if (payload.keepalive) body.keepalive = payload.keepalive
       return api.post('/networks', body)
@@ -60,6 +67,10 @@ export default function NetworksPage() {
       queryClient.invalidateQueries({ queryKey: ['networks'] })
       setShowCreate(false)
       setFormData({ name: '', address: '', dns: '', port: undefined, keepalive: undefined })
+      addToast('Network created', 'success')
+    },
+    onError: (err) => {
+      addToast((err as Error).message, 'error')
     },
   })
 
@@ -68,6 +79,10 @@ export default function NetworksPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['networks'] })
       setDeleteTarget(null)
+      addToast('Network deleted', 'success')
+    },
+    onError: (err) => {
+      addToast((err as Error).message, 'error')
     },
   })
 
@@ -98,7 +113,9 @@ export default function NetworksPage() {
       key: 'dns',
       header: 'DNS',
       render: (row: Network) => (
-        <span className="font-mono text-xs text-[var(--text-muted)]">{row.dns ?? '-'}</span>
+        <span className="font-mono text-xs text-[var(--text-muted)]">
+          {row.dns && row.dns.length > 0 ? row.dns.join(', ') : '-'}
+        </span>
       ),
     },
     {
@@ -136,6 +153,7 @@ export default function NetworksPage() {
           size="sm"
           onClick={(e) => {
             e.stopPropagation()
+            deleteMutation.reset()
             setDeleteTarget(row)
           }}
         >
@@ -160,7 +178,7 @@ export default function NetworksPage() {
           <span className="font-mono text-[var(--accent)] mr-2">&gt;_</span>
           {t('networks.title')}
         </h1>
-        <Button onClick={() => setShowCreate(true)}>
+        <Button onClick={() => { createMutation.reset(); setShowCreate(true) }}>
           <Plus size={16} />
           {t('networks.createNetwork')}
         </Button>

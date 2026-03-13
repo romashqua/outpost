@@ -82,5 +82,5 @@ func respondJSON(w http.ResponseWriter, status int, data any) {
 
 // respondError writes a JSON error response.
 func respondError(w http.ResponseWriter, status int, message string) {
-	respondJSON(w, status, map[string]string{"error": message})
+	respondJSON(w, status, map[string]string{"error": message, "message": message})
 }

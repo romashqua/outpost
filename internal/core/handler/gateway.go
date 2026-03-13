@@ -4,11 +4,15 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/romashqua/outpost/internal/wireguard"
@@ -17,11 +21,16 @@ import (
 // GatewayHandler provides endpoints for managing WireGuard gateways.
 type GatewayHandler struct {
 	pool *pgxpool.Pool
+	log  *slog.Logger
 }
 
 // NewGatewayHandler creates a GatewayHandler backed by the given connection pool.
-func NewGatewayHandler(pool *pgxpool.Pool) *GatewayHandler {
-	return &GatewayHandler{pool: pool}
+func NewGatewayHandler(pool *pgxpool.Pool, logger ...*slog.Logger) *GatewayHandler {
+	l := slog.Default()
+	if len(logger) > 0 && logger[0] != nil {
+		l = logger[0]
+	}
+	return &GatewayHandler{pool: pool, log: l.With("handler", "gateway")}
 }
 
 // Routes returns a chi.Router with gateway management endpoints mounted.
@@ -40,6 +49,7 @@ type gatewayResponse struct {
 	ID              uuid.UUID  `json:"id"`
 	NetworkID       uuid.UUID  `json:"network_id"`
 	Name            string     `json:"name"`
+	PublicIP        *string    `json:"public_ip"`
 	WireguardPubkey string     `json:"wireguard_pubkey"`
 	Endpoint        string     `json:"endpoint"`
 	IsActive        bool       `json:"is_active"`
@@ -62,7 +72,7 @@ type createGatewayRequest struct {
 
 func (h *GatewayHandler) list(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.pool.Query(r.Context(),
-		`SELECT id, network_id, name, wireguard_pubkey, endpoint, is_active, priority, last_seen, created_at, updated_at
+		`SELECT id, network_id, name, public_ip::text, wireguard_pubkey, endpoint, is_active, priority, last_seen, created_at, updated_at
 		 FROM gateways
 		 ORDER BY created_at DESC`)
 	if err != nil {
@@ -74,7 +84,7 @@ func (h *GatewayHandler) list(w http.ResponseWriter, r *http.Request) {
 	gateways := make([]gatewayResponse, 0)
 	for rows.Next() {
 		var g gatewayResponse
-		if err := rows.Scan(&g.ID, &g.NetworkID, &g.Name, &g.WireguardPubkey,
+		if err := rows.Scan(&g.ID, &g.NetworkID, &g.Name, &g.PublicIP, &g.WireguardPubkey,
 			&g.Endpoint, &g.IsActive, &g.Priority, &g.LastSeen, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			respondError(w, http.StatusInternalServerError, "failed to scan gateway")
 			return
@@ -139,12 +149,23 @@ func (h *GatewayHandler) create(w http.ResponseWriter, r *http.Request) {
 	err = h.pool.QueryRow(r.Context(),
 		`INSERT INTO gateways (network_id, name, wireguard_pubkey, endpoint, token_hash)
 		 VALUES ($1, $2, $3, $4, $5)
-		 RETURNING id, network_id, name, wireguard_pubkey, endpoint, is_active, priority, last_seen, created_at, updated_at`,
+		 RETURNING id, network_id, name, public_ip::text, wireguard_pubkey, endpoint, is_active, priority, last_seen, created_at, updated_at`,
 		networkID, req.Name, pubKey, req.Endpoint, tokenHash,
-	).Scan(&g.ID, &g.NetworkID, &g.Name, &g.WireguardPubkey,
+	).Scan(&g.ID, &g.NetworkID, &g.Name, &g.PublicIP, &g.WireguardPubkey,
 		&g.Endpoint, &g.IsActive, &g.Priority, &g.LastSeen, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
-		respondError(w, http.StatusConflict, "gateway already exists or invalid data")
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			msg := "gateway already exists"
+			if strings.Contains(pgErr.ConstraintName, "name") {
+				msg = "gateway with this name already exists"
+			} else if strings.Contains(pgErr.ConstraintName, "endpoint") {
+				msg = "gateway with this endpoint already exists"
+			}
+			respondError(w, http.StatusConflict, msg)
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "failed to create gateway")
 		return
 	}
 
@@ -161,6 +182,7 @@ func (h *GatewayHandler) create(w http.ResponseWriter, r *http.Request) {
 		PrivateKey:      privKey,
 	}
 
+	h.log.Info("gateway created", "id", g.ID, "name", g.Name, "network_id", g.NetworkID, "endpoint", g.Endpoint)
 	respondJSON(w, http.StatusCreated, resp)
 }
 
@@ -173,9 +195,9 @@ func (h *GatewayHandler) get(w http.ResponseWriter, r *http.Request) {
 
 	var g gatewayResponse
 	err = h.pool.QueryRow(r.Context(),
-		`SELECT id, network_id, name, wireguard_pubkey, endpoint, is_active, priority, last_seen, created_at, updated_at
+		`SELECT id, network_id, name, public_ip::text, wireguard_pubkey, endpoint, is_active, priority, last_seen, created_at, updated_at
 		 FROM gateways WHERE id = $1`, id,
-	).Scan(&g.ID, &g.NetworkID, &g.Name, &g.WireguardPubkey,
+	).Scan(&g.ID, &g.NetworkID, &g.Name, &g.PublicIP, &g.WireguardPubkey,
 		&g.Endpoint, &g.IsActive, &g.Priority, &g.LastSeen, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
 		respondError(w, http.StatusNotFound, "gateway not found")
@@ -204,6 +226,7 @@ func (h *GatewayHandler) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.log.Info("gateway deleted", "id", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

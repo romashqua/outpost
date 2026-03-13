@@ -26,6 +26,7 @@ import (
 	"github.com/romashqua/outpost/internal/compliance"
 	"github.com/romashqua/outpost/internal/config"
 	"github.com/romashqua/outpost/internal/core/handler"
+	"github.com/romashqua/outpost/internal/mail"
 	"github.com/romashqua/outpost/internal/observability"
 	"github.com/romashqua/outpost/internal/session"
 	"github.com/romashqua/outpost/internal/webhook"
@@ -34,15 +35,30 @@ import (
 type Server struct {
 	cfg        *config.Config
 	pool       *pgxpool.Pool
+	mailer     *mail.Mailer
 	httpServer *http.Server
 	grpcServer *grpc.Server
 	logger     *slog.Logger
 }
 
 func NewServer(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) *Server {
+	var mailer *mail.Mailer
+	if cfg.SMTP.Host != "" {
+		mailer = mail.NewMailer(mail.Config{
+			SMTPHost:    cfg.SMTP.Host,
+			SMTPPort:    cfg.SMTP.Port,
+			FromAddress: cfg.SMTP.From,
+			FromName:    cfg.SMTP.FromName,
+			Username:    cfg.SMTP.Username,
+			Password:    cfg.SMTP.Password,
+			TLS:         cfg.SMTP.TLS,
+		}, logger)
+	}
+
 	return &Server{
 		cfg:    cfg,
 		pool:   pool,
+		mailer: mailer,
 		logger: logger,
 	}
 }
@@ -126,6 +142,13 @@ func (s *Server) setupHTTPRouter() chi.Router {
 	health := handler.NewHealthHandler(s.pool)
 	r.Mount("/", health.Routes())
 
+	// Serve OpenAPI spec (no auth).
+	r.Get("/api/docs/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/yaml")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(outpost.OpenAPISpec)
+	})
+
 	// OIDC provider (no auth — public endpoints for relying parties).
 	oidcProvider := oidc.NewProvider(s.pool, s.cfg.OIDC.Issuer, nil)
 	r.Mount("/oidc", oidcProvider.Routes())
@@ -158,10 +181,10 @@ func (s *Server) setupHTTPRouter() chi.Router {
 		r.Group(func(r chi.Router) {
 			r.Use(auth.JWTMiddleware(s.cfg.Auth.JWTSecret))
 
-			r.Mount("/users", handler.NewUserHandler(s.pool).Routes())
-			r.Mount("/networks", handler.NewNetworkHandler(s.pool).Routes())
-			r.Mount("/devices", handler.NewDeviceHandler(s.pool).Routes())
-			r.Mount("/gateways", handler.NewGatewayHandler(s.pool).Routes())
+			r.Mount("/users", handler.NewUserHandler(s.pool, s.logger).Routes())
+			r.Mount("/networks", handler.NewNetworkHandler(s.pool, s.logger).Routes())
+			r.Mount("/devices", handler.NewDeviceHandler(s.pool, s.logger).Routes())
+			r.Mount("/gateways", handler.NewGatewayHandler(s.pool, s.logger).Routes())
 
 			// MFA management.
 			mfaMgr := mfa.NewManager(s.pool)
@@ -180,10 +203,16 @@ func (s *Server) setupHTTPRouter() chi.Router {
 			r.Mount("/webhooks", webhook.NewDispatcher(s.pool, s.logger).Routes())
 
 			// S2S tunnel management.
-			r.Mount("/s2s-tunnels", handler.NewS2SHandler(s.pool).Routes())
+			r.Mount("/s2s-tunnels", handler.NewS2SHandler(s.pool, s.logger).Routes())
 
 			// Settings management.
-			r.Mount("/settings", handler.NewSettingsHandler(s.pool).Routes())
+			r.Mount("/settings", handler.NewSettingsHandler(s.pool, s.mailer).Routes())
+
+			// Mail test endpoint.
+			r.Mount("/mail", handler.NewMailHandler(s.mailer).Routes())
+
+			// Smart routing (selective proxy bypass).
+			r.Mount("/smart-routes", handler.NewSmartRouteHandler(s.pool).Routes())
 
 			// Killer feature routes.
 			r.Mount("/analytics", analytics.NewHandler(s.pool).Routes())
@@ -213,6 +242,11 @@ func (s *Server) setupHTTPRouter() chi.Router {
 	}
 
 	return r
+}
+
+// TestableRouter returns the HTTP router for use in tests (e.g. httptest).
+func (s *Server) TestableRouter() http.Handler {
+	return s.setupHTTPRouter()
 }
 
 func (s *Server) setupGRPCServer() *grpc.Server {

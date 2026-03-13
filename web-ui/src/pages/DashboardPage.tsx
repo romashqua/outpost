@@ -1,17 +1,21 @@
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
-import { Users, Laptop2, Activity, AlertCircle, Loader2 } from 'lucide-react'
+import { Users, Laptop2, AlertCircle, Loader2, Network, Shield } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { api } from '@/api/client'
 import Stats from '@/components/ui/Stats'
 import Card from '@/components/ui/Card'
 import NetworkMap from '@/components/NetworkMap'
 
-interface AnalyticsSummary {
-  total_rx_bytes: number
-  total_tx_bytes: number
-  unique_users: number
-  unique_devices: number
+interface DashboardStats {
+  active_users: number
+  total_users: number
+  active_devices: number
+  total_devices: number
+  active_gateways: number
+  total_gateways: number
+  active_networks: number
+  s2s_tunnels: number
 }
 
 interface BandwidthBucket {
@@ -74,9 +78,9 @@ export default function DashboardPage() {
   const from = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString()
   const to = now.toISOString()
 
-  const summaryQuery = useQuery<AnalyticsSummary>({
-    queryKey: ['analytics', 'summary'],
-    queryFn: () => api.get('/analytics/summary'),
+  const statsQuery = useQuery<DashboardStats>({
+    queryKey: ['dashboard', 'stats'],
+    queryFn: () => api.get('/dashboard/stats'),
   })
 
   const bandwidthQuery = useQuery<BandwidthBucket[]>({
@@ -89,10 +93,7 @@ export default function DashboardPage() {
     queryFn: () => api.get('/analytics/top-users?limit=5'),
   })
 
-  const summary = summaryQuery.data
-  const totalBandwidth = summary
-    ? formatBytes(summary.total_rx_bytes + summary.total_tx_bytes)
-    : '--'
+  const stats = statsQuery.data
 
   const chartData = (bandwidthQuery.data ?? []).map((b) => ({
     time: formatBucketTime(b.bucket),
@@ -110,24 +111,24 @@ export default function DashboardPage() {
       {/* Stats row */}
       <div className="grid grid-cols-4 gap-4 mb-6">
         <Stats
-          label={t('dashboard.activeUsers')}
-          value={summary ? String(summary.unique_users) : '--'}
+          label={t('dashboard.totalUsers')}
+          value={stats ? `${stats.active_users} / ${stats.total_users}` : '--'}
           icon={<Users size={18} />}
         />
         <Stats
-          label={t('dashboard.connectedDevices')}
-          value={summary ? String(summary.unique_devices) : '--'}
+          label={t('dashboard.activeDevices')}
+          value={stats ? `${stats.active_devices} / ${stats.total_devices}` : '--'}
           icon={<Laptop2 size={18} />}
         />
         <Stats
-          label={t('dashboard.totalRx')}
-          value={summary ? formatBytes(summary.total_rx_bytes) : '--'}
-          icon={<Activity size={18} />}
+          label={t('dashboard.activeGateways')}
+          value={stats ? `${stats.active_gateways} / ${stats.total_gateways}` : '--'}
+          icon={<Shield size={18} />}
         />
         <Stats
-          label={t('dashboard.bandwidth')}
-          value={totalBandwidth}
-          icon={<Activity size={18} />}
+          label={t('dashboard.networks')}
+          value={stats ? String(stats.active_networks) : '--'}
+          icon={<Network size={18} />}
         />
       </div>
 

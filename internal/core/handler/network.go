@@ -1,22 +1,31 @@
 package handler
 
 import (
+	"errors"
+	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // NetworkHandler provides CRUD endpoints for network management.
 type NetworkHandler struct {
 	pool *pgxpool.Pool
+	log  *slog.Logger
 }
 
 // NewNetworkHandler creates a NetworkHandler backed by the given connection pool.
-func NewNetworkHandler(pool *pgxpool.Pool) *NetworkHandler {
-	return &NetworkHandler{pool: pool}
+func NewNetworkHandler(pool *pgxpool.Pool, logger ...*slog.Logger) *NetworkHandler {
+	l := slog.Default()
+	if len(logger) > 0 && logger[0] != nil {
+		l = logger[0]
+	}
+	return &NetworkHandler{pool: pool, log: l.With("handler", "network")}
 }
 
 // Routes returns a chi.Router with network CRUD endpoints mounted.
@@ -63,7 +72,7 @@ type updateNetworkRequest struct {
 
 func (h *NetworkHandler) list(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.pool.Query(r.Context(),
-		`SELECT id, name, address, dns, port, keepalive, is_active, created_at, updated_at
+		`SELECT id, name, address::text, dns, port, keepalive, is_active, created_at, updated_at
 		 FROM networks
 		 ORDER BY created_at DESC`)
 	if err != nil {
@@ -121,15 +130,27 @@ func (h *NetworkHandler) create(w http.ResponseWriter, r *http.Request) {
 	err := h.pool.QueryRow(r.Context(),
 		`INSERT INTO networks (name, address, dns, port, keepalive)
 		 VALUES ($1, $2, $3, $4, $5)
-		 RETURNING id, name, address, dns, port, keepalive, is_active, created_at, updated_at`,
+		 RETURNING id, name, address::text, dns, port, keepalive, is_active, created_at, updated_at`,
 		req.Name, req.Address, req.DNS, req.Port, req.Keepalive,
 	).Scan(&n.ID, &n.Name, &n.Address, &n.DNS, &n.Port,
 		&n.Keepalive, &n.IsActive, &n.CreatedAt, &n.UpdatedAt)
 	if err != nil {
-		respondError(w, http.StatusConflict, "network already exists or invalid data")
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			msg := "network already exists"
+			if strings.Contains(pgErr.ConstraintName, "name") {
+				msg = "network with this name already exists"
+			} else if strings.Contains(pgErr.ConstraintName, "address") {
+				msg = "network with this address already exists"
+			}
+			respondError(w, http.StatusConflict, msg)
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "failed to create network")
 		return
 	}
 
+	h.log.Info("network created", "id", n.ID, "name", n.Name, "address", n.Address)
 	respondJSON(w, http.StatusCreated, n)
 }
 
@@ -142,7 +163,7 @@ func (h *NetworkHandler) get(w http.ResponseWriter, r *http.Request) {
 
 	var n networkResponse
 	err = h.pool.QueryRow(r.Context(),
-		`SELECT id, name, address, dns, port, keepalive, is_active, created_at, updated_at
+		`SELECT id, name, address::text, dns, port, keepalive, is_active, created_at, updated_at
 		 FROM networks WHERE id = $1`, id,
 	).Scan(&n.ID, &n.Name, &n.Address, &n.DNS, &n.Port,
 		&n.Keepalive, &n.IsActive, &n.CreatedAt, &n.UpdatedAt)
@@ -178,7 +199,7 @@ func (h *NetworkHandler) update(w http.ResponseWriter, r *http.Request) {
 			is_active = COALESCE($7, is_active),
 			updated_at = now()
 		 WHERE id = $1
-		 RETURNING id, name, address, dns, port, keepalive, is_active, created_at, updated_at`,
+		 RETURNING id, name, address::text, dns, port, keepalive, is_active, created_at, updated_at`,
 		id, req.Name, req.Address, req.DNS, req.Port, req.Keepalive, req.IsActive,
 	).Scan(&n.ID, &n.Name, &n.Address, &n.DNS, &n.Port,
 		&n.Keepalive, &n.IsActive, &n.CreatedAt, &n.UpdatedAt)

@@ -104,11 +104,11 @@ func (h *Handler) connectionsHeatmap(w http.ResponseWriter, r *http.Request) {
 }
 
 type summaryResponse struct {
-	TotalBytesSent int64 `json:"total_bytes_sent"`
-	TotalBytesRecv int64 `json:"total_bytes_recv"`
-	TotalFlows     int   `json:"total_flows"`
-	UniqueUsers    int   `json:"unique_users"`
-	UniqueDevices  int   `json:"unique_devices"`
+	TotalRxBytes  int64 `json:"total_rx_bytes"`
+	TotalTxBytes  int64 `json:"total_tx_bytes"`
+	TotalFlows    int   `json:"total_flows"`
+	UniqueUsers   int   `json:"unique_users"`
+	UniqueDevices int   `json:"unique_devices"`
 }
 
 func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
@@ -129,7 +129,7 @@ func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 		 FROM flow_records
 		 WHERE recorded_at >= $1 AND recorded_at < $2`,
 		from, to,
-	).Scan(&s.TotalBytesSent, &s.TotalBytesRecv, &s.TotalFlows, &s.UniqueUsers, &s.UniqueDevices)
+	).Scan(&s.TotalTxBytes, &s.TotalRxBytes, &s.TotalFlows, &s.UniqueUsers, &s.UniqueDevices)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to query summary")
 		return
@@ -175,5 +175,5 @@ func respondJSON(w http.ResponseWriter, status int, data any) {
 
 // respondError writes a JSON error response.
 func respondError(w http.ResponseWriter, status int, message string) {
-	respondJSON(w, status, map[string]string{"error": message})
+	respondJSON(w, status, map[string]string{"error": message, "message": message})
 }

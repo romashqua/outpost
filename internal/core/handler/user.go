@@ -1,11 +1,16 @@
 package handler
 
 import (
+	"errors"
+	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/romashqua/outpost/internal/auth"
@@ -14,11 +19,16 @@ import (
 // UserHandler provides CRUD endpoints for user management.
 type UserHandler struct {
 	pool *pgxpool.Pool
+	log  *slog.Logger
 }
 
 // NewUserHandler creates a UserHandler backed by the given connection pool.
-func NewUserHandler(pool *pgxpool.Pool) *UserHandler {
-	return &UserHandler{pool: pool}
+func NewUserHandler(pool *pgxpool.Pool, logger ...*slog.Logger) *UserHandler {
+	l := slog.Default()
+	if len(logger) > 0 && logger[0] != nil {
+		l = logger[0]
+	}
+	return &UserHandler{pool: pool, log: l.With("handler", "user")}
 }
 
 // Routes returns a chi.Router with user CRUD endpoints mounted.
@@ -30,6 +40,7 @@ func (h *UserHandler) Routes() chi.Router {
 		r.Get("/", h.get)
 		r.Put("/", h.update)
 		r.Delete("/", h.delete)
+		r.Patch("/activate", h.activate)
 	})
 	return r
 }
@@ -97,7 +108,7 @@ func (h *UserHandler) list(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, map[string]any{
-		"data":     users,
+		"users":    users,
 		"page":     page,
 		"per_page": perPage,
 	})
@@ -138,10 +149,22 @@ func (h *UserHandler) create(w http.ResponseWriter, r *http.Request) {
 	).Scan(&u.ID, &u.Username, &u.Email, &u.FirstName, &u.LastName,
 		&u.Phone, &u.IsActive, &u.IsAdmin, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
-		respondError(w, http.StatusConflict, "user already exists or invalid data")
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			msg := "user already exists"
+			if strings.Contains(pgErr.ConstraintName, "email") {
+				msg = "user with this email already exists"
+			} else if strings.Contains(pgErr.ConstraintName, "username") {
+				msg = "user with this username already exists"
+			}
+			respondError(w, http.StatusConflict, msg)
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "failed to create user")
 		return
 	}
 
+	h.log.Info("user created", "id", u.ID, "username", u.Username, "email", u.Email, "is_admin", u.IsAdmin)
 	respondJSON(w, http.StatusCreated, u)
 }
 
@@ -159,7 +182,11 @@ func (h *UserHandler) get(w http.ResponseWriter, r *http.Request) {
 	).Scan(&u.ID, &u.Username, &u.Email, &u.FirstName, &u.LastName,
 		&u.Phone, &u.IsActive, &u.IsAdmin, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
-		respondError(w, http.StatusNotFound, "user not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "user not found")
+		} else {
+			respondError(w, http.StatusInternalServerError, "failed to fetch user")
+		}
 		return
 	}
 
@@ -209,10 +236,42 @@ func (h *UserHandler) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tag, err := h.pool.Exec(r.Context(),
-		`UPDATE users SET is_active = false, updated_at = now() WHERE id = $1`, id)
+	ctx := r.Context()
+
+	// Check whether the target user is an active admin. If so, ensure they
+	// are not the last one — deleting the last admin would lock everyone out.
+	var isAdmin, isActive bool
+	err = h.pool.QueryRow(ctx,
+		`SELECT is_admin, is_active FROM users WHERE id = $1`, id,
+	).Scan(&isAdmin, &isActive)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to deactivate user")
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "user not found")
+		} else {
+			respondError(w, http.StatusInternalServerError, "failed to fetch user")
+		}
+		return
+	}
+
+	if isAdmin && isActive {
+		var activeAdminCount int
+		err = h.pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM users WHERE is_admin = true AND is_active = true`,
+		).Scan(&activeAdminCount)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to count admins")
+			return
+		}
+		if activeAdminCount <= 1 {
+			respondError(w, http.StatusConflict, "cannot delete the last admin user")
+			return
+		}
+	}
+
+	tag, err := h.pool.Exec(ctx,
+		`DELETE FROM users WHERE id = $1`, id)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to delete user")
 		return
 	}
 
@@ -221,5 +280,33 @@ func (h *UserHandler) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, map[string]string{"status": "deactivated"})
+	h.log.Info("user deleted", "id", id)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *UserHandler) activate(w http.ResponseWriter, r *http.Request) {
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var u userResponse
+	err = h.pool.QueryRow(r.Context(),
+		`UPDATE users SET is_active = true, updated_at = now()
+		 WHERE id = $1
+		 RETURNING id, username, email, first_name, last_name, phone, is_active, is_admin, created_at, updated_at`,
+		id,
+	).Scan(&u.ID, &u.Username, &u.Email, &u.FirstName, &u.LastName,
+		&u.Phone, &u.IsActive, &u.IsAdmin, &u.CreatedAt, &u.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "user not found")
+		} else {
+			respondError(w, http.StatusInternalServerError, "failed to activate user")
+		}
+		return
+	}
+
+	respondJSON(w, http.StatusOK, u)
 }

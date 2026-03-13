@@ -19,6 +19,18 @@ type Config struct {
 	Gateway   Gateway
 	Proxy     Proxy
 	Log       Log
+	SMTP      SMTP
+}
+
+// SMTP holds SMTP mail server configuration.
+type SMTP struct {
+	Host     string
+	Port     int
+	Username string
+	Password string
+	From     string
+	FromName string
+	TLS      bool
 }
 
 // Server holds HTTP and gRPC listener configuration.
@@ -180,6 +192,15 @@ func Load() *Config {
 		Log: Log{
 			Level:  env("OUTPOST_LOG_LEVEL", "info"),
 			Format: env("OUTPOST_LOG_FORMAT", "json"),
+		},
+		SMTP: SMTP{
+			Host:     env("OUTPOST_SMTP_HOST", ""),
+			Port:     envInt("OUTPOST_SMTP_PORT", 587),
+			Username: env("OUTPOST_SMTP_USERNAME", ""),
+			Password: env("OUTPOST_SMTP_PASSWORD", ""),
+			From:     env("OUTPOST_SMTP_FROM", ""),
+			FromName: env("OUTPOST_SMTP_FROM_NAME", "Outpost VPN"),
+			TLS:      env("OUTPOST_SMTP_TLS", "false") == "true",
 		},
 	}
 }

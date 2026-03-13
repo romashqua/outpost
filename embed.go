@@ -13,3 +13,8 @@ var WebUI embed.FS
 //
 //go:embed migrations/*.sql
 var Migrations embed.FS
+
+// OpenAPISpec contains the OpenAPI 3.0 specification file.
+//
+//go:embed docs/openapi.yaml
+var OpenAPISpec []byte

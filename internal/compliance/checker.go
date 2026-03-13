@@ -9,7 +9,9 @@ import (
 
 // ComplianceReport contains overall compliance status.
 type ComplianceReport struct {
-	OverallScore    int               `json:"overall_score"`    // 0-100
+	OverallScore    int               `json:"overall_score"`    // 0-N
+	MaxScore        int               `json:"max_score"`        // total possible score
+	Percentage      int               `json:"percentage"`       // 0-100
 	MFAAdoption     float64           `json:"mfa_adoption"`     // percentage of users with MFA
 	EncryptionRate  float64           `json:"encryption_rate"`  // percentage of compliant devices
 	PostureRate     float64           `json:"posture_rate"`     // percentage of devices passing posture
@@ -22,10 +24,10 @@ type ComplianceReport struct {
 // ComplianceCheck represents an individual compliance check result.
 type ComplianceCheck struct {
 	ID          string `json:"id"`
-	Category    string `json:"category"` // "SOC2", "ISO27001", "GDPR"
+	Framework   string `json:"framework"` // "SOC2", "ISO27001", "GDPR"
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	Status      string `json:"status"` // "pass", "fail", "warning"
+	Status      string `json:"status"` // "passed", "failed", "warning"
 	Details     string `json:"details"`
 }
 
@@ -93,7 +95,7 @@ func (c *Checker) RunAllChecks(ctx context.Context) (*ComplianceReport, error) {
 	report.SessionTimeout = c.sessionTimeoutEnabled(ctx)
 
 	// Calculate overall score.
-	report.OverallScore = c.calculateOverallScore(report)
+	c.calculateOverallScore(report)
 
 	return report, nil
 }
@@ -107,17 +109,17 @@ func (c *Checker) RunSOC2Checks(ctx context.Context) ([]ComplianceCheck, error) 
 	if err != nil {
 		return nil, err
 	}
-	mfaStatus := "pass"
+	mfaStatus := "passed"
 	mfaDetails := fmt.Sprintf("%.1f%% of users have MFA enabled", mfaRate)
 	if mfaRate < 100 {
-		mfaStatus = "fail"
+		mfaStatus = "failed"
 		if mfaRate >= 80 {
 			mfaStatus = "warning"
 		}
 	}
 	checks = append(checks, ComplianceCheck{
 		ID:          "soc2-cc6.1-mfa",
-		Category:    "SOC2",
+		Framework:    "SOC2",
 		Name:        "Multi-Factor Authentication",
 		Description: "All users should have MFA enabled (CC6.1)",
 		Status:      mfaStatus,
@@ -127,10 +129,10 @@ func (c *Checker) RunSOC2Checks(ctx context.Context) ([]ComplianceCheck, error) 
 	// CC6.6: Encryption in transit — all traffic via WireGuard.
 	checks = append(checks, ComplianceCheck{
 		ID:          "soc2-cc6.6-encryption",
-		Category:    "SOC2",
+		Framework:    "SOC2",
 		Name:        "Encryption in Transit",
 		Description: "All traffic must be encrypted via WireGuard tunnels (CC6.6)",
-		Status:      "pass",
+		Status:      "passed",
 		Details:     "All connections use WireGuard encryption",
 	})
 
@@ -139,15 +141,15 @@ func (c *Checker) RunSOC2Checks(ctx context.Context) ([]ComplianceCheck, error) 
 	if err != nil {
 		return nil, err
 	}
-	auditStatus := "pass"
+	auditStatus := "passed"
 	auditDetails := "Audit logging is enabled"
 	if !auditEnabled {
-		auditStatus = "fail"
+		auditStatus = "failed"
 		auditDetails = "No audit log entries found"
 	}
 	checks = append(checks, ComplianceCheck{
 		ID:          "soc2-cc7.2-audit",
-		Category:    "SOC2",
+		Framework:    "SOC2",
 		Name:        "System Monitoring",
 		Description: "Audit logging must be enabled and active (CC7.2)",
 		Status:      auditStatus,
@@ -166,17 +168,17 @@ func (c *Checker) RunISO27001Checks(ctx context.Context) ([]ComplianceCheck, err
 	if err != nil {
 		return nil, err
 	}
-	postureStatus := "pass"
+	postureStatus := "passed"
 	postureDetails := fmt.Sprintf("%.1f%% of devices pass posture checks", postureRate)
 	if postureRate < 100 {
-		postureStatus = "fail"
+		postureStatus = "failed"
 		if postureRate >= 80 {
 			postureStatus = "warning"
 		}
 	}
 	checks = append(checks, ComplianceCheck{
 		ID:          "iso27001-a8.1-posture",
-		Category:    "ISO27001",
+		Framework:    "ISO27001",
 		Name:        "Device Posture Compliance",
 		Description: "All devices must pass posture checks (A.8.1)",
 		Status:      postureStatus,
@@ -189,7 +191,7 @@ func (c *Checker) RunISO27001Checks(ctx context.Context) ([]ComplianceCheck, err
 	if err != nil {
 		return nil, fmt.Errorf("count roles: %w", err)
 	}
-	rbacStatus := "pass"
+	rbacStatus := "passed"
 	rbacDetails := fmt.Sprintf("%d roles configured", roleCount)
 	if roleCount < 2 {
 		rbacStatus = "warning"
@@ -197,7 +199,7 @@ func (c *Checker) RunISO27001Checks(ctx context.Context) ([]ComplianceCheck, err
 	}
 	checks = append(checks, ComplianceCheck{
 		ID:          "iso27001-a9.4-rbac",
-		Category:    "ISO27001",
+		Framework:    "ISO27001",
 		Name:        "Role-Based Access Control",
 		Description: "Access control must use role-based permissions (A.9.4)",
 		Status:      rbacStatus,
@@ -209,17 +211,17 @@ func (c *Checker) RunISO27001Checks(ctx context.Context) ([]ComplianceCheck, err
 	if err != nil {
 		return nil, err
 	}
-	encStatus := "pass"
+	encStatus := "passed"
 	encDetails := fmt.Sprintf("%.1f%% of devices have disk encryption", encRate)
 	if encRate < 100 {
-		encStatus = "fail"
+		encStatus = "failed"
 		if encRate >= 80 {
 			encStatus = "warning"
 		}
 	}
 	checks = append(checks, ComplianceCheck{
 		ID:          "iso27001-a10.1-encryption",
-		Category:    "ISO27001",
+		Framework:    "ISO27001",
 		Name:        "Disk Encryption",
 		Description: "All devices must have disk encryption enabled (A.10.1)",
 		Status:      encStatus,
@@ -236,10 +238,10 @@ func (c *Checker) RunGDPRChecks(ctx context.Context) ([]ComplianceCheck, error) 
 	// Art. 5(1)(f): Data security — encryption.
 	checks = append(checks, ComplianceCheck{
 		ID:          "gdpr-art5-encryption",
-		Category:    "GDPR",
+		Framework:    "GDPR",
 		Name:        "Data Encryption",
 		Description: "Personal data must be protected with appropriate encryption (Art. 5(1)(f))",
-		Status:      "pass",
+		Status:      "passed",
 		Details:     "WireGuard provides end-to-end encryption for all VPN traffic",
 	})
 
@@ -248,15 +250,15 @@ func (c *Checker) RunGDPRChecks(ctx context.Context) ([]ComplianceCheck, error) 
 	if err != nil {
 		return nil, err
 	}
-	auditStatus := "pass"
+	auditStatus := "passed"
 	auditDetails := "Audit logging provides records of processing activities"
 	if !auditEnabled {
-		auditStatus = "fail"
+		auditStatus = "failed"
 		auditDetails = "Audit logging is not active; processing records unavailable"
 	}
 	checks = append(checks, ComplianceCheck{
 		ID:          "gdpr-art30-audit",
-		Category:    "GDPR",
+		Framework:    "GDPR",
 		Name:        "Records of Processing",
 		Description: "Records of processing activities must be maintained (Art. 30)",
 		Status:      auditStatus,
@@ -271,10 +273,10 @@ func (c *Checker) RunGDPRChecks(ctx context.Context) ([]ComplianceCheck, error) 
 	}
 	checks = append(checks, ComplianceCheck{
 		ID:          "gdpr-art32-access",
-		Category:    "GDPR",
+		Framework:    "GDPR",
 		Name:        "Access Control",
 		Description: "Appropriate access controls must be in place (Art. 32)",
-		Status:      "pass",
+		Status:      "passed",
 		Details:     fmt.Sprintf("%d active users with role-based access control", activeUsers),
 	})
 
@@ -369,27 +371,33 @@ func (c *Checker) sessionTimeoutEnabled(ctx context.Context) bool {
 	return err == nil
 }
 
-// calculateOverallScore computes a weighted overall compliance score.
-func (c *Checker) calculateOverallScore(report *ComplianceReport) int {
+// calculateOverallScore computes a weighted overall compliance score and sets report fields.
+func (c *Checker) calculateOverallScore(report *ComplianceReport) {
 	if len(report.Checks) == 0 {
-		return 0
+		report.OverallScore = 0
+		report.MaxScore = 0
+		report.Percentage = 0
+		return
 	}
 
-	passed := 0
+	earned := 0
 	for _, check := range report.Checks {
 		switch check.Status {
-		case "pass":
-			passed += 2
+		case "passed":
+			earned += 2
 		case "warning":
-			passed += 1
+			earned += 1
 		}
 	}
 
 	maxScore := len(report.Checks) * 2
-	score := (passed * 100) / maxScore
+	percentage := (earned * 100) / maxScore
 
-	if score > 100 {
-		score = 100
+	if percentage > 100 {
+		percentage = 100
 	}
-	return score
+
+	report.OverallScore = earned
+	report.MaxScore = maxScore
+	report.Percentage = percentage
 }

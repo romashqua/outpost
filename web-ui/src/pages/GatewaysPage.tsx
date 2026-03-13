@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2, Copy, Check } from 'lucide-react'
 import { api } from '@/api/client'
+import { useToastStore } from '@/store/toast'
 import Table from '@/components/ui/Table'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
@@ -29,6 +30,7 @@ interface CreateGatewayResponse extends Gateway {
 export default function GatewaysPage() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const addToast = useToastStore((s) => s.addToast)
   const [showCreate, setShowCreate] = useState(false)
   const [showToken, setShowToken] = useState<string | null>(null)
   const [copiedToken, setCopiedToken] = useState(false)
@@ -54,6 +56,10 @@ export default function GatewaysPage() {
       setShowCreate(false)
       setShowToken(data.token)
       resetForm()
+      addToast('Gateway created', 'success')
+    },
+    onError: (err) => {
+      addToast((err as Error).message, 'error')
     },
   })
 
@@ -62,6 +68,10 @@ export default function GatewaysPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['gateways'] })
       setDeleteId(null)
+      addToast('Gateway deleted', 'success')
+    },
+    onError: (err) => {
+      addToast((err as Error).message, 'error')
     },
   })
 
@@ -162,7 +172,7 @@ export default function GatewaysPage() {
         <Button
           variant="ghost"
           size="sm"
-          onClick={(e) => { e.stopPropagation(); setDeleteId(row.id) }}
+          onClick={(e) => { e.stopPropagation(); deleteMutation.reset(); setDeleteId(row.id) }}
         >
           <Trash2 size={14} className="text-[var(--danger)]" />
         </Button>
@@ -191,7 +201,7 @@ export default function GatewaysPage() {
           <span className="font-mono text-[var(--accent)] mr-2">&gt;_</span>
           {t('gateways.title')}
         </h1>
-        <Button onClick={() => setShowCreate(true)}>
+        <Button onClick={() => { createMutation.reset(); setShowCreate(true) }}>
           <Plus size={16} />
           {t('common.create')}
         </Button>
