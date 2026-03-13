@@ -11,6 +11,9 @@ outpost-proxy
 outpost-client
 outpostctl
 outpost-client-*
+outpost-core-*
+outpost-gateway-*
+outpost-proxy-*
 
 # Test
 *.test
@@ -27,10 +30,13 @@ go.work.sum
 # IDE
 .idea/
 .vscode/
+.vs/
 *.swp
 *.swo
 *~
 *.sublime-*
+.project
+.settings/
 
 # OS
 .DS_Store
@@ -70,9 +76,17 @@ docker-compose.override.yml
 deploy/helm/outpost/charts/
 deploy/helm/outpost/*.tgz
 
-# Claude
+# Claude / AI
 CLAUDE.md
 .claude/
+.claude-*
+claude.md
+.cursorrules
+.cursor/
+.aider*
+.continue/
+.copilot/
+.github/copilot/
 
 # Logs
 *.log
