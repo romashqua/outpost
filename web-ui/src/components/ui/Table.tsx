@@ -17,7 +17,9 @@ interface TableProps<T> {
   onRowClick?: (row: T) => void
 }
 
-export default function Table<T extends Record<string, unknown>>({
+export type { Column }
+
+export default function Table<T extends Record<string, any>>({
   columns,
   data,
   keyField = 'id',

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Lock, User, Terminal } from 'lucide-react'
+import { Lock, User, Terminal, ShieldCheck } from 'lucide-react'
 import { useAuthStore } from '@/store/auth'
 import Input from '@/components/ui/Input'
 import Button from '@/components/ui/Button'
@@ -19,21 +19,43 @@ export default function LoginPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const login = useAuthStore((s) => s.login)
+  const verifyMFA = useAuthStore((s) => s.verifyMFA)
+  const needsMFA = useAuthStore((s) => s.needsMFA)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [mfaCode, setMfaCode] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!username || !password) return
     setLoading(true)
     setError('')
     try {
       await login(username, password)
+      // If needsMFA was set, the store updated but we stay on the page
+      const state = useAuthStore.getState()
+      if (state.isAuthenticated) {
+        navigate('/')
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('login.error'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleMFA = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!mfaCode) return
+    setLoading(true)
+    setError('')
+    try {
+      await verifyMFA(mfaCode)
       navigate('/')
-    } catch {
-      setError(t('login.error'))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('login.error'))
     } finally {
       setLoading(false)
     }
@@ -88,42 +110,79 @@ export default function LoginPage() {
             </pre>
           </div>
 
-          {/* Form */}
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-            <Input
-              placeholder={t('login.username')}
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              icon={<User size={16} />}
-              autoFocus
-              autoComplete="username"
-            />
-            <Input
-              type="password"
-              placeholder={t('login.password')}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              icon={<Lock size={16} />}
-              autoComplete="current-password"
-            />
-
-            {error && (
-              <div className="rounded-md bg-[rgba(255,68,68,0.1)] border border-[rgba(255,68,68,0.2)] px-3 py-2 text-xs text-[var(--danger)] font-mono">
-                &gt; {error}
+          {/* MFA Form */}
+          {needsMFA ? (
+            <form onSubmit={handleMFA} className="flex flex-col gap-4">
+              <div className="text-center mb-2">
+                <ShieldCheck size={24} className="inline-block text-[var(--accent)] mb-2" />
+                <p className="text-sm text-[var(--text-secondary)] font-mono">
+                  {t('login.mfaPrompt', 'Enter your MFA code')}
+                </p>
               </div>
-            )}
+              <Input
+                placeholder={t('login.mfaCode', 'MFA Code')}
+                value={mfaCode}
+                onChange={(e) => setMfaCode(e.target.value)}
+                icon={<ShieldCheck size={16} />}
+                autoFocus
+                autoComplete="one-time-code"
+              />
 
-            <Button type="submit" disabled={loading || !username || !password} className="mt-2 w-full">
-              {loading ? (
-                <span className="cursor-blink font-mono">{t('common.loading')}</span>
-              ) : (
-                <>
-                  <span className="font-mono">&gt;_</span>
-                  {t('login.signIn')}
-                </>
+              {error && (
+                <div className="rounded-md bg-[rgba(255,68,68,0.1)] border border-[rgba(255,68,68,0.2)] px-3 py-2 text-xs text-[var(--danger)] font-mono">
+                  &gt; {error}
+                </div>
               )}
-            </Button>
-          </form>
+
+              <Button type="submit" disabled={loading || !mfaCode} className="mt-2 w-full">
+                {loading ? (
+                  <span className="cursor-blink font-mono">{t('common.loading')}</span>
+                ) : (
+                  <>
+                    <span className="font-mono">&gt;_</span>
+                    {t('login.verify', 'Verify')}
+                  </>
+                )}
+              </Button>
+            </form>
+          ) : (
+            /* Login Form */
+            <form onSubmit={handleLogin} className="flex flex-col gap-4">
+              <Input
+                placeholder={t('login.username')}
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                icon={<User size={16} />}
+                autoFocus
+                autoComplete="username"
+              />
+              <Input
+                type="password"
+                placeholder={t('login.password')}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                icon={<Lock size={16} />}
+                autoComplete="current-password"
+              />
+
+              {error && (
+                <div className="rounded-md bg-[rgba(255,68,68,0.1)] border border-[rgba(255,68,68,0.2)] px-3 py-2 text-xs text-[var(--danger)] font-mono">
+                  &gt; {error}
+                </div>
+              )}
+
+              <Button type="submit" disabled={loading || !username || !password} className="mt-2 w-full">
+                {loading ? (
+                  <span className="cursor-blink font-mono">{t('common.loading')}</span>
+                ) : (
+                  <>
+                    <span className="font-mono">&gt;_</span>
+                    {t('login.signIn')}
+                  </>
+                )}
+              </Button>
+            </form>
+          )}
 
           {/* Footer */}
           <div className="mt-6 text-center">

@@ -148,6 +148,9 @@ func (s *Server) setupHTTPRouter() chi.Router {
 		authHandler := handler.NewAuthHandler(s.pool, s.cfg.Auth.JWTSecret)
 		r.Mount("/auth", authHandler.Routes())
 
+		// Dashboard stats (no JWT for now — protected by API prefix).
+		r.Mount("/dashboard", handler.NewDashboardHandler(s.pool).Routes())
+
 		// SCIM 2.0 provisioning (bearer token auth handled internally).
 		r.Mount("/scim/v2", scim.NewHandler(s.pool, s.logger).Routes())
 
@@ -175,6 +178,12 @@ func (s *Server) setupHTTPRouter() chi.Router {
 
 			// Webhooks.
 			r.Mount("/webhooks", webhook.NewDispatcher(s.pool, s.logger).Routes())
+
+			// S2S tunnel management.
+			r.Mount("/s2s-tunnels", handler.NewS2SHandler(s.pool).Routes())
+
+			// Settings management.
+			r.Mount("/settings", handler.NewSettingsHandler(s.pool).Routes())
 
 			// Killer feature routes.
 			r.Mount("/analytics", analytics.NewHandler(s.pool).Routes())
@@ -208,6 +217,6 @@ func (s *Server) setupHTTPRouter() chi.Router {
 
 func (s *Server) setupGRPCServer() *grpc.Server {
 	srv := grpc.NewServer()
-	// Gateway and proxy services will be registered here.
+	registerGatewayService(srv, s.pool, s.logger)
 	return srv
 }

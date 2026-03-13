@@ -1,78 +1,170 @@
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { CheckCircle, XCircle, Trash2 } from 'lucide-react'
 import Table from '@/components/ui/Table'
 import Badge from '@/components/ui/Badge'
+import Button from '@/components/ui/Button'
+import Modal from '@/components/ui/Modal'
+import { api } from '@/api/client'
 
-const mockDevices = [
-  { id: '1', name: 'laptop-01', owner: 'ivanov', pubkey: 'aB3kX9...mQ7Zw=', status: 'connected', lastHandshake: '2s ago', endpoint: '185.12.34.56:51820', allowedIps: '10.0.1.5/32', rx: '2.4 GB', tx: '1.1 GB' },
-  { id: '2', name: 'desktop-01', owner: 'petrov', pubkey: 'cD5fR2...pL8Yv=', status: 'connected', lastHandshake: '5s ago', endpoint: '91.220.15.78:51820', allowedIps: '10.0.1.12/32', rx: '890 MB', tx: '340 MB' },
-  { id: '3', name: 'laptop-02', owner: 'kozlov', pubkey: 'eF7hT4...nK0Xu=', status: 'connected', lastHandshake: '12s ago', endpoint: '78.105.22.91:51820', allowedIps: '10.0.2.3/32', rx: '1.2 GB', tx: '560 MB' },
-  { id: '4', name: 'phone-01', owner: 'sidorov', pubkey: 'gH9jV6...rM2Ws=', status: 'connected', lastHandshake: '8s ago', endpoint: '95.188.44.12:51820', allowedIps: '10.0.3.7/32', rx: '120 MB', tx: '45 MB' },
-  { id: '5', name: 'laptop-03', owner: 'fedorov', pubkey: 'iJ1lX8...tO4Uq=', status: 'disconnected', lastHandshake: '3 days ago', endpoint: '-', allowedIps: '10.0.1.20/32', rx: '0', tx: '0' },
-  { id: '6', name: 'server-dev', owner: 'morozov', pubkey: 'kL3nZ0...vQ6Sp=', status: 'connected', lastHandshake: '1s ago', endpoint: '46.29.160.5:51820', allowedIps: '10.0.1.100/32', rx: '18.5 GB', tx: '12.3 GB' },
-]
+interface Device {
+  id: string
+  user_id: string
+  name: string
+  wireguard_pubkey: string
+  assigned_ip: string
+  is_approved: boolean
+  last_handshake: string | null
+  created_at: string
+}
 
 export default function DevicesPage() {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
+  const [deleteTarget, setDeleteTarget] = useState<Device | null>(null)
+
+  const { data: devices = [], isLoading, error } = useQuery<Device[]>({
+    queryKey: ['devices'],
+    queryFn: () => api.get('/devices'),
+  })
+
+  const approveMutation = useMutation({
+    mutationFn: (id: string) => api.post(`/devices/${id}/approve`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['devices'] })
+    },
+  })
+
+  const revokeMutation = useMutation({
+    mutationFn: (id: string) => api.post(`/devices/${id}/revoke`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['devices'] })
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.delete(`/devices/${id}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['devices'] })
+      setDeleteTarget(null)
+    },
+  })
+
+  const truncatePubkey = (key: string) => {
+    if (key.length <= 16) return key
+    return `${key.slice(0, 8)}...${key.slice(-6)}`
+  }
 
   const columns = [
     {
       key: 'name',
       header: t('devices.name'),
       sortable: true,
-      render: (row: typeof mockDevices[0]) => (
+      render: (row: Device) => (
         <span className="font-mono text-[var(--text-primary)]">{row.name}</span>
       ),
     },
     {
-      key: 'owner',
+      key: 'user_id',
       header: t('devices.owner'),
       sortable: true,
-      render: (row: typeof mockDevices[0]) => (
-        <span className="font-mono text-[var(--accent)]">{row.owner}</span>
+      render: (row: Device) => (
+        <span className="font-mono text-[var(--accent)]">{row.user_id}</span>
       ),
     },
     {
-      key: 'pubkey',
+      key: 'wireguard_pubkey',
       header: t('devices.pubkey'),
-      render: (row: typeof mockDevices[0]) => (
-        <span className="font-mono text-xs text-[var(--text-muted)] bg-[var(--bg-tertiary)] px-2 py-0.5 rounded">
-          {row.pubkey}
+      render: (row: Device) => (
+        <span
+          className="font-mono text-xs text-[var(--text-muted)] bg-[var(--bg-tertiary)] px-2 py-0.5 rounded"
+          title={row.wireguard_pubkey}
+        >
+          {truncatePubkey(row.wireguard_pubkey)}
         </span>
       ),
     },
     {
-      key: 'status',
+      key: 'assigned_ip',
+      header: t('devices.assignedIp') || 'Assigned IP',
+      render: (row: Device) => (
+        <span className="font-mono text-xs">{row.assigned_ip}</span>
+      ),
+    },
+    {
+      key: 'is_approved',
       header: t('devices.status'),
-      render: (row: typeof mockDevices[0]) => (
-        <Badge variant={row.status === 'connected' ? 'online' : 'offline'} pulse>
-          {t(`status.${row.status}`)}
+      render: (row: Device) => (
+        <Badge variant={row.is_approved ? 'online' : 'offline'} pulse>
+          {row.is_approved ? t('status.approved') || 'Approved' : t('status.pending') || 'Pending'}
         </Badge>
       ),
     },
     {
-      key: 'lastHandshake',
+      key: 'last_handshake',
       header: t('devices.lastHandshake'),
-      render: (row: typeof mockDevices[0]) => (
-        <span className="font-mono text-xs text-[var(--text-muted)]">{row.lastHandshake}</span>
-      ),
-    },
-    {
-      key: 'endpoint',
-      header: t('devices.endpoint'),
-      render: (row: typeof mockDevices[0]) => (
-        <span className="font-mono text-xs">{row.endpoint}</span>
-      ),
-    },
-    {
-      key: 'rx',
-      header: t('devices.rx') + '/' + t('devices.tx'),
-      render: (row: typeof mockDevices[0]) => (
+      render: (row: Device) => (
         <span className="font-mono text-xs text-[var(--text-muted)]">
-          {row.rx} / {row.tx}
+          {row.last_handshake ?? '-'}
         </span>
       ),
     },
+    {
+      key: 'actions',
+      header: '',
+      render: (row: Device) => (
+        <div className="flex items-center gap-1">
+          {!row.is_approved ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              title="Approve"
+              disabled={approveMutation.isPending}
+              onClick={(e) => {
+                e.stopPropagation()
+                approveMutation.mutate(row.id)
+              }}
+            >
+              <CheckCircle size={14} className="text-[var(--accent)]" />
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              title="Revoke"
+              disabled={revokeMutation.isPending}
+              onClick={(e) => {
+                e.stopPropagation()
+                revokeMutation.mutate(row.id)
+              }}
+            >
+              <XCircle size={14} className="text-[var(--warning)]" />
+            </Button>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            title="Delete"
+            onClick={(e) => {
+              e.stopPropagation()
+              setDeleteTarget(row)
+            }}
+          >
+            <Trash2 size={14} className="text-[var(--danger)]" />
+          </Button>
+        </div>
+      ),
+    },
   ]
+
+  if (error) {
+    return (
+      <div className="text-center py-12 text-[var(--danger)]">
+        Failed to load devices: {(error as Error).message}
+      </div>
+    )
+  }
 
   return (
     <div>
@@ -81,7 +173,40 @@ export default function DevicesPage() {
         {t('devices.title')}
       </h1>
 
-      <Table columns={columns} data={mockDevices} />
+      {isLoading ? (
+        <div className="text-center py-12 text-[var(--text-muted)]">Loading...</div>
+      ) : (
+        <Table columns={columns} data={devices} />
+      )}
+
+      {/* Delete Confirmation Modal */}
+      <Modal
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        title={t('devices.deleteDevice') || 'Delete device'}
+      >
+        <p className="text-[var(--text-secondary)] mb-6">
+          Are you sure you want to delete device{' '}
+          <span className="font-mono text-[var(--accent)]">{deleteTarget?.name}</span>?
+        </p>
+        {deleteMutation.error && (
+          <p className="text-sm text-[var(--danger)] mb-4">
+            {(deleteMutation.error as Error).message}
+          </p>
+        )}
+        <div className="flex gap-3 justify-end">
+          <Button variant="secondary" onClick={() => setDeleteTarget(null)}>
+            {t('common.cancel')}
+          </Button>
+          <Button
+            variant="danger"
+            disabled={deleteMutation.isPending}
+            onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+          >
+            {deleteMutation.isPending ? 'Deleting...' : t('common.delete') || 'Delete'}
+          </Button>
+        </div>
+      </Modal>
     </div>
   )
 }
