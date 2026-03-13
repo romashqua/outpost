@@ -26,8 +26,43 @@ interface CreateNetworkPayload {
   name: string
   address: string
   dns: string
-  port?: number
-  keepalive?: number
+  port: number
+  keepalive: number
+}
+
+/**
+ * Validates a CIDR string: must be valid format and no host bits set.
+ * Returns null if valid, or a suggested corrected CIDR string if host bits are set.
+ */
+function validateCIDR(cidr: string): { valid: boolean; suggestion?: string; error?: string } {
+  const match = cidr.match(/^(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\/(\d{1,2})$/)
+  if (!match) {
+    return { valid: false, error: 'invalid' }
+  }
+
+  const parts = match[1].split('.').map(Number)
+  const prefix = Number(match[2])
+
+  if (parts.some((p) => p > 255) || prefix > 32) {
+    return { valid: false, error: 'invalid' }
+  }
+
+  // Check host bits: compute network address and compare
+  const ipNum = (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]
+  const mask = prefix === 0 ? 0 : (~0 << (32 - prefix)) >>> 0
+  const networkNum = (ipNum & mask) >>> 0
+
+  if (ipNum !== networkNum) {
+    const netParts = [
+      (networkNum >>> 24) & 0xff,
+      (networkNum >>> 16) & 0xff,
+      (networkNum >>> 8) & 0xff,
+      networkNum & 0xff,
+    ]
+    return { valid: false, error: 'hostBits', suggestion: `${netParts.join('.')}/${prefix}` }
+  }
+
+  return { valid: true }
 }
 
 export default function NetworksPage() {
@@ -36,13 +71,14 @@ export default function NetworksPage() {
   const addToast = useToastStore((s) => s.addToast)
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Network | null>(null)
+  const [cidrError, setCidrError] = useState<string | null>(null)
 
   const [formData, setFormData] = useState<CreateNetworkPayload>({
     name: '',
-    address: '',
-    dns: '',
-    port: undefined,
-    keepalive: undefined,
+    address: '10.0.0.0/24',
+    dns: '1.1.1.1, 8.8.8.8',
+    port: 51820,
+    keepalive: 25,
   })
 
   const { data: networks = [], isLoading, error } = useQuery<Network[]>({
@@ -53,21 +89,21 @@ export default function NetworksPage() {
   const createMutation = useMutation({
     mutationFn: (payload: CreateNetworkPayload) => {
       const body: Record<string, unknown> = { name: payload.name, address: payload.address }
-      // Backend expects dns as string array
       if (payload.dns) {
         body.dns = payload.dns.split(',').map((s) => s.trim()).filter(Boolean)
       } else {
         body.dns = []
       }
-      if (payload.port) body.port = payload.port
-      if (payload.keepalive) body.keepalive = payload.keepalive
+      body.port = payload.port || 51820
+      body.keepalive = payload.keepalive || 25
       return api.post('/networks', body)
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['networks'] })
       setShowCreate(false)
-      setFormData({ name: '', address: '', dns: '', port: undefined, keepalive: undefined })
-      addToast('Network created', 'success')
+      setFormData({ name: '', address: '10.0.0.0/24', dns: '1.1.1.1, 8.8.8.8', port: 51820, keepalive: 25 })
+      setCidrError(null)
+      addToast(t('networks.networkCreated'), 'success')
     },
     onError: (err) => {
       addToast((err as Error).message, 'error')
@@ -79,15 +115,50 @@ export default function NetworksPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['networks'] })
       setDeleteTarget(null)
-      addToast('Network deleted', 'success')
+      addToast(t('networks.networkDeleted'), 'success')
     },
     onError: (err) => {
       addToast((err as Error).message, 'error')
     },
   })
 
+  const handleCidrChange = (value: string) => {
+    setFormData({ ...formData, address: value })
+    if (value.length > 0 && value.includes('/')) {
+      const result = validateCIDR(value)
+      if (!result.valid) {
+        if (result.error === 'hostBits' && result.suggestion) {
+          setCidrError(t('networks.cidrHostBits', { suggestion: result.suggestion }))
+        } else {
+          setCidrError(t('networks.cidrInvalid'))
+        }
+      } else {
+        setCidrError(null)
+      }
+    } else {
+      setCidrError(null)
+    }
+  }
+
+  const handleCidrFix = () => {
+    const result = validateCIDR(formData.address)
+    if (!result.valid && result.suggestion) {
+      setFormData({ ...formData, address: result.suggestion })
+      setCidrError(null)
+    }
+  }
+
   const handleCreateSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+    const result = validateCIDR(formData.address)
+    if (!result.valid) {
+      if (result.suggestion) {
+        setCidrError(t('networks.cidrHostBits', { suggestion: result.suggestion }))
+      } else {
+        setCidrError(t('networks.cidrInvalid'))
+      }
+      return
+    }
     createMutation.mutate(formData)
   }
 
@@ -120,7 +191,7 @@ export default function NetworksPage() {
     },
     {
       key: 'port',
-      header: t('networks.port') || 'Port',
+      header: t('networks.port'),
       render: (row: Network) => (
         <span className="font-mono">{row.port ?? '-'}</span>
       ),
@@ -136,7 +207,7 @@ export default function NetworksPage() {
     },
     {
       key: 'created_at',
-      header: t('common.createdAt') || 'Created',
+      header: t('common.createdAt'),
       sortable: true,
       render: (row: Network) => (
         <span className="font-mono text-xs text-[var(--text-muted)]">
@@ -166,7 +237,7 @@ export default function NetworksPage() {
   if (error) {
     return (
       <div className="text-center py-12 text-[var(--danger)]">
-        Failed to load networks: {(error as Error).message}
+        {t('networks.failedToLoad')}: {(error as Error).message}
       </div>
     )
   }
@@ -178,14 +249,14 @@ export default function NetworksPage() {
           <span className="font-mono text-[var(--accent)] mr-2">&gt;_</span>
           {t('networks.title')}
         </h1>
-        <Button onClick={() => { createMutation.reset(); setShowCreate(true) }}>
+        <Button onClick={() => { createMutation.reset(); setCidrError(null); setShowCreate(true) }}>
           <Plus size={16} />
           {t('networks.createNetwork')}
         </Button>
       </div>
 
       {isLoading ? (
-        <div className="text-center py-12 text-[var(--text-muted)]">Loading...</div>
+        <div className="text-center py-12 text-[var(--text-muted)]">{t('common.loading')}</div>
       ) : (
         <Table columns={columns} data={networks} />
       )}
@@ -200,36 +271,55 @@ export default function NetworksPage() {
             onChange={(e) => setFormData({ ...formData, name: e.target.value })}
             required
           />
+          <div>
+            <Input
+              label={t('networks.address')}
+              placeholder="10.0.0.0/24"
+              value={formData.address}
+              onChange={(e) => handleCidrChange(e.target.value)}
+              required
+            />
+            {cidrError && (
+              <div className="mt-1 flex items-center gap-2">
+                <p className="text-xs text-[var(--danger)]">{cidrError}</p>
+                {formData.address && validateCIDR(formData.address).suggestion && (
+                  <button
+                    type="button"
+                    className="text-xs text-[var(--accent)] underline hover:no-underline"
+                    onClick={handleCidrFix}
+                  >
+                    {t('networks.fixCidr')}
+                  </button>
+                )}
+              </div>
+            )}
+            <p className="text-[10px] text-[var(--text-muted)] mt-1">
+              {t('networks.cidrHint')}
+            </p>
+          </div>
           <Input
-            label={t('networks.cidr') || 'Address (CIDR)'}
-            placeholder="10.0.1.0/24"
-            value={formData.address}
-            onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-            required
-          />
-          <Input
-            label="DNS"
-            placeholder="1.1.1.1"
-            value={formData.dns ?? ''}
+            label={t('networks.dns')}
+            placeholder="1.1.1.1, 8.8.8.8"
+            value={formData.dns}
             onChange={(e) => setFormData({ ...formData, dns: e.target.value })}
           />
           <div className="grid grid-cols-2 gap-4">
             <Input
-              label={t('networks.port') || 'Port'}
+              label={t('networks.port')}
               placeholder="51820"
               type="number"
-              value={formData.port ?? ''}
+              value={formData.port}
               onChange={(e) =>
-                setFormData({ ...formData, port: e.target.value ? Number(e.target.value) : undefined })
+                setFormData({ ...formData, port: e.target.value ? Number(e.target.value) : 51820 })
               }
             />
             <Input
-              label="Keepalive"
+              label={t('networks.keepalive')}
               placeholder="25"
               type="number"
-              value={formData.keepalive ?? ''}
+              value={formData.keepalive}
               onChange={(e) =>
-                setFormData({ ...formData, keepalive: e.target.value ? Number(e.target.value) : undefined })
+                setFormData({ ...formData, keepalive: e.target.value ? Number(e.target.value) : 25 })
               }
             />
           </div>
@@ -243,7 +333,7 @@ export default function NetworksPage() {
               {t('common.cancel')}
             </Button>
             <Button type="submit" disabled={createMutation.isPending}>
-              {createMutation.isPending ? 'Creating...' : t('common.create')}
+              {createMutation.isPending ? t('networks.creating') : t('common.create')}
             </Button>
           </div>
         </form>
@@ -253,10 +343,11 @@ export default function NetworksPage() {
       <Modal
         open={!!deleteTarget}
         onClose={() => setDeleteTarget(null)}
-        title={t('networks.deleteNetwork') || 'Delete network'}
+        title={t('networks.deleteNetwork')}
       >
         <p className="text-[var(--text-secondary)] mb-6">
-          Are you sure you want to delete network{' '}
+          {t('networks.confirmDelete')}
+          {' '}
           <span className="font-mono text-[var(--accent)]">{deleteTarget?.name}</span>?
         </p>
         {deleteMutation.error && (
@@ -273,7 +364,7 @@ export default function NetworksPage() {
             disabled={deleteMutation.isPending}
             onClick={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
           >
-            {deleteMutation.isPending ? 'Deleting...' : t('common.delete') || 'Delete'}
+            {deleteMutation.isPending ? t('networks.deleting') : t('common.delete')}
           </Button>
         </div>
       </Modal>

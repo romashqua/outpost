@@ -2,7 +2,9 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -116,6 +118,19 @@ func (h *NetworkHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate CIDR format and ensure it's a network address (no host bits set).
+	ip, ipNet, err := net.ParseCIDR(req.Address)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, fmt.Sprintf("invalid CIDR format: %s — expected format like 10.0.0.0/24", req.Address))
+		return
+	}
+	if !ip.Equal(ipNet.IP) {
+		respondError(w, http.StatusBadRequest, fmt.Sprintf(
+			"invalid network address: %s has host bits set — did you mean %s?",
+			req.Address, ipNet.String()))
+		return
+	}
+
 	if req.Port == 0 {
 		req.Port = 51820
 	}
@@ -127,7 +142,7 @@ func (h *NetworkHandler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var n networkResponse
-	err := h.pool.QueryRow(r.Context(),
+	err = h.pool.QueryRow(r.Context(),
 		`INSERT INTO networks (name, address, dns, port, keepalive)
 		 VALUES ($1, $2, $3, $4, $5)
 		 RETURNING id, name, address::text, dns, port, keepalive, is_active, created_at, updated_at`,
@@ -146,6 +161,7 @@ func (h *NetworkHandler) create(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusConflict, msg)
 			return
 		}
+		h.log.Error("failed to create network", "error", err)
 		respondError(w, http.StatusInternalServerError, "failed to create network")
 		return
 	}
