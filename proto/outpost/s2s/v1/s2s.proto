@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package outpost.s2s.v1;
+
+option go_package = "github.com/romashqua-labs/outpost/pkg/pb/outpost/s2s/v1;s2sv1";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+service S2SControlPlane {
+  // Gateway advertises its local routes to core.
+  rpc AdvertiseRoutes(RouteAdvertisement) returns (RouteAck);
+
+  // Gateway subscribes to route table updates from core.
+  rpc SubscribeRoutes(RouteSubscription) returns (stream RouteTableUpdate);
+
+  // Gateway reports tunnel health status.
+  rpc ReportHealth(TunnelHealthReport) returns (google.protobuf.Empty);
+}
+
+message RouteAdvertisement {
+  string gateway_id = 1;
+  string tunnel_id = 2;
+  repeated Route routes = 3;
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+message Route {
+  string destination = 1; // CIDR notation
+  int32 metric = 2;
+  map<string, string> attributes = 3;
+}
+
+message RouteAck {
+  bool accepted = 1;
+  int32 routes_accepted = 2;
+  int32 routes_rejected = 3;
+  repeated string errors = 4;
+}
+
+message RouteSubscription {
+  string gateway_id = 1;
+  string tunnel_id = 2;
+}
+
+message RouteTableUpdate {
+  enum Action {
+    ACTION_UNSPECIFIED = 0;
+    ACTION_ADD = 1;
+    ACTION_REMOVE = 2;
+    ACTION_REPLACE = 3; // full table replacement
+  }
+  Action action = 1;
+  repeated RouteEntry routes = 2;
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+message RouteEntry {
+  string destination = 1;
+  string via_gateway_id = 2;
+  string via_public_key = 3;
+  string via_endpoint = 4;
+  int32 metric = 5;
+  bool is_active = 6;
+}
+
+message TunnelHealthReport {
+  string gateway_id = 1;
+  string tunnel_id = 2;
+  repeated TunnelPeerHealth peers = 3;
+  google.protobuf.Timestamp checked_at = 4;
+}
+
+message TunnelPeerHealth {
+  string remote_gateway_id = 1;
+  bool is_reachable = 2;
+  int64 latency_ms = 3;
+  int64 rx_bytes = 4;
+  int64 tx_bytes = 5;
+  google.protobuf.Timestamp last_handshake = 6;
+}

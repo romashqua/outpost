@@ -1,0 +1,107 @@
+syntax = "proto3";
+
+package outpost.proxy.v1;
+
+option go_package = "github.com/romashqua-labs/outpost/pkg/pb/outpost/proxy/v1;proxyv1";
+
+import "google/protobuf/timestamp.proto";
+
+service ProxyService {
+  // Proxy connects to core to handle enrollment and auth flows.
+  rpc Connect(stream ProxyEvent) returns (stream CoreProxyEvent);
+
+  // Validate an enrollment token.
+  rpc ValidateEnrollmentToken(ValidateTokenRequest) returns (ValidateTokenResponse);
+
+  // Complete device enrollment.
+  rpc CompleteEnrollment(CompleteEnrollmentRequest) returns (CompleteEnrollmentResponse);
+}
+
+// --- Requests ---
+
+message ValidateTokenRequest {
+  string token = 1;
+}
+
+message ValidateTokenResponse {
+  bool valid = 1;
+  string user_id = 2;
+  string username = 3;
+  string email = 4;
+  google.protobuf.Timestamp expires_at = 5;
+}
+
+message CompleteEnrollmentRequest {
+  string token = 1;
+  string device_name = 2;
+  string wireguard_pubkey = 3;
+}
+
+message CompleteEnrollmentResponse {
+  string device_id = 1;
+  string assigned_ip = 2;
+  string server_pubkey = 3;
+  string server_endpoint = 4;
+  repeated string dns_servers = 5;
+  repeated string allowed_ips = 6;
+  int32 keepalive = 7;
+}
+
+// --- Streaming Events ---
+
+// Proxy -> Core
+message ProxyEvent {
+  oneof event {
+    AuthRequest auth_request = 1;
+    MFAResponse mfa_response = 2;
+    EnrollmentEvent enrollment = 3;
+  }
+}
+
+message AuthRequest {
+  string request_id = 1;
+  string username = 2;
+  string password = 3;
+  string client_ip = 4;
+}
+
+message MFAResponse {
+  string request_id = 1;
+  string code = 2;
+  string method = 3; // totp, webauthn, email
+}
+
+message EnrollmentEvent {
+  string token = 1;
+  string step = 2;
+  bytes payload = 3;
+}
+
+// Core -> Proxy
+message CoreProxyEvent {
+  oneof event {
+    AuthResponse auth_response = 1;
+    MFAChallenge mfa_challenge = 2;
+    EnrollmentStep enrollment_step = 3;
+  }
+}
+
+message AuthResponse {
+  string request_id = 1;
+  bool success = 2;
+  string session_token = 3;
+  string error_message = 4;
+  bool mfa_required = 5;
+}
+
+message MFAChallenge {
+  string request_id = 1;
+  repeated string available_methods = 2;
+  string message = 3;
+}
+
+message EnrollmentStep {
+  string step = 1;
+  bytes payload = 2;
+  bool complete = 3;
+}

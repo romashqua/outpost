@@ -1,0 +1,19 @@
+# Stage 1: Build Go binary
+FROM golang:1.24-alpine AS builder
+RUN apk add --no-cache git
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
+    -ldflags="-s -w" \
+    -o /bin/outpost-proxy ./cmd/outpost-proxy
+
+# Stage 2: Runtime
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates tzdata
+COPY --from=builder /bin/outpost-proxy /usr/local/bin/outpost-proxy
+
+EXPOSE 8080
+
+ENTRYPOINT ["outpost-proxy"]

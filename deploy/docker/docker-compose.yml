@@ -1,0 +1,116 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: outpost
+      POSTGRES_USER: outpost
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-outpost-dev-password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U outpost"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD:-outpost-dev-password}
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-outpost-dev-password}", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  core:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.core
+    environment:
+      OUTPOST_SERVER_HTTP_ADDR: ":8080"
+      OUTPOST_SERVER_GRPC_ADDR: ":50051"
+      OUTPOST_DB_HOST: postgres
+      OUTPOST_DB_PORT: "5432"
+      OUTPOST_DB_NAME: outpost
+      OUTPOST_DB_USER: outpost
+      OUTPOST_DB_PASSWORD: ${POSTGRES_PASSWORD:-outpost-dev-password}
+      OUTPOST_DB_SSLMODE: disable
+      OUTPOST_REDIS_ADDR: "redis:6379"
+      OUTPOST_REDIS_PASSWORD: ${REDIS_PASSWORD:-outpost-dev-password}
+      OUTPOST_AUTH_JWT_SECRET: ${JWT_SECRET:-outpost-dev-jwt-secret-change-me}
+      OUTPOST_LOG_LEVEL: info
+      OUTPOST_LOG_FORMAT: json
+    ports:
+      - "8080:8080"
+      - "50051:50051"
+    networks:
+      - internal
+      - dmz
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.gateway
+    environment:
+      OUTPOST_GATEWAY_CORE_ADDR: "core:50051"
+      OUTPOST_GATEWAY_TOKEN: ${GATEWAY_TOKEN:-outpost-dev-gateway-token}
+      OUTPOST_LOG_LEVEL: info
+      OUTPOST_LOG_FORMAT: json
+    ports:
+      - "51820:51820/udp"
+    networks:
+      - internal
+    depends_on:
+      - core
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.src_valid_mark=1
+    restart: unless-stopped
+
+  proxy:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.proxy
+    environment:
+      OUTPOST_PROXY_LISTEN_ADDR: ":8080"
+      OUTPOST_PROXY_CORE_ADDR: "core:50051"
+      OUTPOST_LOG_LEVEL: info
+      OUTPOST_LOG_FORMAT: json
+    ports:
+      - "8081:8080"
+    networks:
+      - dmz
+    depends_on:
+      - core
+    restart: unless-stopped
+
+networks:
+  internal:
+    driver: bridge
+  dmz:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:

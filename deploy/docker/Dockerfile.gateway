@@ -1,0 +1,21 @@
+# Stage 1: Build Go binary
+FROM golang:1.24-alpine AS builder
+RUN apk add --no-cache git
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
+    -ldflags="-s -w" \
+    -o /bin/outpost-gateway ./cmd/outpost-gateway
+
+# Stage 2: Runtime with WireGuard tools
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates wireguard-tools iptables ip6tables
+
+COPY --from=builder /bin/outpost-gateway /usr/local/bin/outpost-gateway
+
+# Required capabilities: NET_ADMIN, SYS_MODULE
+# Required devices: /dev/net/tun
+
+ENTRYPOINT ["outpost-gateway"]

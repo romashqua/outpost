@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package outpost.common.v1;
+
+option go_package = "github.com/romashqua-labs/outpost/pkg/pb/outpost/common/v1;commonv1";
+
+import "google/protobuf/timestamp.proto";
+
+message Peer {
+  string public_key = 1;
+  repeated string allowed_ips = 2;
+  string preshared_key = 3;
+  int32 persistent_keepalive = 4;
+  string endpoint = 5;
+}
+
+message PeerStats {
+  string public_key = 1;
+  string endpoint = 2;
+  int64 rx_bytes = 3;
+  int64 tx_bytes = 4;
+  google.protobuf.Timestamp last_handshake = 5;
+}
+
+message FirewallRule {
+  string source = 1;
+  string destination = 2;
+  string protocol = 3;
+  string port = 4;
+  enum Action {
+    ACTION_UNSPECIFIED = 0;
+    ACTION_ACCEPT = 1;
+    ACTION_DROP = 2;
+  }
+  Action action = 5;
+}
+
+message FirewallConfig {
+  repeated FirewallRule rules = 1;
+  bool nat_enabled = 2;
+  string nat_interface = 3;
+}

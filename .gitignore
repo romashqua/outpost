@@ -1,0 +1,47 @@
+# Binaries
+/bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# Go
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Frontend
+web-ui/node_modules/
+web-ui/dist/
+
+# Generated
+pkg/pb/**/*.go
+
+# Docker
+docker-compose.override.yml
+
+# Secrets
+*.pem
+*.key
+!*.key.example

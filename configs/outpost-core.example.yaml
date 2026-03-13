@@ -1,0 +1,33 @@
+# Outpost Core configuration
+# All values can be overridden with OUTPOST_ prefixed environment variables.
+# Example: server.http_addr -> OUTPOST_SERVER_HTTP_ADDR
+
+server:
+  http_addr: ":8080"
+  grpc_addr: ":50051"
+  # tls_cert: /etc/outpost/tls/cert.pem
+  # tls_key: /etc/outpost/tls/key.pem
+
+database:
+  host: localhost
+  port: 5432
+  name: outpost
+  user: outpost
+  password: "" # Use env var OUTPOST_DB_PASSWORD
+  sslmode: prefer
+  max_conns: 25
+  min_conns: 5
+
+redis:
+  addr: "localhost:6379"
+  password: "" # Use env var OUTPOST_REDIS_PASSWORD
+  db: 0
+
+auth:
+  jwt_secret: "" # Use env var OUTPOST_AUTH_JWT_SECRET (required, min 32 chars)
+  token_ttl: 24h
+  session_ttl: 720h # 30 days
+
+log:
+  level: info # debug, info, warn, error
+  format: json # json, text

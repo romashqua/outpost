@@ -1,0 +1,14 @@
+# Outpost Gateway configuration
+
+gateway:
+  core_addr: "localhost:50051"
+  token: "" # Use env var OUTPOST_GATEWAY_TOKEN (required)
+
+wireguard:
+  interface_name: wg0
+  listen_port: 51820
+  mtu: 1420
+
+log:
+  level: info
+  format: json

@@ -1,0 +1,136 @@
+syntax = "proto3";
+
+package outpost.gateway.v1;
+
+option go_package = "github.com/romashqua-labs/outpost/pkg/pb/outpost/gateway/v1;gatewayv1";
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+import "outpost/common/v1/types.proto";
+
+service GatewayService {
+  // Gateway calls on startup to get full configuration.
+  rpc GetConfig(ConfigRequest) returns (GatewayConfig);
+
+  // Bidirectional stream: core pushes config updates, gateway sends stats/health.
+  rpc Sync(stream GatewayEvent) returns (stream CoreEvent);
+
+  // Gateway reports its current status.
+  rpc Heartbeat(HeartbeatRequest) returns (google.protobuf.Empty);
+}
+
+// --- Requests ---
+
+message ConfigRequest {
+  string gateway_token = 1;
+}
+
+message HeartbeatRequest {
+  string gateway_id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  int64 uptime_seconds = 3;
+  int32 connected_peers = 4;
+}
+
+// --- Config ---
+
+message GatewayConfig {
+  string gateway_id = 1;
+  string network_name = 2;
+  string private_key = 3;
+  int32 listen_port = 4;
+  repeated string addresses = 5;
+  repeated outpost.common.v1.Peer peers = 6;
+  outpost.common.v1.FirewallConfig firewall = 7;
+  repeated S2STunnelConfig s2s_tunnels = 8;
+}
+
+message S2STunnelConfig {
+  string tunnel_id = 1;
+  string interface_name = 2;
+  string private_key = 3;
+  int32 listen_port = 4;
+  repeated S2SPeer peers = 5;
+  repeated string local_subnets = 6;
+}
+
+message S2SPeer {
+  string gateway_id = 1;
+  string public_key = 2;
+  string endpoint = 3;
+  repeated string allowed_ips = 4;
+  int32 persistent_keepalive = 5;
+}
+
+// --- Streaming Events ---
+
+// Gateway -> Core
+message GatewayEvent {
+  oneof event {
+    PeerStatsReport stats = 1;
+    S2SHealthReport s2s_health = 2;
+    GatewayStatusReport status = 3;
+  }
+}
+
+message PeerStatsReport {
+  repeated outpost.common.v1.PeerStats peers = 1;
+  google.protobuf.Timestamp collected_at = 2;
+}
+
+message S2SHealthReport {
+  string tunnel_id = 1;
+  string remote_gateway_id = 2;
+  bool is_healthy = 3;
+  int64 latency_ms = 4;
+  google.protobuf.Timestamp checked_at = 5;
+}
+
+message GatewayStatusReport {
+  int32 active_peers = 1;
+  int64 rx_bytes_total = 2;
+  int64 tx_bytes_total = 3;
+  double cpu_usage = 4;
+  double memory_usage = 5;
+}
+
+// Core -> Gateway
+message CoreEvent {
+  oneof event {
+    PeerUpdate peer_update = 1;
+    S2SUpdate s2s_update = 2;
+    FirewallUpdate firewall_update = 3;
+    FullResync full_resync = 4;
+  }
+}
+
+message PeerUpdate {
+  enum Action {
+    ACTION_UNSPECIFIED = 0;
+    ACTION_ADD = 1;
+    ACTION_MODIFY = 2;
+    ACTION_REMOVE = 3;
+  }
+  Action action = 1;
+  outpost.common.v1.Peer peer = 2;
+}
+
+message S2SUpdate {
+  enum Action {
+    ACTION_UNSPECIFIED = 0;
+    ACTION_ADD_TUNNEL = 1;
+    ACTION_REMOVE_TUNNEL = 2;
+    ACTION_UPDATE_PEERS = 3;
+    ACTION_UPDATE_ROUTES = 4;
+  }
+  Action action = 1;
+  S2STunnelConfig tunnel = 2;
+}
+
+message FirewallUpdate {
+  outpost.common.v1.FirewallConfig config = 1;
+}
+
+message FullResync {
+  GatewayConfig config = 1;
+}
