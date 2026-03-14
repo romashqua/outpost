@@ -1,4 +1,8 @@
 <p align="center">
+  <a href="README.md">English</a> | <a href="README.ru.md">Русский</a>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/Go-1.25-00ADD8?style=flat-square&logo=go&logoColor=white" />
   <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black" />
   <img src="https://img.shields.io/badge/WireGuard-88171A?style=flat-square&logo=wireguard&logoColor=white" />
@@ -14,7 +18,6 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> &middot;
   <a href="#быстрый-старт">Быстрый старт</a> &middot;
   <a href="#возможности">Возможности</a> &middot;
   <a href="#архитектура">Архитектура</a>
