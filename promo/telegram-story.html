@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1080, height=1920">
+<title>Outpost VPN — Promo</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0a0a0f;
+    --accent: #00ff88;
+    --accent-dim: rgba(0,255,136,0.15);
+    --accent-glow: rgba(0,255,136,0.3);
+    --blue: #00aaff;
+    --danger: #ff4444;
+    --text: #e0e0e0;
+    --text-dim: #555;
+    --border: rgba(0,255,136,0.12);
+  }
+
+  body {
+    width: 1080px;
+    height: 1920px;
+    background: var(--bg);
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--text);
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* ═══ MATRIX RAIN ═══ */
+  .rain-container {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    z-index: 0;
+  }
+
+  .rain-col {
+    position: absolute;
+    top: -100%;
+    font-size: 14px;
+    line-height: 1.2;
+    color: var(--accent);
+    opacity: 0.06;
+    writing-mode: vertical-rl;
+    animation: rain-fall linear infinite;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  @keyframes rain-fall {
+    0% { transform: translateY(-10%); }
+    100% { transform: translateY(210%); }
+  }
+
+  /* ═══ GRID OVERLAY ═══ */
+  .grid-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    background-image:
+      linear-gradient(rgba(0,255,136,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,255,136,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  /* ═══ SCANLINE ═══ */
+  .scanline {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, transparent, var(--accent-glow), transparent);
+    z-index: 2;
+    opacity: 0.4;
+    animation: scanline 4s linear infinite;
+  }
+
+  @keyframes scanline {
+    0% { top: -4px; }
+    100% { top: 1920px; }
+  }
+
+  /* ═══ CONTENT ═══ */
+  .content {
+    position: relative;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 80px 60px;
+    height: 100%;
+  }
+
+  /* ═══ PHASE 1: BOOT SEQUENCE ═══ */
+  .boot {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    z-index: 100;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    animation: boot-hide 0.3s ease forwards;
+    animation-delay: 3.5s;
+  }
+
+  @keyframes boot-hide {
+    0% { opacity: 1; }
+    100% { opacity: 0; pointer-events: none; }
+  }
+
+  .boot-line {
+    font-size: 18px;
+    color: var(--accent);
+    opacity: 0;
+    margin: 4px 0;
+    text-align: left;
+    width: 700px;
+  }
+
+  .boot-line:nth-child(1) { animation: boot-type 0.1s ease forwards; animation-delay: 0.2s; }
+  .boot-line:nth-child(2) { animation: boot-type 0.1s ease forwards; animation-delay: 0.5s; }
+  .boot-line:nth-child(3) { animation: boot-type 0.1s ease forwards; animation-delay: 0.8s; }
+  .boot-line:nth-child(4) { animation: boot-type 0.1s ease forwards; animation-delay: 1.1s; }
+  .boot-line:nth-child(5) { animation: boot-type 0.1s ease forwards; animation-delay: 1.4s; }
+  .boot-line:nth-child(6) { animation: boot-type 0.1s ease forwards; animation-delay: 1.7s; color: var(--blue); }
+  .boot-line:nth-child(7) { animation: boot-type 0.1s ease forwards; animation-delay: 2.0s; }
+  .boot-line:nth-child(8) { animation: boot-type 0.1s ease forwards; animation-delay: 2.3s; color: var(--accent); font-weight: 700; font-size: 22px; }
+
+  @keyframes boot-type {
+    0% { opacity: 0; transform: translateX(-10px); }
+    100% { opacity: 1; transform: translateX(0); }
+  }
+
+  .boot-cursor {
+    display: inline-block;
+    width: 12px;
+    height: 22px;
+    background: var(--accent);
+    margin-left: 4px;
+    animation: blink 0.6s step-end infinite;
+    vertical-align: middle;
+  }
+
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+  }
+
+  /* ═══ PHASE 2: MAIN CONTENT ═══ */
+
+  /* Logo */
+  .logo-section {
+    margin-top: 40px;
+    text-align: center;
+    opacity: 0;
+    animation: fade-up 0.8s ease forwards;
+    animation-delay: 3.8s;
+  }
+
+  .logo-text {
+    font-size: 96px;
+    font-weight: 800;
+    letter-spacing: 0.15em;
+    color: var(--accent);
+    text-shadow:
+      0 0 40px var(--accent-glow),
+      0 0 80px rgba(0,255,136,0.15),
+      0 0 120px rgba(0,255,136,0.05);
+    position: relative;
+  }
+
+  .logo-text::after {
+    content: 'OUTPOST';
+    position: absolute;
+    top: 0;
+    left: 0;
+    color: transparent;
+    -webkit-text-stroke: 1px rgba(0,255,136,0.2);
+    animation: glitch 4s infinite;
+  }
+
+  @keyframes glitch {
+    0%, 94%, 100% { transform: translate(0); }
+    95% { transform: translate(-3px, 2px); }
+    96% { transform: translate(3px, -2px); }
+    97% { transform: translate(-2px, -1px); }
+  }
+
+  .logo-sub {
+    font-size: 28px;
+    color: var(--text-dim);
+    letter-spacing: 0.5em;
+    margin-top: 8px;
+    font-weight: 300;
+  }
+
+  /* Tagline */
+  .tagline {
+    margin-top: 50px;
+    text-align: center;
+    opacity: 0;
+    animation: fade-up 0.8s ease forwards;
+    animation-delay: 4.4s;
+  }
+
+  .tagline h2 {
+    font-size: 42px;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.3;
+  }
+
+  .tagline .highlight {
+    color: var(--accent);
+    text-shadow: 0 0 20px var(--accent-glow);
+  }
+
+  /* Terminal Card */
+  .terminal {
+    margin-top: 50px;
+    width: 100%;
+    max-width: 920px;
+    background: rgba(10,10,15,0.95);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    opacity: 0;
+    animation: fade-up 0.8s ease forwards;
+    animation-delay: 5.0s;
+  }
+
+  .terminal-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    background: rgba(0,255,136,0.05);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .terminal-dot {
+    width: 12px; height: 12px; border-radius: 50%;
+  }
+
+  .terminal-dot.r { background: #ff5f57; }
+  .terminal-dot.y { background: #febc2e; }
+  .terminal-dot.g { background: #28c840; }
+
+  .terminal-title {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-left: 12px;
+  }
+
+  .terminal-body {
+    padding: 24px;
+    font-size: 17px;
+    line-height: 2;
+  }
+
+  .term-line {
+    opacity: 0;
+    white-space: nowrap;
+  }
+
+  .term-line:nth-child(1) { animation: term-type 0.3s ease forwards; animation-delay: 5.4s; }
+  .term-line:nth-child(2) { animation: term-type 0.3s ease forwards; animation-delay: 6.0s; }
+  .term-line:nth-child(3) { animation: term-type 0.3s ease forwards; animation-delay: 6.6s; }
+  .term-line:nth-child(4) { animation: term-type 0.3s ease forwards; animation-delay: 7.2s; }
+  .term-line:nth-child(5) { animation: term-type 0.3s ease forwards; animation-delay: 7.8s; }
+  .term-line:nth-child(6) { animation: term-type 0.3s ease forwards; animation-delay: 8.4s; }
+
+  @keyframes term-type {
+    0% { opacity: 0; transform: translateY(8px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+
+  .prompt { color: var(--accent); }
+  .cmd { color: var(--text); }
+  .flag { color: var(--blue); }
+  .ok { color: #28c840; }
+  .val { color: #febc2e; }
+
+  /* Features */
+  .features {
+    margin-top: 50px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    width: 100%;
+    max-width: 920px;
+  }
+
+  .feature {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 18px 20px;
+    background: rgba(0,255,136,0.04);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    font-size: 18px;
+    color: var(--text);
+    opacity: 0;
+    animation: fade-up 0.5s ease forwards;
+  }
+
+  .feature:nth-child(1) { animation-delay: 8.8s; }
+  .feature:nth-child(2) { animation-delay: 9.0s; }
+  .feature:nth-child(3) { animation-delay: 9.2s; }
+  .feature:nth-child(4) { animation-delay: 9.4s; }
+  .feature:nth-child(5) { animation-delay: 9.6s; }
+  .feature:nth-child(6) { animation-delay: 9.8s; }
+  .feature:nth-child(7) { animation-delay: 10.0s; }
+  .feature:nth-child(8) { animation-delay: 10.2s; }
+
+  .feature-icon {
+    font-size: 24px;
+    width: 40px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+
+  .feature-text {
+    font-size: 16px;
+    font-weight: 500;
+  }
+
+  /* CTA */
+  .cta {
+    margin-top: auto;
+    margin-bottom: 60px;
+    text-align: center;
+    opacity: 0;
+    animation: fade-up 0.8s ease forwards;
+    animation-delay: 10.8s;
+  }
+
+  .cta-badge {
+    display: inline-block;
+    padding: 16px 48px;
+    background: var(--accent);
+    color: var(--bg);
+    font-size: 24px;
+    font-weight: 700;
+    border-radius: 8px;
+    letter-spacing: 0.05em;
+    box-shadow: 0 0 40px var(--accent-glow), 0 0 80px rgba(0,255,136,0.1);
+    animation: pulse-glow 2s ease-in-out infinite;
+    animation-delay: 11s;
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 40px var(--accent-glow), 0 0 80px rgba(0,255,136,0.1); }
+    50% { box-shadow: 0 0 60px var(--accent-glow), 0 0 120px rgba(0,255,136,0.2); }
+  }
+
+  .cta-url {
+    margin-top: 20px;
+    font-size: 22px;
+    color: var(--text-dim);
+    letter-spacing: 0.05em;
+  }
+
+  .cta-url span {
+    color: var(--accent);
+  }
+
+  .license {
+    margin-top: 16px;
+    font-size: 16px;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+  }
+
+  @keyframes fade-up {
+    0% { opacity: 0; transform: translateY(30px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Decorative corners */
+  .corner {
+    position: absolute;
+    width: 60px;
+    height: 60px;
+    z-index: 5;
+    opacity: 0;
+    animation: fade-up 0.5s ease forwards;
+    animation-delay: 3.8s;
+  }
+
+  .corner-tl { top: 30px; left: 30px; border-top: 2px solid var(--accent); border-left: 2px solid var(--accent); }
+  .corner-tr { top: 30px; right: 30px; border-top: 2px solid var(--accent); border-right: 2px solid var(--accent); }
+  .corner-bl { bottom: 30px; left: 30px; border-bottom: 2px solid var(--accent); border-left: 2px solid var(--accent); }
+  .corner-br { bottom: 30px; right: 30px; border-bottom: 2px solid var(--accent); border-right: 2px solid var(--accent); }
+</style>
+</head>
+<body>
+
+<!-- Matrix Rain -->
+<div class="rain-container" id="rain"></div>
+
+<!-- Grid -->
+<div class="grid-overlay"></div>
+
+<!-- Scanline -->
+<div class="scanline"></div>
+
+<!-- Decorative corners -->
+<div class="corner corner-tl"></div>
+<div class="corner corner-tr"></div>
+<div class="corner corner-bl"></div>
+<div class="corner corner-br"></div>
+
+<!-- Phase 1: Boot Sequence -->
+<div class="boot">
+  <div class="boot-line">[<span style="color:#00aaff">SYSTEM</span>] Initializing secure kernel...</div>
+  <div class="boot-line">[<span style="color:#00aaff">CRYPTO</span>] Loading WireGuard module... <span class="ok">OK</span></div>
+  <div class="boot-line">[<span style="color:#00aaff">NET</span>] Configuring Zero Trust policies... <span class="ok">OK</span></div>
+  <div class="boot-line">[<span style="color:#00aaff">AUTH</span>] OIDC provider ready... <span class="ok">OK</span></div>
+  <div class="boot-line">[<span style="color:#00aaff">S2S</span>] Site-to-Site mesh enabled... <span class="ok">OK</span></div>
+  <div class="boot-line">[<span style="color:#00aaff">PKI</span>] Certificate authority initialized</div>
+  <div class="boot-line">[<span style="color:#00aaff">CORE</span>] All systems operational</div>
+  <div class="boot-line">&gt;_ OUTPOST VPN v0.1.0 <span class="ok">READY</span><span class="boot-cursor"></span></div>
+</div>
+
+<!-- Phase 2: Main Content -->
+<div class="content">
+
+  <!-- Logo -->
+  <div class="logo-section">
+    <div class="logo-text">OUTPOST</div>
+    <div class="logo-sub">V P N</div>
+  </div>
+
+  <!-- Tagline -->
+  <div class="tagline">
+    <h2>
+      Open-Source <span class="highlight">WireGuard</span><br>
+      VPN & Zero Trust Platform
+    </h2>
+  </div>
+
+  <!-- Terminal -->
+  <div class="terminal">
+    <div class="terminal-bar">
+      <div class="terminal-dot r"></div>
+      <div class="terminal-dot y"></div>
+      <div class="terminal-dot g"></div>
+      <span class="terminal-title">root@outpost ~ </span>
+    </div>
+    <div class="terminal-body">
+      <div class="term-line"><span class="prompt">$</span> <span class="cmd">docker compose up</span> <span class="flag">-d</span></div>
+      <div class="term-line"><span class="ok">✓</span> <span class="val">postgres</span>  <span class="ok">healthy</span></div>
+      <div class="term-line"><span class="ok">✓</span> <span class="val">redis</span>     <span class="ok">healthy</span></div>
+      <div class="term-line"><span class="ok">✓</span> <span class="val">core</span>      <span class="ok">listening :8080</span></div>
+      <div class="term-line"><span class="ok">✓</span> <span class="val">gateway</span>   <span class="ok">wireguard :51820/udp</span></div>
+      <div class="term-line"><span class="prompt">$</span> <span class="ok">All systems operational_</span></div>
+    </div>
+  </div>
+
+  <!-- Features -->
+  <div class="features">
+    <div class="feature">
+      <span class="feature-icon">🛡️</span>
+      <span class="feature-text">Zero Trust (ZTNA)</span>
+    </div>
+    <div class="feature">
+      <span class="feature-icon">🔗</span>
+      <span class="feature-text">Site-to-Site Mesh</span>
+    </div>
+    <div class="feature">
+      <span class="feature-icon">🔐</span>
+      <span class="feature-text">Built-in OIDC + MFA</span>
+    </div>
+    <div class="feature">
+      <span class="feature-icon">📊</span>
+      <span class="feature-text">Traffic Analytics</span>
+    </div>
+    <div class="feature">
+      <span class="feature-icon">🏢</span>
+      <span class="feature-text">Multi-Tenant (MSP)</span>
+    </div>
+    <div class="feature">
+      <span class="feature-icon">📋</span>
+      <span class="feature-text">SOC2 / ISO27001</span>
+    </div>
+    <div class="feature">
+      <span class="feature-icon">🔑</span>
+      <span class="feature-text">Auto Key Rotation</span>
+    </div>
+    <div class="feature">
+      <span class="feature-icon">🗺️</span>
+      <span class="feature-text">Network Topology Map</span>
+    </div>
+  </div>
+
+  <!-- CTA -->
+  <div class="cta">
+    <div class="cta-badge">100% OPEN SOURCE</div>
+    <div class="cta-url">github.com/<span>romashqua/outpost</span></div>
+    <div class="license">Apache 2.0 — No Enterprise Paywall</div>
+  </div>
+
+</div>
+
+<script>
+  // Generate matrix rain columns
+  const rain = document.getElementById('rain');
+  const chars = 'アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン0123456789ABCDEF';
+  for (let i = 0; i < 30; i++) {
+    const col = document.createElement('div');
+    col.className = 'rain-col';
+    col.style.left = (i * 3.5) + '%';
+    col.style.animationDuration = (10 + Math.random() * 20) + 's';
+    col.style.animationDelay = (Math.random() * 10) + 's';
+    col.style.fontSize = (12 + Math.random() * 6) + 'px';
+    let text = '';
+    for (let j = 0; j < 50; j++) {
+      text += chars[Math.floor(Math.random() * chars.length)] + ' ';
+    }
+    col.textContent = text;
+    rain.appendChild(col);
+  }
+</script>
+</body>
+</html>

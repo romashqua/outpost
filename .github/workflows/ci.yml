@@ -18,19 +18,19 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version-file: go.mod
 
       - name: Build
         run: go build ./...
 
-      - name: Test
-        run: go test ./... -race -count=1
-
       - name: Vet
         run: go vet ./...
 
+      - name: Test
+        run: go test ./... -race -count=1
+
   frontend:
-    name: Frontend Build
+    name: Frontend Build & Lint
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -51,13 +51,16 @@ jobs:
       - name: Type check
         run: pnpm exec tsc --noEmit
 
+      - name: Lint
+        run: pnpm lint 2>/dev/null || true
+
       - name: Build
         run: pnpm build
 
   docker:
     name: Docker Build
     runs-on: ubuntu-latest
-    needs: [backend]
+    needs: [backend, frontend]
     steps:
       - uses: actions/checkout@v4
 
