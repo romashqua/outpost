@@ -46,14 +46,24 @@ type Dispatcher struct {
 }
 
 // NewDispatcher creates a Dispatcher backed by the given database pool.
+// It loads existing webhook subscriptions from the database on startup.
 func NewDispatcher(pool *pgxpool.Pool, logger *slog.Logger) *Dispatcher {
-	return &Dispatcher{
+	d := &Dispatcher{
 		pool:   pool,
 		logger: logger,
 		httpClient: &http.Client{
 			Timeout: 5 * time.Second,
 		},
 	}
+
+	// Load existing subscriptions so webhooks fire after server restart.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := d.LoadSubscriptions(ctx); err != nil {
+		logger.Warn("failed to load webhook subscriptions on startup", "error", err)
+	}
+
+	return d
 }
 
 // LoadSubscriptions loads all active subscriptions from the database.
@@ -369,5 +379,5 @@ func respondJSON(w http.ResponseWriter, status int, data any) {
 }
 
 func respondError(w http.ResponseWriter, status int, message string) {
-	respondJSON(w, status, map[string]string{"error": message})
+	respondJSON(w, status, map[string]string{"error": message, "message": message})
 }

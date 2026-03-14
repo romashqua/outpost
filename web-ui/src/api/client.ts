@@ -32,7 +32,7 @@ async function request<T>(
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Request failed' }))
-    throw new Error(error.message || `HTTP ${response.status}`)
+    throw new Error(error.message || error.error || `HTTP ${response.status}`)
   }
 
   if (response.status === 204) {

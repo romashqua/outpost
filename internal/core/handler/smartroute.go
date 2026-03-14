@@ -35,7 +35,12 @@ func (h *SmartRouteHandler) Routes() chi.Router {
 	r.Delete("/{id}/entries/{entryId}", h.deleteEntry)
 	r.Get("/proxy-servers", h.listProxyServers)
 	r.Post("/proxy-servers", h.createProxyServer)
+	r.Get("/proxy-servers/{id}", h.getProxyServer)
+	r.Put("/proxy-servers/{id}", h.updateProxyServer)
 	r.Delete("/proxy-servers/{id}", h.deleteProxyServer)
+	r.Get("/{id}/networks", h.listRouteNetworks)
+	r.Post("/{id}/networks", h.addRouteNetwork)
+	r.Delete("/{id}/networks/{networkId}", h.removeRouteNetwork)
 	return r
 }
 
@@ -355,7 +360,7 @@ func (h *SmartRouteHandler) addEntry(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *SmartRouteHandler) deleteEntry(w http.ResponseWriter, r *http.Request) {
-	_, err := parseUUID(r, "id")
+	routeID, err := parseUUID(r, "id")
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
@@ -367,7 +372,7 @@ func (h *SmartRouteHandler) deleteEntry(w http.ResponseWriter, r *http.Request) 
 	}
 
 	tag, err := h.pool.Exec(r.Context(),
-		`DELETE FROM smart_route_entries WHERE id = $1`, entryID)
+		`DELETE FROM smart_route_entries WHERE id = $1 AND smart_route_id = $2`, entryID, routeID)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to delete entry")
 		return
@@ -456,6 +461,85 @@ func (h *SmartRouteHandler) createProxyServer(w http.ResponseWriter, r *http.Req
 	respondJSON(w, http.StatusCreated, ps)
 }
 
+func (h *SmartRouteHandler) getProxyServer(w http.ResponseWriter, r *http.Request) {
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var ps proxyServer
+	err = h.pool.QueryRow(r.Context(),
+		`SELECT id, name, type, address, port, username, password, extra_config::text, is_active, created_at, updated_at
+		 FROM proxy_servers WHERE id = $1`, id,
+	).Scan(&ps.ID, &ps.Name, &ps.Type, &ps.Address, &ps.Port, &ps.Username, &ps.Password, &ps.ExtraConfig, &ps.IsActive, &ps.CreatedAt, &ps.UpdatedAt)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "proxy server not found")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, ps)
+}
+
+func (h *SmartRouteHandler) updateProxyServer(w http.ResponseWriter, r *http.Request) {
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var req struct {
+		Name        *string `json:"name,omitempty"`
+		Type        *string `json:"type,omitempty"`
+		Address     *string `json:"address,omitempty"`
+		Port        *int    `json:"port,omitempty"`
+		Username    *string `json:"username,omitempty"`
+		Password    *string `json:"password,omitempty"`
+		ExtraConfig *string `json:"extra_config,omitempty"`
+		IsActive    *bool   `json:"is_active,omitempty"`
+	}
+	if err := parseBody(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.Port != nil && (*req.Port < 1 || *req.Port > 65535) {
+		respondError(w, http.StatusBadRequest, "port must be between 1 and 65535")
+		return
+	}
+	if req.Type != nil && *req.Type != "socks5" && *req.Type != "http" && *req.Type != "shadowsocks" && *req.Type != "vless" {
+		respondError(w, http.StatusBadRequest, "type must be 'socks5', 'http', 'shadowsocks', or 'vless'")
+		return
+	}
+
+	var ps proxyServer
+	err = h.pool.QueryRow(r.Context(),
+		`UPDATE proxy_servers
+		 SET name = COALESCE($2, name),
+		     type = COALESCE($3, type),
+		     address = COALESCE($4, address),
+		     port = COALESCE($5, port),
+		     username = COALESCE($6, username),
+		     password = COALESCE($7, password),
+		     extra_config = COALESCE($8::jsonb, extra_config),
+		     is_active = COALESCE($9, is_active),
+		     updated_at = now()
+		 WHERE id = $1
+		 RETURNING id, name, type, address, port, username, password, extra_config::text, is_active, created_at, updated_at`,
+		id, req.Name, req.Type, req.Address, req.Port, req.Username, req.Password, req.ExtraConfig, req.IsActive,
+	).Scan(&ps.ID, &ps.Name, &ps.Type, &ps.Address, &ps.Port, &ps.Username, &ps.Password, &ps.ExtraConfig, &ps.IsActive, &ps.CreatedAt, &ps.UpdatedAt)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			respondError(w, http.StatusConflict, "proxy server with this name already exists")
+			return
+		}
+		respondError(w, http.StatusNotFound, "proxy server not found")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, ps)
+}
+
 func (h *SmartRouteHandler) deleteProxyServer(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -476,6 +560,124 @@ func (h *SmartRouteHandler) deleteProxyServer(w http.ResponseWriter, r *http.Req
 	}
 	if tag.RowsAffected() == 0 {
 		respondError(w, http.StatusNotFound, "proxy server not found")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Network ↔ Smart Route associations ---
+
+type networkSmartRoute struct {
+	NetworkID    string `json:"network_id"`
+	SmartRouteID string `json:"smart_route_id"`
+	NetworkName  string `json:"network_name"`
+}
+
+func (h *SmartRouteHandler) listRouteNetworks(w http.ResponseWriter, r *http.Request) {
+	routeID, err := parseUUID(r, "id")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	rows, err := h.pool.Query(r.Context(),
+		`SELECT nsr.network_id, nsr.smart_route_id, n.name
+		 FROM network_smart_routes nsr
+		 JOIN networks n ON n.id = nsr.network_id
+		 WHERE nsr.smart_route_id = $1
+		 ORDER BY n.name`, routeID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to list route networks")
+		return
+	}
+	defer rows.Close()
+
+	result := make([]networkSmartRoute, 0)
+	for rows.Next() {
+		var nsr networkSmartRoute
+		if err := rows.Scan(&nsr.NetworkID, &nsr.SmartRouteID, &nsr.NetworkName); err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to scan network association")
+			return
+		}
+		result = append(result, nsr)
+	}
+	if err := rows.Err(); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to iterate network associations")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, result)
+}
+
+func (h *SmartRouteHandler) addRouteNetwork(w http.ResponseWriter, r *http.Request) {
+	routeID, err := parseUUID(r, "id")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var req struct {
+		NetworkID string `json:"network_id"`
+	}
+	if err := parseBody(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.NetworkID == "" {
+		respondError(w, http.StatusBadRequest, "network_id is required")
+		return
+	}
+
+	_, err = h.pool.Exec(r.Context(),
+		`INSERT INTO network_smart_routes (network_id, smart_route_id) VALUES ($1, $2)`,
+		req.NetworkID, routeID)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			switch pgErr.Code {
+			case "23505":
+				respondError(w, http.StatusConflict, "network is already associated with this route")
+				return
+			case "23503":
+				msg := "referenced resource not found"
+				if strings.Contains(pgErr.ConstraintName, "network") {
+					msg = "network not found"
+				} else if strings.Contains(pgErr.ConstraintName, "smart_route") {
+					msg = "smart route not found"
+				}
+				respondError(w, http.StatusBadRequest, msg)
+				return
+			}
+		}
+		respondError(w, http.StatusInternalServerError, "failed to associate network")
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+}
+
+func (h *SmartRouteHandler) removeRouteNetwork(w http.ResponseWriter, r *http.Request) {
+	routeID, err := parseUUID(r, "id")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	networkID, err := parseUUID(r, "networkId")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	tag, err := h.pool.Exec(r.Context(),
+		`DELETE FROM network_smart_routes WHERE network_id = $1 AND smart_route_id = $2`,
+		networkID, routeID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to remove network association")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		respondError(w, http.StatusNotFound, "association not found")
 		return
 	}
 
