@@ -20,6 +20,9 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Create frontend dist placeholder
+        run: mkdir -p web-ui/dist && echo '<!DOCTYPE html><html><body>placeholder</body></html>' > web-ui/dist/index.html
+
       - name: Build
         run: go build ./...
 

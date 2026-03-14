@@ -53,8 +53,8 @@ web-ui/node_modules/
 web-ui/dist/
 web-ui/.vite/
 
-# Generated
-pkg/pb/**/*.go
+# Generated protobuf — committed to repo (standard Go practice)
+# pkg/pb/**/*.go
 
 # Docker
 docker-compose.override.yml
