@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/romashqua/outpost/internal/wireguard"
 )
@@ -202,12 +204,20 @@ func (h *DeviceHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Assign the next available IP from the first active network.
-	// This is a simplified allocation; production should use proper IPAM.
+	// Assign the next available IP from the first active network using a
+	// transaction with row locking to prevent race conditions.
+	tx, err := h.pool.Begin(r.Context())
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to begin transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+
 	var assignedIP string
-	err = h.pool.QueryRow(r.Context(),
+	err = tx.QueryRow(r.Context(),
 		`SELECT host(network(address) + (SELECT COUNT(*) + 2 FROM devices))
-		 FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1`,
+		 FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1
+		 FOR UPDATE`,
 	).Scan(&assignedIP)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to allocate IP address")
@@ -215,7 +225,7 @@ func (h *DeviceHandler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var d deviceResponse
-	err = h.pool.QueryRow(r.Context(),
+	err = tx.QueryRow(r.Context(),
 		`INSERT INTO devices (user_id, name, wireguard_pubkey, assigned_ip)
 		 VALUES ($1, $2, $3, $4)
 		 RETURNING id, user_id, name, wireguard_pubkey, host(assigned_ip), is_approved, last_handshake, created_at, updated_at`,
@@ -224,7 +234,25 @@ func (h *DeviceHandler) create(w http.ResponseWriter, r *http.Request) {
 		&d.AssignedIP, &d.IsApproved, &d.LastHandshake, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		h.log.Error("failed to create device", "error", err, "name", req.Name, "user_id", userID)
-		respondError(w, http.StatusConflict, "device already exists or invalid data")
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			msg := "device already exists"
+			if strings.Contains(pgErr.ConstraintName, "pubkey") {
+				msg = "device with this public key already exists"
+			} else if strings.Contains(pgErr.ConstraintName, "name") {
+				msg = "device with this name already exists"
+			} else if strings.Contains(pgErr.ConstraintName, "assigned_ip") {
+				msg = "IP address already in use"
+			}
+			respondError(w, http.StatusConflict, msg)
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "failed to create device")
+		return
+	}
+
+	if err := tx.Commit(r.Context()); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to commit device creation")
 		return
 	}
 
@@ -246,7 +274,12 @@ func (h *DeviceHandler) get(w http.ResponseWriter, r *http.Request) {
 	).Scan(&d.ID, &d.UserID, &d.Name, &d.WireguardPubkey,
 		&d.AssignedIP, &d.IsApproved, &d.LastHandshake, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
-		respondError(w, http.StatusNotFound, "device not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "device not found")
+			return
+		}
+		h.log.Error("failed to get device", "error", err, "id", id)
+		respondError(w, http.StatusInternalServerError, "failed to get device")
 		return
 	}
 
@@ -337,15 +370,24 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Use a transaction with row locking to prevent IP allocation race conditions.
+	tx, err := h.pool.Begin(r.Context())
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to begin transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+
 	// Auto-assign IP from the first active network and read its DNS servers.
 	var assignedIP string
 	var maskLen int
 	var networkDNS []string
-	err := h.pool.QueryRow(r.Context(),
+	err = tx.QueryRow(r.Context(),
 		`SELECT host(network(address) + (SELECT COUNT(*) + 2 FROM devices)),
 		        masklen(address),
 		        dns
-		 FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1`,
+		 FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1
+		 FOR UPDATE`,
 	).Scan(&assignedIP, &maskLen, &networkDNS)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to allocate IP address: no active network found")
@@ -357,7 +399,7 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 
 	// Get the gateway endpoint and public key from the first active gateway.
 	var gatewayEndpoint, gatewayPubkey string
-	err = h.pool.QueryRow(r.Context(),
+	err = tx.QueryRow(r.Context(),
 		`SELECT g.endpoint, g.wireguard_pubkey
 		 FROM gateways g
 		 JOIN networks n ON n.id = g.network_id
@@ -376,7 +418,7 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 	// Use a default user for enrollment (the first admin user). In production
 	// this would come from the authenticated session.
 	var userID uuid.UUID
-	err = h.pool.QueryRow(r.Context(),
+	err = tx.QueryRow(r.Context(),
 		`SELECT id FROM users WHERE is_admin = true ORDER BY created_at LIMIT 1`,
 	).Scan(&userID)
 	if err != nil {
@@ -386,14 +428,32 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 
 	// Create the device.
 	var deviceID uuid.UUID
-	err = h.pool.QueryRow(r.Context(),
+	err = tx.QueryRow(r.Context(),
 		`INSERT INTO devices (user_id, name, wireguard_pubkey, assigned_ip, is_approved)
 		 VALUES ($1, $2, $3, $4, true)
 		 RETURNING id`,
 		userID, req.Name, req.WireguardPubkey, assignedIP,
 	).Scan(&deviceID)
 	if err != nil {
-		respondError(w, http.StatusConflict, "device already exists or invalid data")
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			msg := "device already exists"
+			if strings.Contains(pgErr.ConstraintName, "pubkey") {
+				msg = "device with this public key already exists"
+			} else if strings.Contains(pgErr.ConstraintName, "name") {
+				msg = "device with this name already exists"
+			} else if strings.Contains(pgErr.ConstraintName, "assigned_ip") {
+				msg = "IP address already in use"
+			}
+			respondError(w, http.StatusConflict, msg)
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "failed to create device")
+		return
+	}
+
+	if err := tx.Commit(r.Context()); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to commit enrollment")
 		return
 	}
 
@@ -427,7 +487,11 @@ func (h *DeviceHandler) downloadConfig(w http.ResponseWriter, r *http.Request) {
 		`SELECT name, host(assigned_ip) FROM devices WHERE id = $1`, id,
 	).Scan(&deviceName, &assignedIP)
 	if err != nil {
-		respondError(w, http.StatusNotFound, "device not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "device not found")
+		} else {
+			respondError(w, http.StatusInternalServerError, "failed to fetch device")
+		}
 		return
 	}
 

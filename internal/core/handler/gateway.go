@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -207,7 +208,11 @@ func (h *GatewayHandler) get(w http.ResponseWriter, r *http.Request) {
 	).Scan(&g.ID, &g.NetworkID, &g.Name, &g.PublicIP, &g.WireguardPubkey,
 		&g.Endpoint, &g.IsActive, &g.Priority, &g.LastSeen, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
-		respondError(w, http.StatusNotFound, "gateway not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "gateway not found")
+		} else {
+			respondError(w, http.StatusInternalServerError, "failed to fetch gateway")
+		}
 		return
 	}
 

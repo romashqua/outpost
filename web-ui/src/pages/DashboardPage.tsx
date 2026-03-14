@@ -65,10 +65,11 @@ function formatBucketTime(bucket: string): string {
 }
 
 function LoadingState() {
+  const { t } = useTranslation()
   return (
     <div className="flex items-center justify-center py-12 text-[var(--text-muted)]">
       <Loader2 size={20} className="animate-spin mr-2" />
-      <span className="text-sm font-mono">Loading...</span>
+      <span className="text-sm font-mono">{t('common.loading')}</span>
     </div>
   )
 }
@@ -104,7 +105,7 @@ export default function DashboardPage() {
     queryFn: () => api.get('/analytics/top-users?limit=5'),
   })
 
-  const auditQuery = useQuery<AuditEntry[]>({
+  const auditQuery = useQuery<{ data: AuditEntry[] }>({
     queryKey: ['audit', 'recent'],
     queryFn: () => api.get('/audit?limit=5'),
   })
@@ -200,8 +201,8 @@ export default function DashboardPage() {
                     }}
                     formatter={(value: number) => [`${value} MB`]}
                   />
-                  <Area type="monotone" dataKey="rx" stroke="#00ff88" fill="url(#rxGrad)" strokeWidth={2} name="RX" />
-                  <Area type="monotone" dataKey="tx" stroke="#00aaff" fill="url(#txGrad)" strokeWidth={2} name="TX" />
+                  <Area type="monotone" dataKey="rx" stroke="#00ff88" fill="url(#rxGrad)" strokeWidth={2} name={t('dashboard.rx')} />
+                  <Area type="monotone" dataKey="tx" stroke="#00aaff" fill="url(#txGrad)" strokeWidth={2} name={t('dashboard.tx')} />
                 </AreaChart>
               </ResponsiveContainer>
             )}
@@ -224,10 +225,10 @@ export default function DashboardPage() {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="text-[var(--text-muted)] uppercase tracking-wider">
-                    <th className="text-left pb-2 font-medium">User</th>
-                    <th className="text-left pb-2 font-medium">RX</th>
-                    <th className="text-left pb-2 font-medium">TX</th>
-                    <th className="text-left pb-2 font-medium">Total</th>
+                    <th className="text-left pb-2 font-medium">{t('dashboard.user')}</th>
+                    <th className="text-left pb-2 font-medium">{t('dashboard.rx')}</th>
+                    <th className="text-left pb-2 font-medium">{t('dashboard.tx')}</th>
+                    <th className="text-left pb-2 font-medium">{t('dashboard.total')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -255,13 +256,13 @@ export default function DashboardPage() {
             <LoadingState />
           ) : auditQuery.isError ? (
             <ErrorState message={auditQuery.error.message} />
-          ) : (auditQuery.data ?? []).length === 0 ? (
+          ) : (auditQuery.data?.data ?? []).length === 0 ? (
             <div className="flex items-center justify-center py-12 text-[var(--text-muted)]">
               <span className="text-sm font-mono">{t('common.noData')}</span>
             </div>
           ) : (
             <div className="space-y-2">
-              {(auditQuery.data ?? []).map((entry) => (
+              {(auditQuery.data?.data ?? []).map((entry) => (
                 <div
                   key={entry.id}
                   className="flex items-center justify-between py-2 border-b border-[var(--border)] last:border-0"

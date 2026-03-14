@@ -2,7 +2,9 @@ package handler
 
 import (
 	"errors"
+	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -10,6 +12,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// validHostnameRe matches a valid hostname label sequence (RFC 952 / RFC 1123).
+var validHostnameRe = regexp.MustCompile(`^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$`)
 
 type SmartRouteHandler struct {
 	pool *pgxpool.Pool
@@ -281,8 +286,35 @@ func (h *SmartRouteHandler) addEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate entry value based on type.
+	switch req.EntryType {
+	case "cidr":
+		if _, _, err := net.ParseCIDR(req.Value); err != nil {
+			respondError(w, http.StatusBadRequest, "invalid CIDR format: "+req.Value)
+			return
+		}
+	case "domain":
+		if !validHostnameRe.MatchString(req.Value) {
+			respondError(w, http.StatusBadRequest, "invalid domain: "+req.Value)
+			return
+		}
+	case "domain_suffix":
+		if !strings.HasPrefix(req.Value, ".") {
+			respondError(w, http.StatusBadRequest, "domain_suffix must start with '.'")
+			return
+		}
+		if !validHostnameRe.MatchString(req.Value[1:]) {
+			respondError(w, http.StatusBadRequest, "invalid domain suffix: "+req.Value)
+			return
+		}
+	}
+
 	priority := 100
 	if req.Priority != nil {
+		if *req.Priority < 0 {
+			respondError(w, http.StatusBadRequest, "priority must not be negative")
+			return
+		}
 		priority = *req.Priority
 	}
 
@@ -393,6 +425,10 @@ func (h *SmartRouteHandler) createProxyServer(w http.ResponseWriter, r *http.Req
 	}
 	if req.Name == "" || req.Type == "" || req.Address == "" || req.Port == 0 {
 		respondError(w, http.StatusBadRequest, "name, type, address, and port are required")
+		return
+	}
+	if req.Port < 1 || req.Port > 65535 {
+		respondError(w, http.StatusBadRequest, "port must be between 1 and 65535")
 		return
 	}
 	if req.Type != "socks5" && req.Type != "http" && req.Type != "shadowsocks" && req.Type != "vless" {

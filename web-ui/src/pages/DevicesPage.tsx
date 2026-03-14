@@ -159,7 +159,7 @@ export default function DevicesPage() {
       await navigator.clipboard.writeText(configText)
       addToast(t('devices.copy'), 'success')
     } catch {
-      addToast('Failed to copy', 'error')
+      addToast(t('devices.failedToCopy'), 'error')
     }
   }
 

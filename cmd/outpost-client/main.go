@@ -35,6 +35,8 @@ func main() {
 		cmdConnect(c, logger)
 	case "disconnect":
 		cmdDisconnect(c, logger)
+	case "gateway":
+		cmdGateway(c, logger)
 	case "login":
 		cmdLogin(c, logger)
 	case "status":
@@ -61,6 +63,7 @@ Usage:
 Commands:
   connect      Connect to VPN (login + MFA + tunnel)
   disconnect   Disconnect from VPN
+  gateway      Run as S2S gateway (gateway <tunnel-id>)
   login        Authenticate without connecting
   status       Show connection status
   posture      Show device security posture
@@ -124,6 +127,39 @@ func cmdConnect(c *client.Client, logger *slog.Logger) {
 	fmt.Println("\nDisconnecting...")
 	if err := tm.Disconnect(); err != nil {
 		logger.Error("disconnect error", "error", err)
+	}
+}
+
+func cmdGateway(c *client.Client, logger *slog.Logger) {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "usage: outpost-client gateway <tunnel-id>")
+		os.Exit(1)
+	}
+	tunnelID := os.Args[2]
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	// Authenticate if needed.
+	if err := c.LoadToken(); err != nil {
+		if err := doLogin(ctx, c); err != nil {
+			logger.Error("authentication failed", "error", err)
+			os.Exit(1)
+		}
+	}
+
+	gw := client.NewGatewayMode(c, tunnelID, logger)
+	if err := gw.Start(ctx); err != nil {
+		logger.Error("gateway start failed", "error", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("S2S gateway running for tunnel %s. Press Ctrl+C to stop...\n", tunnelID)
+	<-ctx.Done()
+
+	fmt.Println("\nStopping gateway...")
+	if err := gw.Stop(); err != nil {
+		logger.Error("gateway stop error", "error", err)
 	}
 }
 

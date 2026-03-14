@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2, Network, Globe, Route, Server } from 'lucide-react'
+import { Plus, Trash2, Network, Globe, Route, Server, Download } from 'lucide-react'
 import { api } from '@/api/client'
 import { useToastStore } from '@/store/toast'
 import Card from '@/components/ui/Card'
@@ -251,9 +251,17 @@ function TunnelDetailPanel({
             <div className="flex flex-col gap-2">
               {members.map((member) => (
                 <div key={member.gateway_id} className={listItem}>
-                  <span className="text-sm font-mono text-[var(--text-primary)]">
+                  <span className="text-sm font-mono text-[var(--text-primary)] flex-1">
                     {member.gateway_name || member.name || member.gateway_id}
                   </span>
+                  <a
+                    href={`/api/v1/s2s-tunnels/${tunnel.id}/config/${member.gateway_id}`}
+                    download={`${tunnel.name}-${member.gateway_name || member.gateway_id}.conf`}
+                    className="text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors"
+                    title={t('s2s.downloadConfig')}
+                  >
+                    <Download size={14} />
+                  </a>
                   <button
                     onClick={() => removeMemberMutation.mutate(member.gateway_id)}
                     disabled={removeMemberMutation.isPending}

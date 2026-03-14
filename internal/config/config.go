@@ -20,6 +20,16 @@ type Config struct {
 	Proxy     Proxy
 	Log       Log
 	SMTP      SMTP
+	NAT       NAT
+}
+
+// NAT holds NAT traversal (STUN/TURN) configuration.
+type NAT struct {
+	STUNPort   int
+	TURNPort   int
+	TURNRealm  string
+	ExternalIP string
+	Enabled    bool
 }
 
 // SMTP holds SMTP mail server configuration.
@@ -192,6 +202,13 @@ func Load() *Config {
 		Log: Log{
 			Level:  env("OUTPOST_LOG_LEVEL", "info"),
 			Format: env("OUTPOST_LOG_FORMAT", "json"),
+		},
+		NAT: NAT{
+			STUNPort:   envInt("OUTPOST_STUN_PORT", 3478),
+			TURNPort:   envInt("OUTPOST_TURN_PORT", 3479),
+			TURNRealm:  env("OUTPOST_TURN_REALM", "outpost"),
+			ExternalIP: env("OUTPOST_EXTERNAL_IP", ""),
+			Enabled:    env("OUTPOST_NAT_ENABLED", "false") == "true",
 		},
 		SMTP: SMTP{
 			Host:     env("OUTPOST_SMTP_HOST", ""),

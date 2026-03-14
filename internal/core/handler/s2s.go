@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -39,6 +41,7 @@ func (h *S2SHandler) Routes() chi.Router {
 		r.Get("/routes", h.listRoutes)
 		r.Post("/routes", h.addRoute)
 		r.Delete("/routes/{routeId}", h.removeRoute)
+		r.Get("/config/{gatewayId}", h.generateConfig)
 	})
 	return r
 }
@@ -140,7 +143,11 @@ func (h *S2SHandler) get(w http.ResponseWriter, r *http.Request) {
 		 FROM s2s_tunnels WHERE id = $1`, id,
 	).Scan(&t.ID, &t.Name, &t.Description, &t.Topology, &t.HubGatewayID, &t.IsActive, &t.CreatedAt, &t.UpdatedAt)
 	if err != nil {
-		respondError(w, http.StatusNotFound, "tunnel not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "tunnel not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "failed to get tunnel")
 		return
 	}
 
@@ -204,6 +211,10 @@ func (h *S2SHandler) listMembers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		members = append(members, m)
+	}
+	if err := rows.Err(); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to iterate members")
+		return
 	}
 
 	respondJSON(w, http.StatusOK, members)
@@ -327,6 +338,10 @@ func (h *S2SHandler) listRoutes(w http.ResponseWriter, r *http.Request) {
 		}
 		routes = append(routes, rt)
 	}
+	if err := rows.Err(); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to iterate routes")
+		return
+	}
 
 	respondJSON(w, http.StatusOK, routes)
 }
@@ -367,7 +382,9 @@ func (h *S2SHandler) addRoute(w http.ResponseWriter, r *http.Request) {
 	err = h.pool.QueryRow(r.Context(),
 		`INSERT INTO s2s_routes (tunnel_id, destination, via_gateway, metric)
 		 VALUES ($1, $2::cidr, $3, $4)
-		 RETURNING id, tunnel_id, destination::text, via_gateway, '', metric, is_active, created_at::text`,
+		 RETURNING id, tunnel_id, destination::text, via_gateway,
+		           (SELECT name FROM gateways WHERE id = $3),
+		           metric, is_active, created_at`,
 		tunnelID, req.Destination, viaGW, metric,
 	).Scan(&rt.ID, &rt.TunnelID, &rt.Destination, &rt.ViaGateway, &rt.GatewayName, &rt.Metric, &rt.IsActive, &rt.CreatedAt)
 	if err != nil {
@@ -415,4 +432,159 @@ func (h *S2SHandler) removeRoute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Config Generation ---
+
+func (h *S2SHandler) generateConfig(w http.ResponseWriter, r *http.Request) {
+	tunnelID, err := parseUUID(r, "id")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	gatewayID, err := parseUUID(r, "gatewayId")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Verify tunnel exists
+	var tunnelName string
+	err = h.pool.QueryRow(r.Context(),
+		`SELECT name FROM s2s_tunnels WHERE id = $1`, tunnelID,
+	).Scan(&tunnelName)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "tunnel not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "failed to get tunnel")
+		return
+	}
+
+	// Fetch all members with gateway info
+	type memberInfo struct {
+		GatewayID       string
+		GatewayName     string
+		WireguardPubkey string
+		Endpoint        string
+		LocalSubnets    []string
+	}
+
+	rows, err := h.pool.Query(r.Context(),
+		`SELECT m.gateway_id, g.name, COALESCE(g.wireguard_pubkey, ''), COALESCE(g.endpoint, ''),
+		        ARRAY(SELECT unnest(m.local_subnets)::text)
+		 FROM s2s_tunnel_members m
+		 JOIN gateways g ON g.id = m.gateway_id
+		 WHERE m.tunnel_id = $1`, tunnelID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to query members")
+		return
+	}
+	defer rows.Close()
+
+	members := make([]memberInfo, 0)
+	selfIdx := -1
+	for rows.Next() {
+		var m memberInfo
+		if err := rows.Scan(&m.GatewayID, &m.GatewayName, &m.WireguardPubkey, &m.Endpoint, &m.LocalSubnets); err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to scan member")
+			return
+		}
+		if m.GatewayID == gatewayID.String() {
+			selfIdx = len(members)
+		}
+		members = append(members, m)
+	}
+	if err := rows.Err(); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to iterate members")
+		return
+	}
+
+	if selfIdx < 0 {
+		respondError(w, http.StatusNotFound, "gateway is not a member of this tunnel")
+		return
+	}
+	self := &members[selfIdx]
+
+	// Fetch active routes for this tunnel
+	type routeInfo struct {
+		Destination string
+		ViaGateway  string
+		IsActive    bool
+	}
+
+	routeRows, err := h.pool.Query(r.Context(),
+		`SELECT destination::text, via_gateway, is_active
+		 FROM s2s_routes
+		 WHERE tunnel_id = $1 AND is_active = true
+		 ORDER BY metric`, tunnelID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to query routes")
+		return
+	}
+	defer routeRows.Close()
+
+	// Map via_gateway -> list of route destinations
+	routesByGateway := make(map[string][]string)
+	for routeRows.Next() {
+		var ri routeInfo
+		if err := routeRows.Scan(&ri.Destination, &ri.ViaGateway, &ri.IsActive); err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to scan route")
+			return
+		}
+		routesByGateway[ri.ViaGateway] = append(routesByGateway[ri.ViaGateway], ri.Destination)
+	}
+	if err := routeRows.Err(); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to iterate routes")
+		return
+	}
+
+	// Build WireGuard config
+	var b strings.Builder
+
+	// [Interface] section
+	b.WriteString("# WireGuard S2S config for tunnel: " + tunnelName + "\n")
+	b.WriteString("# Gateway: " + self.GatewayName + "\n")
+	b.WriteString("# Generated: " + time.Now().UTC().Format(time.RFC3339) + "\n\n")
+	b.WriteString("[Interface]\n")
+	b.WriteString("PrivateKey = <PRIVATE_KEY>\n")
+	if len(self.LocalSubnets) > 0 {
+		b.WriteString("Address = " + strings.Join(self.LocalSubnets, ", ") + "\n")
+	}
+
+	// [Peer] sections for every other member
+	for _, m := range members {
+		if m.GatewayID == gatewayID.String() {
+			continue
+		}
+
+		b.WriteString("\n# Peer: " + m.GatewayName + "\n")
+		b.WriteString("[Peer]\n")
+		if m.WireguardPubkey != "" {
+			b.WriteString("PublicKey = " + m.WireguardPubkey + "\n")
+		} else {
+			b.WriteString("PublicKey = <MISSING_PUBKEY>\n")
+		}
+		if m.Endpoint != "" {
+			b.WriteString("Endpoint = " + m.Endpoint + "\n")
+		}
+
+		// AllowedIPs = member's local_subnets + any routes via that gateway
+		allowedIPs := make([]string, 0, len(m.LocalSubnets))
+		allowedIPs = append(allowedIPs, m.LocalSubnets...)
+		if extra, ok := routesByGateway[m.GatewayID]; ok {
+			allowedIPs = append(allowedIPs, extra...)
+		}
+		if len(allowedIPs) > 0 {
+			b.WriteString("AllowedIPs = " + strings.Join(allowedIPs, ", ") + "\n")
+		}
+		b.WriteString("PersistentKeepalive = 25\n")
+	}
+
+	filename := fmt.Sprintf("s2s-%s-%s.conf", tunnelName, self.GatewayName)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(b.String()))
 }

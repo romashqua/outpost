@@ -200,7 +200,7 @@ function IntegrationsTab() {
       queryClient.invalidateQueries({ queryKey: ['webhooks'] })
       setShowAddModal(false)
       resetForm()
-      addToast('Webhook created', 'success')
+      addToast(t('settings.webhookCreated'), 'success')
     },
     onError: (err) => addToast((err as Error).message, 'error'),
   })
@@ -210,14 +210,14 @@ function IntegrationsTab() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['webhooks'] })
       setDeleteId(null)
-      addToast('Webhook deleted', 'success')
+      addToast(t('settings.webhookDeleted'), 'success')
     },
     onError: (err) => addToast((err as Error).message, 'error'),
   })
 
   const testMutation = useMutation({
     mutationFn: (id: string) => api.post(`/webhooks/${id}/test`),
-    onSuccess: () => addToast('Test event sent', 'success'),
+    onSuccess: () => addToast(t('settings.testEventSent'), 'success'),
     onError: (err) => addToast((err as Error).message, 'error'),
   })
 
@@ -239,10 +239,10 @@ function IntegrationsTab() {
       <div className="flex items-center justify-between">
         <div>
           <h3 className="text-sm font-medium text-[var(--text-primary)] font-mono">{t('settings.webhooks', 'Webhooks & Integrations')}</h3>
-          <p className="text-xs text-[var(--text-muted)] mt-1">Outbound webhooks for event notifications (HMAC-SHA256 signed)</p>
+          <p className="text-xs text-[var(--text-muted)] mt-1">{t('settings.webhooksDescription')}</p>
         </div>
         <Button onClick={() => { createMutation.reset(); setShowAddModal(true) }}>
-          + Add Webhook
+          {t('settings.addWebhook')}
         </Button>
       </div>
 
@@ -270,9 +270,9 @@ function IntegrationsTab() {
 
       {/* Active webhooks */}
       {isLoading ? (
-        <p className="text-sm text-[var(--text-muted)]">Loading...</p>
+        <p className="text-sm text-[var(--text-muted)]">{t('common.loading')}</p>
       ) : webhooks.length === 0 ? (
-        <p className="text-sm text-[var(--text-muted)] py-4 text-center">No webhooks configured. Click a template above or "Add Webhook" to create one.</p>
+        <p className="text-sm text-[var(--text-muted)] py-4 text-center">{t('settings.noWebhooks')}</p>
       ) : (
         <div className="space-y-2">
           {webhooks.map((wh) => (
@@ -283,16 +283,16 @@ function IntegrationsTab() {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <Badge variant={wh.is_active ? 'online' : 'offline'} pulse>
-                    {wh.is_active ? 'Active' : 'Inactive'}
+                    {wh.is_active ? t('status.active') : t('status.inactive')}
                   </Badge>
                   <code className="text-xs text-[var(--accent)] truncate">{wh.url}</code>
                 </div>
                 <div className="flex gap-2 mt-1">
                   <span className="text-[10px] text-[var(--text-muted)]">
-                    Events: {wh.events.join(', ')}
+                    {t('settings.eventsLabel')}: {wh.events.join(', ')}
                   </span>
                   <span className="text-[10px] text-[var(--text-muted)]">
-                    Created: {new Date(wh.created_at).toLocaleDateString()}
+                    {t('settings.createdLabel')}: {new Date(wh.created_at).toLocaleDateString()}
                   </span>
                 </div>
               </div>
@@ -303,7 +303,7 @@ function IntegrationsTab() {
                   disabled={testMutation.isPending}
                   onClick={() => testMutation.mutate(wh.id)}
                 >
-                  Test
+                  {t('settings.test')}
                 </Button>
                 <Button
                   variant="danger"
@@ -319,23 +319,23 @@ function IntegrationsTab() {
       )}
 
       {/* Add Webhook Modal */}
-      <Modal open={showAddModal} onClose={() => { setShowAddModal(false); resetForm() }} title={selectedTemplate ? `Add ${selectedTemplate} Webhook` : 'Add Webhook'}>
+      <Modal open={showAddModal} onClose={() => { setShowAddModal(false); resetForm() }} title={selectedTemplate ? `${t('settings.addWebhook')} — ${selectedTemplate}` : t('settings.addWebhook')}>
         <form className="flex flex-col gap-4" onSubmit={handleAddSubmit}>
           <Input
-            label="Webhook URL"
+            label={t('settings.webhookUrl')}
             placeholder={integrationTemplates.find((t) => t.name === selectedTemplate)?.urlPlaceholder || 'https://...'}
             value={formUrl}
             onChange={(e) => setFormUrl(e.target.value)}
             required
           />
           <Input
-            label="Signing Secret (optional — auto-generated if blank)"
+            label={t('settings.signingSecret')}
             placeholder="my-secret-key"
             value={formSecret}
             onChange={(e) => setFormSecret(e.target.value)}
           />
           <Input
-            label="Events (comma-separated, * for all)"
+            label={t('settings.events')}
             placeholder="*, user.created, device.approved"
             value={formEvents}
             onChange={(e) => setFormEvents(e.target.value)}
@@ -348,16 +348,16 @@ function IntegrationsTab() {
               {t('common.cancel')}
             </Button>
             <Button type="submit" disabled={createMutation.isPending}>
-              {createMutation.isPending ? 'Creating...' : t('common.create')}
+              {createMutation.isPending ? t('settings.creating') : t('common.create')}
             </Button>
           </div>
         </form>
       </Modal>
 
       {/* Delete Confirmation */}
-      <Modal open={deleteId !== null} onClose={() => setDeleteId(null)} title="Delete Webhook">
+      <Modal open={deleteId !== null} onClose={() => setDeleteId(null)} title={t('settings.deleteWebhook')}>
         <p className="text-sm text-[var(--text-secondary)] mb-6">
-          Are you sure you want to delete this webhook? This action cannot be undone.
+          {t('settings.confirmDeleteWebhook')}
         </p>
         {deleteMutation.error && (
           <p className="text-sm text-[var(--danger)] mb-4">{(deleteMutation.error as Error).message}</p>
@@ -371,7 +371,7 @@ function IntegrationsTab() {
             disabled={deleteMutation.isPending}
             onClick={() => deleteId && deleteMutation.mutate(deleteId)}
           >
-            {deleteMutation.isPending ? 'Deleting...' : t('common.delete')}
+            {deleteMutation.isPending ? t('settings.deleting') : t('common.delete')}
           </Button>
         </div>
       </Modal>
@@ -402,7 +402,7 @@ export default function SettingsPage() {
       api.put('/settings', settingsToPayload(data)),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] })
-      addToast('Settings saved', 'success')
+      addToast(t('settings.saved'), 'success')
     },
     onError: (err) => {
       addToast((err as Error).message, 'error')
@@ -412,7 +412,7 @@ export default function SettingsPage() {
   const smtpTestMutation = useMutation({
     mutationFn: () => api.post('/settings/smtp/test'),
     onSuccess: () => {
-      addToast('SMTP test email sent successfully', 'success')
+      addToast(t('settings.smtpTestSuccess'), 'success')
     },
     onError: (err) => {
       addToast((err as Error).message, 'error')
@@ -464,7 +464,7 @@ export default function SettingsPage() {
         refetchMfaStatus()
         addToast(t('settings.totpEnabled'), 'success')
       } else {
-        addToast('Invalid code', 'error')
+        addToast(t('settings.invalidCode'), 'error')
       }
     },
     onError: (err) => addToast((err as Error).message, 'error'),
@@ -492,7 +492,7 @@ export default function SettingsPage() {
     mutationFn: (id: string) => api.delete(`/mfa/webauthn/credentials/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['webauthn-credentials'] })
-      addToast('Credential removed', 'success')
+      addToast(t('settings.credentialRemoved'), 'success')
     },
     onError: (err) => addToast((err as Error).message, 'error'),
   })
@@ -557,7 +557,7 @@ export default function SettingsPage() {
 
       {isLoading ? (
         <Card>
-          <div className="text-center py-8 text-[var(--text-muted)]">Loading settings...</div>
+          <div className="text-center py-8 text-[var(--text-muted)]">{t('settings.loadingSettings')}</div>
         </Card>
       ) : (
         <Card>
@@ -581,7 +581,7 @@ export default function SettingsPage() {
               />
               <div className="mt-2">
                 <Button type="submit" disabled={saveMutation.isPending}>
-                  {saveMutation.isPending ? 'Saving...' : t('settings.save')}
+                  {saveMutation.isPending ? t('settings.saving') : t('settings.save')}
                 </Button>
               </div>
             </form>
@@ -606,10 +606,10 @@ export default function SettingsPage() {
               {/* OIDC Section */}
               <div className="border border-[var(--border)] rounded-lg p-4 space-y-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-medium text-[var(--text-primary)] font-mono">OIDC Provider</h3>
+                  <h3 className="text-sm font-medium text-[var(--text-primary)] font-mono">{t('settings.oidcProvider')}</h3>
                   <div className="flex items-center gap-2">
                     <Badge variant={oidcConnected ? 'online' : 'offline'} pulse>
-                      {oidcConnected ? 'Active' : 'Inactive'}
+                      {oidcConnected ? t('status.active') : t('status.inactive')}
                     </Badge>
                     <input
                       type="checkbox"
@@ -618,30 +618,30 @@ export default function SettingsPage() {
                       onChange={(e) => update('oidcEnabled', e.target.checked)}
                       className="h-4 w-4 rounded border-[var(--border)] bg-[var(--bg-secondary)] accent-[var(--accent)]"
                     />
-                    <label htmlFor="oidc-enabled" className="text-xs text-[var(--text-muted)]">Enable</label>
+                    <label htmlFor="oidc-enabled" className="text-xs text-[var(--text-muted)]">{t('settings.enable')}</label>
                   </div>
                 </div>
                 <Input
-                  label="Issuer URL"
+                  label={t('settings.issuerUrl')}
                   placeholder="https://auth.example.com/realms/outpost"
                   value={settings.oidcIssuerUrl}
                   onChange={(e) => update('oidcIssuerUrl', e.target.value)}
                 />
                 <Input
-                  label="Client ID"
+                  label={t('settings.clientId')}
                   placeholder="outpost-vpn"
                   value={settings.oidcClientId}
                   onChange={(e) => update('oidcClientId', e.target.value)}
                 />
                 <Input
-                  label="Client Secret"
+                  label={t('settings.clientSecret')}
                   type="password"
                   placeholder="Enter client secret"
                   value={settings.oidcClientSecret}
                   onChange={(e) => update('oidcClientSecret', e.target.value)}
                 />
                 <Input
-                  label="Redirect URI"
+                  label={t('settings.redirectUri')}
                   placeholder="https://vpn.outpost.local/oidc/callback"
                   value={settings.oidcRedirectUri}
                   onChange={(e) => update('oidcRedirectUri', e.target.value)}
@@ -651,10 +651,10 @@ export default function SettingsPage() {
               {/* LDAP Section */}
               <div className="border border-[var(--border)] rounded-lg p-4 space-y-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-medium text-[var(--text-primary)] font-mono">LDAP / Active Directory</h3>
+                  <h3 className="text-sm font-medium text-[var(--text-primary)] font-mono">{t('settings.ldapAd')}</h3>
                   <div className="flex items-center gap-2">
                     <Badge variant={ldapConnected ? 'online' : 'offline'} pulse>
-                      {ldapConnected ? 'Active' : 'Inactive'}
+                      {ldapConnected ? t('status.active') : t('status.inactive')}
                     </Badge>
                     <input
                       type="checkbox"
@@ -663,29 +663,29 @@ export default function SettingsPage() {
                       onChange={(e) => update('ldapEnabled', e.target.checked)}
                       className="h-4 w-4 rounded border-[var(--border)] bg-[var(--bg-secondary)] accent-[var(--accent)]"
                     />
-                    <label htmlFor="ldap-enabled" className="text-xs text-[var(--text-muted)]">Enable</label>
+                    <label htmlFor="ldap-enabled" className="text-xs text-[var(--text-muted)]">{t('settings.enable')}</label>
                   </div>
                 </div>
                 <Input
-                  label="Server URL"
+                  label={t('settings.serverUrl')}
                   placeholder="ldap://ldap.corp.local:389"
                   value={settings.ldapServerUrl}
                   onChange={(e) => update('ldapServerUrl', e.target.value)}
                 />
                 <Input
-                  label="Bind DN"
+                  label={t('settings.bindDn')}
                   placeholder="cn=admin,dc=corp,dc=local"
                   value={settings.ldapBindDn}
                   onChange={(e) => update('ldapBindDn', e.target.value)}
                 />
                 <Input
-                  label="Base DN"
+                  label={t('settings.baseDn')}
                   placeholder="ou=users,dc=corp,dc=local"
                   value={settings.ldapBaseDn}
                   onChange={(e) => update('ldapBaseDn', e.target.value)}
                 />
                 <Input
-                  label="User Filter"
+                  label={t('settings.userFilter')}
                   placeholder="(uid={username})"
                   value={settings.ldapUserFilter}
                   onChange={(e) => update('ldapUserFilter', e.target.value)}
@@ -695,10 +695,10 @@ export default function SettingsPage() {
               {/* SAML Section */}
               <div className="border border-[var(--border)] rounded-lg p-4 space-y-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-medium text-[var(--text-primary)] font-mono">SAML 2.0</h3>
+                  <h3 className="text-sm font-medium text-[var(--text-primary)] font-mono">{t('settings.saml')}</h3>
                   <div className="flex items-center gap-2">
                     <Badge variant={samlConnected ? 'online' : 'offline'} pulse>
-                      {samlConnected ? 'Active' : 'Inactive'}
+                      {samlConnected ? t('status.active') : t('status.inactive')}
                     </Badge>
                     <input
                       type="checkbox"
@@ -707,23 +707,23 @@ export default function SettingsPage() {
                       onChange={(e) => update('samlEnabled', e.target.checked)}
                       className="h-4 w-4 rounded border-[var(--border)] bg-[var(--bg-secondary)] accent-[var(--accent)]"
                     />
-                    <label htmlFor="saml-enabled" className="text-xs text-[var(--text-muted)]">Enable</label>
+                    <label htmlFor="saml-enabled" className="text-xs text-[var(--text-muted)]">{t('settings.enable')}</label>
                   </div>
                 </div>
                 <Input
-                  label="Entity ID"
+                  label={t('settings.entityId')}
                   placeholder="https://vpn.outpost.local/saml/metadata"
                   value={settings.samlEntityId}
                   onChange={(e) => update('samlEntityId', e.target.value)}
                 />
                 <Input
-                  label="IDP Metadata URL"
+                  label={t('settings.idpMetadataUrl')}
                   placeholder="https://idp.corp.local/metadata"
                   value={settings.samlIdpMetadataUrl}
                   onChange={(e) => update('samlIdpMetadataUrl', e.target.value)}
                 />
                 <Input
-                  label="ACS URL"
+                  label={t('settings.acsUrl')}
                   placeholder="https://vpn.outpost.local/saml/acs"
                   value={settings.samlAcsUrl}
                   onChange={(e) => update('samlAcsUrl', e.target.value)}
@@ -732,7 +732,7 @@ export default function SettingsPage() {
 
               <div className="mt-2">
                 <Button type="submit" disabled={saveMutation.isPending}>
-                  {saveMutation.isPending ? 'Saving...' : t('settings.save')}
+                  {saveMutation.isPending ? t('settings.saving') : t('settings.save')}
                 </Button>
               </div>
             </form>
@@ -765,7 +765,7 @@ export default function SettingsPage() {
               />
               <div className="mt-2">
                 <Button type="submit" disabled={saveMutation.isPending}>
-                  {saveMutation.isPending ? 'Saving...' : t('settings.save')}
+                  {saveMutation.isPending ? t('settings.saving') : t('settings.save')}
                 </Button>
               </div>
             </form>
@@ -793,7 +793,7 @@ export default function SettingsPage() {
               />
               <div className="flex gap-3 mt-2">
                 <Button type="submit" disabled={saveMutation.isPending}>
-                  {saveMutation.isPending ? 'Saving...' : t('settings.save')}
+                  {saveMutation.isPending ? t('settings.saving') : t('settings.save')}
                 </Button>
                 <Button
                   type="button"
@@ -801,7 +801,7 @@ export default function SettingsPage() {
                   disabled={smtpTestMutation.isPending || !settings.smtpHost}
                   onClick={() => smtpTestMutation.mutate()}
                 >
-                  {smtpTestMutation.isPending ? 'Testing...' : 'Test SMTP'}
+                  {smtpTestMutation.isPending ? t('settings.testing') : t('settings.testSmtp')}
                 </Button>
               </div>
             </form>
@@ -812,7 +812,7 @@ export default function SettingsPage() {
               {/* TOTP Section */}
               <div className="border border-[var(--border)] rounded-lg p-4 space-y-4">
                 <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-medium text-[var(--text-primary)] font-mono">TOTP</h3>
+                  <h3 className="text-sm font-medium text-[var(--text-primary)] font-mono">{t('settings.totp')}</h3>
                   <Badge variant={mfaStatus?.totp_configured ? 'online' : 'offline'} pulse>
                     {mfaStatus?.totp_configured ? t('settings.totpEnabled') : t('settings.totpDisabled')}
                   </Badge>
@@ -823,7 +823,7 @@ export default function SettingsPage() {
                     onClick={() => setupTotpMutation.mutate()}
                     disabled={setupTotpMutation.isPending}
                   >
-                    {setupTotpMutation.isPending ? 'Loading...' : t('settings.enableTotp')}
+                    {setupTotpMutation.isPending ? t('common.loading') : t('settings.enableTotp')}
                   </Button>
                 )}
 
@@ -835,7 +835,7 @@ export default function SettingsPage() {
                       <div className="flex justify-center">
                         <img
                           src={totpSetup.qr_image}
-                          alt="TOTP QR Code"
+                          alt={t('settings.totpQrAlt')}
                           className="w-48 h-48 rounded-lg border border-[var(--border)] bg-white p-2"
                         />
                       </div>
@@ -866,7 +866,7 @@ export default function SettingsPage() {
                         onClick={() => verifyTotpMutation.mutate(totpCode)}
                         disabled={totpCode.length !== 6 || verifyTotpMutation.isPending}
                       >
-                        {verifyTotpMutation.isPending ? 'Verifying...' : t('settings.verifyCode')}
+                        {verifyTotpMutation.isPending ? t('settings.verifying') : t('settings.verifyCode')}
                       </Button>
                     </div>
                   </div>
@@ -898,7 +898,7 @@ export default function SettingsPage() {
                   onClick={() => generateCodesMutation.mutate()}
                   disabled={generateCodesMutation.isPending}
                 >
-                  {generateCodesMutation.isPending ? 'Generating...' : t('settings.generateCodes')}
+                  {generateCodesMutation.isPending ? t('settings.generating') : t('settings.generateCodes')}
                 </Button>
 
                 {backupCodes.length > 0 && (
@@ -949,7 +949,7 @@ export default function SettingsPage() {
                         className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2"
                       >
                         <div>
-                          <span className="text-sm text-[var(--text-primary)]">{cred.name || 'Unnamed key'}</span>
+                          <span className="text-sm text-[var(--text-primary)]">{cred.name || t('settings.unnamedKey')}</span>
                           <span className="text-xs text-[var(--text-muted)] ml-2">
                             {new Date(cred.created_at).toLocaleDateString()}
                           </span>
@@ -986,7 +986,7 @@ export default function SettingsPage() {
                     onClick={() => disableTotpMutation.mutate()}
                     disabled={disableTotpMutation.isPending}
                   >
-                    {disableTotpMutation.isPending ? 'Disabling...' : t('common.confirm')}
+                    {disableTotpMutation.isPending ? t('settings.disabling') : t('common.confirm')}
                   </Button>
                 </div>
               </Modal>

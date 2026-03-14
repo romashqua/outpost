@@ -139,12 +139,12 @@ export default function AnalyticsPage() {
           icon={<Activity size={18} />}
         />
         <Stats
-          label="Unique Users"
+          label={t('analytics.uniqueUsers')}
           value={summary ? String(summary.unique_users) : '--'}
           icon={<Users size={18} />}
         />
         <Stats
-          label="Unique Devices"
+          label={t('analytics.uniqueDevices')}
           value={summary ? String(summary.unique_devices) : '--'}
           icon={<TrendingUp size={18} />}
         />
@@ -159,7 +159,7 @@ export default function AnalyticsPage() {
           <div className="h-[250px]">
             {bandwidthChart.length === 0 ? (
               <div className="flex items-center justify-center h-full text-sm text-[var(--text-muted)]">
-                No bandwidth data available
+                {t('analytics.noBandwidthData')}
               </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
@@ -186,7 +186,7 @@ export default function AnalyticsPage() {
                       fontSize: '11px',
                       color: 'var(--text-primary)',
                     }}
-                    formatter={(val: number, name: string) => [formatBytes(val), name === 'rx' ? 'RX' : 'TX']}
+                    formatter={(val: number, name: string) => [formatBytes(val), name === 'rx' ? t('dashboard.rx') : t('dashboard.tx')]}
                   />
                   <Area type="monotone" dataKey="rx" stroke="#00ff88" fill="url(#anaRx)" strokeWidth={2} />
                   <Area type="monotone" dataKey="tx" stroke="#00aaff" fill="url(#anaTx)" strokeWidth={2} />
@@ -204,7 +204,7 @@ export default function AnalyticsPage() {
           <div className="h-[250px]">
             {topUsersChart.length === 0 ? (
               <div className="flex items-center justify-center h-full text-sm text-[var(--text-muted)]">
-                No user data available
+                {t('analytics.noUserData')}
               </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
@@ -221,7 +221,7 @@ export default function AnalyticsPage() {
                       fontSize: '11px',
                       color: 'var(--text-primary)',
                     }}
-                    formatter={(val: number) => [formatBytes(val), 'Traffic']}
+                    formatter={(val: number) => [formatBytes(val), t('analytics.traffic')]}
                   />
                   <Bar dataKey="traffic" fill="#00ff88" radius={[0, 4, 4, 0]} barSize={20} />
                 </BarChart>
@@ -238,7 +238,7 @@ export default function AnalyticsPage() {
         </h2>
         {heatmapRaw.length === 0 ? (
           <div className="flex items-center justify-center py-8 text-sm text-[var(--text-muted)]">
-            No connection data available
+            {t('analytics.noConnectionData')}
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -262,7 +262,7 @@ export default function AnalyticsPage() {
                       key={hourIdx}
                       className="flex-1 aspect-square rounded-sm"
                       style={{ background: getHeatColor(val, heatmapMax), minWidth: '12px', minHeight: '12px' }}
-                      title={`${days[dayIdx]} ${String(hourIdx).padStart(2, '0')}:00 - ${val} connections`}
+                      title={`${days[dayIdx]} ${String(hourIdx).padStart(2, '0')}:00 — ${val} ${t('analytics.connections')}`}
                     />
                   ))}
                 </div>

@@ -93,7 +93,7 @@ export default function SmartRoutesPage() {
       queryClient.invalidateQueries({ queryKey: ['smart-routes'] })
       setShowCreateRoute(false)
       setRouteForm({ name: '', description: '' })
-      addToast('Route group created', 'success')
+      addToast(t('smartRoutes.routeCreated'), 'success')
     },
     onError: (err) => addToast((err as Error).message, 'error'),
   })
@@ -104,7 +104,7 @@ export default function SmartRoutesPage() {
       queryClient.invalidateQueries({ queryKey: ['smart-routes'] })
       setDeleteRouteId(null)
       setExpandedRoute(null)
-      addToast('Route group deleted', 'success')
+      addToast(t('smartRoutes.routeDeleted'), 'success')
     },
     onError: (err) => addToast((err as Error).message, 'error'),
   })
@@ -116,7 +116,7 @@ export default function SmartRoutesPage() {
       queryClient.invalidateQueries({ queryKey: ['proxy-servers'] })
       setShowCreateProxy(false)
       setProxyForm({ name: '', type: 'socks5', address: '', port: '' })
-      addToast('Proxy server created', 'success')
+      addToast(t('smartRoutes.proxyCreated'), 'success')
     },
     onError: (err) => addToast((err as Error).message, 'error'),
   })
@@ -126,7 +126,7 @@ export default function SmartRoutesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['proxy-servers'] })
       setDeleteProxyId(null)
-      addToast('Proxy server deleted', 'success')
+      addToast(t('smartRoutes.proxyDeleted'), 'success')
     },
     onError: (err) => addToast((err as Error).message, 'error'),
   })
@@ -142,7 +142,7 @@ export default function SmartRoutesPage() {
       queryClient.invalidateQueries({ queryKey: ['smart-routes'] })
       setShowAddEntry(null)
       setEntryForm({ entry_type: 'domain', value: '', action: 'proxy', proxy_id: '', priority: '100' })
-      addToast('Entry added', 'success')
+      addToast(t('smartRoutes.entryAdded'), 'success')
     },
     onError: (err) => addToast((err as Error).message, 'error'),
   })
@@ -152,7 +152,7 @@ export default function SmartRoutesPage() {
       api.delete(`/smart-routes/${routeId}/entries/${entryId}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['smart-routes'] })
-      addToast('Entry removed', 'success')
+      addToast(t('smartRoutes.entryRemoved'), 'success')
     },
     onError: (err) => addToast((err as Error).message, 'error'),
   })
@@ -161,9 +161,9 @@ export default function SmartRoutesPage() {
 
   const entryTypeBadge = (type: string) => {
     switch (type) {
-      case 'domain': return <Badge variant="info">domain</Badge>
-      case 'cidr': return <Badge variant="pending">cidr</Badge>
-      case 'domain_suffix': return <Badge variant="online">suffix</Badge>
+      case 'domain': return <Badge variant="info">{t('smartRoutes.domain')}</Badge>
+      case 'cidr': return <Badge variant="pending">{t('smartRoutes.cidr')}</Badge>
+      case 'domain_suffix': return <Badge variant="online">{t('smartRoutes.domainSuffix')}</Badge>
       default: return <Badge>{type}</Badge>
     }
   }
@@ -210,10 +210,10 @@ export default function SmartRoutesPage() {
     },
     {
       key: 'is_active',
-      header: 'Status',
+      header: t('common.status'),
       render: (row: SmartRoute) => (
         <Badge variant={row.is_active ? 'online' : 'offline'}>
-          {row.is_active ? 'Active' : 'Inactive'}
+          {row.is_active ? t('status.active') : t('status.inactive')}
         </Badge>
       ),
     },
@@ -232,7 +232,7 @@ export default function SmartRoutesPage() {
       render: (row: SmartRoute) => (
         <div className="flex items-center gap-2">
           <button
-            onClick={(e) => { e.stopPropagation(); setShowAddEntry(row.id) }}
+            onClick={(e) => { e.stopPropagation(); addEntryMutation.reset(); setShowAddEntry(row.id) }}
             className="text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors"
             title={t('smartRoutes.addEntry')}
           >
@@ -260,24 +260,24 @@ export default function SmartRoutesPage() {
     },
     {
       key: 'type',
-      header: 'Type',
+      header: t('smartRoutes.type'),
       render: (row: ProxyServer) => (
         <Badge variant="info">{row.type.toUpperCase()}</Badge>
       ),
     },
     {
       key: 'address',
-      header: 'Address',
+      header: t('smartRoutes.address'),
       render: (row: ProxyServer) => (
         <span className="font-mono text-[var(--text-secondary)] text-sm">{row.address}:{row.port}</span>
       ),
     },
     {
       key: 'is_active',
-      header: 'Status',
+      header: t('common.status'),
       render: (row: ProxyServer) => (
         <Badge variant={row.is_active ? 'online' : 'offline'}>
-          {row.is_active ? 'Active' : 'Inactive'}
+          {row.is_active ? t('status.active') : t('status.inactive')}
         </Badge>
       ),
     },
@@ -315,7 +315,7 @@ export default function SmartRoutesPage() {
         </h1>
         <div className="flex items-center gap-2">
           {activeTab === 'routes' && (
-            <Button onClick={() => setShowCreateRoute(true)}>
+            <Button onClick={() => { createRouteMutation.reset(); setShowCreateRoute(true) }}>
               <Plus size={16} className="mr-1" /> {t('smartRoutes.createGroup')}
             </Button>
           )}
@@ -376,7 +376,7 @@ export default function SmartRoutesPage() {
               {expandedRoute && entries.length > 0 && (
                 <Card className="mt-2 p-4">
                   <h3 className="text-sm font-medium text-[var(--text-secondary)] mb-3 font-mono">
-                    Entries ({entries.length})
+                    {t('smartRoutes.entries')} ({entries.length})
                   </h3>
                   <div className="space-y-2">
                     {entries.map((entry) => (
@@ -385,7 +385,7 @@ export default function SmartRoutesPage() {
                         <span className="font-mono text-sm text-[var(--text-primary)] flex-1">{entry.value}</span>
                         {actionBadge(entry.action)}
                         {entry.action === 'proxy' && entry.proxy_name && (
-                          <span className="text-xs text-[var(--text-muted)] font-mono">via {entry.proxy_name}</span>
+                          <span className="text-xs text-[var(--text-muted)] font-mono">{t('smartRoutes.via')} {entry.proxy_name}</span>
                         )}
                         <span className="text-xs text-[var(--text-muted)] font-mono">p:{entry.priority}</span>
                         <button
@@ -402,7 +402,7 @@ export default function SmartRoutesPage() {
 
               {expandedRoute && entries.length === 0 && expandedRouteData && (
                 <Card className="mt-2 p-4 text-center text-[var(--text-muted)] text-sm">
-                  No entries yet. Click <Plus size={14} className="inline" /> to add one.
+                  {t('smartRoutes.noEntriesClickAdd')}
                 </Card>
               )}
             </div>
@@ -421,7 +421,7 @@ export default function SmartRoutesPage() {
                 <Route size={40} className="text-[var(--accent)]" />
               </div>
               <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-2 font-mono">
-                No proxy servers configured
+                {t('smartRoutes.noProxies')}
               </h2>
               <Button className="mt-4" onClick={() => setShowCreateProxy(true)}>
                 <Plus size={16} className="mr-1" /> {t('smartRoutes.addProxy')}
@@ -472,7 +472,7 @@ export default function SmartRoutesPage() {
       {/* Delete Route Modal */}
       <Modal open={!!deleteRouteId} title={t('common.delete')} onClose={() => setDeleteRouteId(null)}>
         <p className="text-sm text-[var(--text-secondary)] mb-4">
-          Are you sure you want to delete this route group and all its entries? This action cannot be undone.
+          {t('smartRoutes.confirmDeleteRoute')}
         </p>
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={() => setDeleteRouteId(null)}>{t('common.cancel')}</Button>
@@ -504,7 +504,7 @@ export default function SmartRoutesPage() {
         >
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
-              Type
+              {t('smartRoutes.type')}
             </label>
             <select
               value={entryForm.entry_type}
@@ -517,7 +517,7 @@ export default function SmartRoutesPage() {
             </select>
           </div>
           <Input
-            label="Value"
+            label={t('smartRoutes.value')}
             value={entryForm.value}
             onChange={(e) => setEntryForm({ ...entryForm, value: e.target.value })}
             placeholder={entryForm.entry_type === 'cidr' ? 'e.g. 10.0.0.0/8' : entryForm.entry_type === 'domain_suffix' ? 'e.g. .google.com' : 'e.g. youtube.com'}
@@ -525,7 +525,7 @@ export default function SmartRoutesPage() {
           />
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
-              Action
+              {t('smartRoutes.action')}
             </label>
             <select
               value={entryForm.action}
@@ -548,7 +548,7 @@ export default function SmartRoutesPage() {
                 className="w-full rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-sm text-[var(--text-primary)] font-mono"
                 required
               >
-                <option value="">Select proxy...</option>
+                <option value="">{t('smartRoutes.selectProxy')}</option>
                 {proxies.map((p) => (
                   <option key={p.id} value={p.id}>{p.name} ({p.type} - {p.address}:{p.port})</option>
                 ))}
@@ -556,7 +556,7 @@ export default function SmartRoutesPage() {
             </div>
           )}
           <Input
-            label="Priority"
+            label={t('smartRoutes.priority')}
             type="number"
             value={entryForm.priority}
             onChange={(e) => setEntryForm({ ...entryForm, priority: e.target.value })}
@@ -596,7 +596,7 @@ export default function SmartRoutesPage() {
           />
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
-              Type
+              {t('smartRoutes.type')}
             </label>
             <select
               value={proxyForm.type}
@@ -610,14 +610,14 @@ export default function SmartRoutesPage() {
             </select>
           </div>
           <Input
-            label="Address"
+            label={t('smartRoutes.address')}
             value={proxyForm.address}
             onChange={(e) => setProxyForm({ ...proxyForm, address: e.target.value })}
             placeholder="e.g. 203.0.113.1"
             required
           />
           <Input
-            label="Port"
+            label={t('smartRoutes.port')}
             type="number"
             value={proxyForm.port}
             onChange={(e) => setProxyForm({ ...proxyForm, port: e.target.value })}
@@ -638,7 +638,7 @@ export default function SmartRoutesPage() {
       {/* Delete Proxy Modal */}
       <Modal open={!!deleteProxyId} title={t('common.delete')} onClose={() => setDeleteProxyId(null)}>
         <p className="text-sm text-[var(--text-secondary)] mb-4">
-          Are you sure you want to delete this proxy server? This action cannot be undone.
+          {t('smartRoutes.confirmDeleteProxy')}
         </p>
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={() => setDeleteProxyId(null)}>{t('common.cancel')}</Button>

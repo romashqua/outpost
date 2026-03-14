@@ -1,0 +1,41 @@
+[Unit]
+Description=Outpost VPN Client
+Documentation=https://github.com/romashqua/outpost
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=outpost
+Group=outpost
+EnvironmentFile=/etc/outpost/outpost.env
+ExecStart=/usr/local/bin/outpost-client connect
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=30
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=outpost-client
+
+# Resource limits
+LimitNOFILE=65535
+
+# WireGuard requires network capabilities
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+
+# Security hardening
+ProtectSystem=strict
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+ReadWritePaths=/var/lib/outpost
+
+[Install]
+WantedBy=multi-user.target

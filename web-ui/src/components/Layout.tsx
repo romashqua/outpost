@@ -4,6 +4,7 @@ import { clsx } from 'clsx'
 import {
   LayoutDashboard,
   Users,
+  UsersRound,
   Laptop2,
   Network,
   Server,
@@ -11,6 +12,8 @@ import {
   Route,
   BarChart3,
   ShieldCheck,
+  Shield,
+  BookOpen,
   Settings,
   LogOut,
   Globe,
@@ -21,6 +24,7 @@ import { useAuthStore } from '@/store/auth'
 const navItems = [
   { to: '/', icon: LayoutDashboard, labelKey: 'nav.dashboard' },
   { to: '/users', icon: Users, labelKey: 'nav.users' },
+  { to: '/groups', icon: UsersRound, labelKey: 'nav.groups' },
   { to: '/devices', icon: Laptop2, labelKey: 'nav.devices' },
   { to: '/networks', icon: Network, labelKey: 'nav.networks' },
   { to: '/gateways', icon: Server, labelKey: 'nav.gateways' },
@@ -28,6 +32,8 @@ const navItems = [
   { to: '/smart-routes', icon: Route, labelKey: 'nav.smartRoutes' },
   { to: '/analytics', icon: BarChart3, labelKey: 'nav.analytics' },
   { to: '/compliance', icon: ShieldCheck, labelKey: 'nav.compliance' },
+  { to: '/ztna', icon: Shield, labelKey: 'nav.ztna' },
+  { to: '/docs', icon: BookOpen, labelKey: 'nav.docs' },
   { to: '/settings', icon: Settings, labelKey: 'nav.settings' },
 ]
 

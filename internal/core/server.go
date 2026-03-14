@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -27,10 +28,76 @@ import (
 	"github.com/romashqua/outpost/internal/config"
 	"github.com/romashqua/outpost/internal/core/handler"
 	"github.com/romashqua/outpost/internal/mail"
+	"github.com/romashqua/outpost/internal/nat"
 	"github.com/romashqua/outpost/internal/observability"
+	"github.com/romashqua/outpost/internal/tenant"
 	"github.com/romashqua/outpost/internal/session"
 	"github.com/romashqua/outpost/internal/webhook"
 )
+
+// ipRateLimiter tracks per-IP request timestamps for simple rate limiting.
+type ipRateLimiter struct {
+	mu       sync.Mutex
+	attempts map[string][]time.Time
+	limit    int
+	window   time.Duration
+}
+
+func newIPRateLimiter(limit int, window time.Duration) *ipRateLimiter {
+	return &ipRateLimiter{
+		attempts: make(map[string][]time.Time),
+		limit:    limit,
+		window:   window,
+	}
+}
+
+// allow returns true if the IP has not exceeded the rate limit within the window.
+func (rl *ipRateLimiter) allow(ip string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	now := time.Now()
+	cutoff := now.Add(-rl.window)
+
+	// Filter out expired entries.
+	attempts := rl.attempts[ip]
+	valid := attempts[:0]
+	for _, t := range attempts {
+		if t.After(cutoff) {
+			valid = append(valid, t)
+		}
+	}
+
+	if len(valid) >= rl.limit {
+		rl.attempts[ip] = valid
+		return false
+	}
+
+	rl.attempts[ip] = append(valid, now)
+	return true
+}
+
+// rateLimitMiddleware returns an HTTP middleware that rejects requests exceeding the rate limit.
+func rateLimitMiddleware(rl *ipRateLimiter) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ip := r.RemoteAddr
+			// Use X-Real-IP if set by the RealIP middleware.
+			if realIP := r.Header.Get("X-Real-Ip"); realIP != "" {
+				ip = realIP
+			}
+			// Strip port from ip if present.
+			if host, _, err := net.SplitHostPort(ip); err == nil {
+				ip = host
+			}
+			if !rl.allow(ip) {
+				http.Error(w, `{"error":"too many requests","message":"too many requests"}`, http.StatusTooManyRequests)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
 
 type Server struct {
 	cfg        *config.Config
@@ -138,9 +205,10 @@ func (s *Server) setupHTTPRouter() chi.Router {
 	// Metrics endpoint (no auth).
 	r.Handle("/metrics", promhttp.Handler())
 
-	// Health endpoints (no auth).
-	health := handler.NewHealthHandler(s.pool)
-	r.Mount("/", health.Routes())
+	// Health endpoints (no auth) — registered directly to avoid SPA catch-all override.
+	healthHandler := handler.NewHealthHandler(s.pool)
+	r.Get("/healthz", healthHandler.Healthz)
+	r.Get("/readyz", healthHandler.Readyz)
 
 	// Serve OpenAPI spec (no auth).
 	r.Get("/api/docs/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
@@ -167,9 +235,10 @@ func (s *Server) setupHTTPRouter() chi.Router {
 
 	// API routes.
 	r.Route("/api/v1", func(r chi.Router) {
-		// Auth endpoints (no JWT required).
+		// Auth endpoints (no JWT required) — rate limited to 10 req/min per IP.
+		authRateLimiter := newIPRateLimiter(10, time.Minute)
 		authHandler := handler.NewAuthHandler(s.pool, s.cfg.Auth.JWTSecret)
-		r.Mount("/auth", authHandler.Routes())
+		r.With(rateLimitMiddleware(authRateLimiter)).Mount("/auth", authHandler.Routes())
 
 		// Dashboard stats (no JWT for now — protected by API prefix).
 		r.Mount("/dashboard", handler.NewDashboardHandler(s.pool).Routes())
@@ -186,6 +255,7 @@ func (s *Server) setupHTTPRouter() chi.Router {
 				userHandlerOpts = append(userHandlerOpts, s.mailer)
 			}
 			r.Mount("/users", handler.NewUserHandler(s.pool, s.logger, userHandlerOpts...).Routes())
+			r.Mount("/groups", handler.NewGroupHandler(s.pool, s.logger).Routes())
 			r.Mount("/networks", handler.NewNetworkHandler(s.pool, s.logger).Routes())
 			r.Mount("/devices", handler.NewDeviceHandler(s.pool, s.logger).Routes())
 			r.Mount("/gateways", handler.NewGatewayHandler(s.pool, s.logger).Routes())
@@ -218,9 +288,16 @@ func (s *Server) setupHTTPRouter() chi.Router {
 			// Smart routing (selective proxy bypass).
 			r.Mount("/smart-routes", handler.NewSmartRouteHandler(s.pool).Routes())
 
+			// Multi-tenant management.
+			r.Mount("/tenants", tenant.NewHandler(s.pool, s.logger).Routes())
+
+			// NAT traversal (STUN/TURN relay management).
+			r.Mount("/nat", nat.NewHandler(s.pool, s.logger).Routes())
+
 			// Killer feature routes.
 			r.Mount("/analytics", analytics.NewHandler(s.pool).Routes())
 			r.Mount("/compliance", compliance.NewHandler(s.pool).Routes())
+			r.Mount("/ztna", handler.NewZTNAHandler(s.pool, s.logger).Routes())
 		})
 	})
 

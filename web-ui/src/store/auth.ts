@@ -40,10 +40,10 @@ function parseJwtPayload(token: string): Record<string, unknown> | null {
 function userFromToken(token: string, fallbackUsername?: string): User {
   const payload = parseJwtPayload(token)
   return {
-    id: (payload?.sub as string) ?? '',
+    id: (payload?.user_id as string) ?? (payload?.sub as string) ?? '',
     username: (payload?.username as string) ?? fallbackUsername ?? '',
     email: (payload?.email as string) ?? '',
-    role: (payload?.role as string) ?? 'user',
+    role: (payload?.is_admin ? 'admin' : (payload?.role as string)) ?? 'user',
   }
 }
 

@@ -1181,3 +1181,495 @@ func TestMetrics(t *testing.T) {
 	expectStatus(t, resp, http.StatusOK)
 	resp.Body.Close()
 }
+
+func TestGroups(t *testing.T) {
+	if adminJWT == "" {
+		t.Skip("no admin JWT available; TestAuth must run first")
+	}
+
+	var groupID string
+
+	t.Run("create group", func(t *testing.T) {
+		body := map[string]any{
+			"name":        "e2e-test-group",
+			"description": "Group for E2E tests",
+		}
+		resp := authRequest(t, "POST", "/api/v1/groups", body, adminJWT)
+		expectStatus(t, resp, http.StatusCreated)
+
+		var g map[string]any
+		decodeJSON(t, resp, &g)
+		id, ok := g["id"].(string)
+		if !ok || id == "" {
+			t.Fatal("expected group id in response")
+		}
+		groupID = id
+	})
+
+	t.Run("list groups", func(t *testing.T) {
+		resp := authRequest(t, "GET", "/api/v1/groups", nil, adminJWT)
+		expectStatus(t, resp, http.StatusOK)
+
+		var groups []map[string]any
+		decodeJSON(t, resp, &groups)
+		if len(groups) == 0 {
+			t.Fatal("expected at least one group")
+		}
+	})
+
+	t.Run("get group", func(t *testing.T) {
+		resp := authRequest(t, "GET", "/api/v1/groups/"+groupID, nil, adminJWT)
+		expectStatus(t, resp, http.StatusOK)
+
+		var g map[string]any
+		decodeJSON(t, resp, &g)
+		if g["id"] != groupID {
+			t.Fatalf("expected group id %s, got %v", groupID, g["id"])
+		}
+	})
+
+	t.Run("update group", func(t *testing.T) {
+		body := map[string]any{
+			"name": "e2e-test-group-updated",
+		}
+		resp := authRequest(t, "PUT", "/api/v1/groups/"+groupID, body, adminJWT)
+		expectStatus(t, resp, http.StatusOK)
+
+		var g map[string]any
+		decodeJSON(t, resp, &g)
+		if g["name"] != "e2e-test-group-updated" {
+			t.Fatalf("expected updated name, got %v", g["name"])
+		}
+	})
+
+	t.Run("add member to group", func(t *testing.T) {
+		var adminID string
+		err := pool.QueryRow(context.Background(),
+			`SELECT id FROM users WHERE username = 'admin'`).Scan(&adminID)
+		if err != nil {
+			t.Fatalf("failed to get admin id: %v", err)
+		}
+
+		body := map[string]any{
+			"user_id": adminID,
+		}
+		resp := authRequest(t, "POST", "/api/v1/groups/"+groupID+"/members", body, adminJWT)
+		expectStatus(t, resp, http.StatusCreated)
+		resp.Body.Close()
+	})
+
+	t.Run("list group members", func(t *testing.T) {
+		resp := authRequest(t, "GET", "/api/v1/groups/"+groupID+"/members", nil, adminJWT)
+		expectStatus(t, resp, http.StatusOK)
+
+		var members []map[string]any
+		decodeJSON(t, resp, &members)
+		if len(members) == 0 {
+			t.Fatal("expected at least one member")
+		}
+	})
+
+	t.Run("add ACL to group", func(t *testing.T) {
+		var netID string
+		err := pool.QueryRow(context.Background(),
+			`SELECT id FROM networks WHERE name = 'default'`).Scan(&netID)
+		if err != nil {
+			t.Fatalf("failed to get default network: %v", err)
+		}
+
+		body := map[string]any{
+			"network_id":  netID,
+			"allowed_ips": []string{"10.0.0.0/8"},
+		}
+		resp := authRequest(t, "POST", "/api/v1/groups/"+groupID+"/acls", body, adminJWT)
+		expectStatus(t, resp, http.StatusCreated)
+		resp.Body.Close()
+	})
+
+	t.Run("list group ACLs", func(t *testing.T) {
+		resp := authRequest(t, "GET", "/api/v1/groups/"+groupID+"/acls", nil, adminJWT)
+		expectStatus(t, resp, http.StatusOK)
+
+		var acls []map[string]any
+		decodeJSON(t, resp, &acls)
+		if len(acls) == 0 {
+			t.Fatal("expected at least one ACL")
+		}
+	})
+
+	t.Run("delete group", func(t *testing.T) {
+		resp := authRequest(t, "DELETE", "/api/v1/groups/"+groupID, nil, adminJWT)
+		expectStatus(t, resp, http.StatusNoContent)
+		resp.Body.Close()
+	})
+}
+
+func TestDeviceEnroll(t *testing.T) {
+	if adminJWT == "" {
+		t.Skip("no admin JWT available; TestAuth must run first")
+	}
+
+	// Clean up any leftover device from previous runs.
+	_, _ = pool.Exec(context.Background(),
+		`DELETE FROM devices WHERE name = 'enroll-test-device' OR wireguard_pubkey = 'dGVzdHB1YmtleQ==AAAAAAAAAAAAAAAAAAAAAAAA'`)
+
+	// Ensure a gateway exists for enrollment.
+	var netID string
+	err := pool.QueryRow(context.Background(),
+		`SELECT id FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1`).Scan(&netID)
+	if err != nil {
+		t.Fatalf("no active network: %v", err)
+	}
+
+	gwBody := map[string]any{
+		"name":       "enroll-test-gw",
+		"network_id": netID,
+		"endpoint":   "gw.enroll-test.local:51820",
+	}
+	gwResp := authRequest(t, "POST", "/api/v1/gateways", gwBody, adminJWT)
+	expectStatus(t, gwResp, http.StatusCreated)
+	var gw map[string]any
+	decodeJSON(t, gwResp, &gw)
+	gwID := gw["id"].(string)
+
+	t.Run("enroll device", func(t *testing.T) {
+		body := map[string]any{
+			"name":             "enroll-test-device",
+			"wireguard_pubkey": "dGVzdHB1YmtleQ==AAAAAAAAAAAAAAAAAAAAAAAA",
+		}
+		resp := authRequest(t, "POST", "/api/v1/devices/enroll", body, adminJWT)
+		expectStatus(t, resp, http.StatusCreated)
+
+		var result map[string]any
+		decodeJSON(t, resp, &result)
+		if result["device_id"] == nil || result["device_id"] == "" {
+			t.Fatal("expected device_id in enroll response")
+		}
+		if result["address"] == nil || result["address"] == "" {
+			t.Fatal("expected address in enroll response")
+		}
+		if result["endpoint"] == nil || result["endpoint"] == "" {
+			t.Fatal("expected endpoint in enroll response")
+		}
+		if result["server_public_key"] == nil || result["server_public_key"] == "" {
+			t.Fatal("expected server_public_key in enroll response")
+		}
+	})
+
+	// Clean up gateway.
+	delResp := authRequest(t, "DELETE", "/api/v1/gateways/"+gwID, nil, adminJWT)
+	expectStatus(t, delResp, http.StatusNoContent)
+	delResp.Body.Close()
+}
+
+func TestZTNA(t *testing.T) {
+	if adminJWT == "" {
+		t.Skip("no admin JWT available; TestAuth must run first")
+	}
+
+	t.Run("get trust config", func(t *testing.T) {
+		resp := authRequest(t, "GET", "/api/v1/ztna/trust-config", nil, adminJWT)
+		expectStatus(t, resp, http.StatusOK)
+
+		var cfg map[string]any
+		decodeJSON(t, resp, &cfg)
+		if cfg["threshold_high"] == nil {
+			t.Fatal("expected threshold_high in trust config")
+		}
+	})
+
+	t.Run("update trust config", func(t *testing.T) {
+		body := map[string]any{
+			"weight_disk_encryption":     20,
+			"weight_screen_lock":         15,
+			"weight_antivirus":           15,
+			"weight_firewall":            15,
+			"weight_os_version":          20,
+			"weight_mfa":                 15,
+			"threshold_high":             80,
+			"threshold_medium":           50,
+			"threshold_low":              20,
+			"auto_restrict_below_medium": true,
+			"auto_block_below_low":       false,
+		}
+		resp := authRequest(t, "PUT", "/api/v1/ztna/trust-config", body, adminJWT)
+		expectStatus(t, resp, http.StatusOK)
+		resp.Body.Close()
+	})
+
+	var policyID string
+
+	t.Run("create ZTNA policy", func(t *testing.T) {
+		desc := "E2E test ZTNA policy"
+		body := map[string]any{
+			"name":        "e2e-test-policy",
+			"description": &desc,
+			"action":      "restrict",
+			"conditions":  map[string]any{"min_trust_score": 50},
+			"network_ids": []string{},
+			"priority":    10,
+		}
+		resp := authRequest(t, "POST", "/api/v1/ztna/policies", body, adminJWT)
+		expectStatus(t, resp, http.StatusCreated)
+
+		var p map[string]any
+		decodeJSON(t, resp, &p)
+		id, ok := p["id"].(string)
+		if !ok || id == "" {
+			t.Fatal("expected policy id in response")
+		}
+		policyID = id
+	})
+
+	t.Run("list ZTNA policies", func(t *testing.T) {
+		resp := authRequest(t, "GET", "/api/v1/ztna/policies", nil, adminJWT)
+		expectStatus(t, resp, http.StatusOK)
+
+		var policies []map[string]any
+		decodeJSON(t, resp, &policies)
+		if len(policies) == 0 {
+			t.Fatal("expected at least one ZTNA policy")
+		}
+	})
+
+	t.Run("delete ZTNA policy", func(t *testing.T) {
+		resp := authRequest(t, "DELETE", "/api/v1/ztna/policies/"+policyID, nil, adminJWT)
+		expectStatus(t, resp, http.StatusNoContent)
+		resp.Body.Close()
+	})
+
+	t.Run("get trust score for admin device", func(t *testing.T) {
+		// This may return 404 if no device exists — that's OK.
+		var deviceID string
+		err := pool.QueryRow(context.Background(),
+			`SELECT id FROM devices LIMIT 1`).Scan(&deviceID)
+		if err != nil {
+			t.Skip("no device to test trust score")
+		}
+
+		resp := authRequest(t, "GET", "/api/v1/ztna/trust-score/"+deviceID, nil, adminJWT)
+		// Accept 200 or 404 (no score computed yet).
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("expected 200 or 404, got %d", resp.StatusCode)
+		}
+		resp.Body.Close()
+	})
+}
+
+func TestNATTraversal(t *testing.T) {
+	if adminJWT == "" {
+		t.Skip("no admin JWT available; TestAuth must run first")
+	}
+
+	t.Run("list relay servers", func(t *testing.T) {
+		resp := authRequest(t, "GET", "/api/v1/nat/relays", nil, adminJWT)
+		expectStatus(t, resp, http.StatusOK)
+
+		var relays []map[string]any
+		decodeJSON(t, resp, &relays)
+		// Empty list is OK — just ensure endpoint works.
+	})
+
+	var relayID string
+
+	t.Run("create relay server", func(t *testing.T) {
+		body := map[string]any{
+			"name":     "e2e-stun-relay",
+			"address":  "stun.e2e.local:3478",
+			"region":   "eu-west",
+			"protocol": "stun",
+		}
+		resp := authRequest(t, "POST", "/api/v1/nat/relays", body, adminJWT)
+		expectStatus(t, resp, http.StatusCreated)
+
+		var relay map[string]any
+		decodeJSON(t, resp, &relay)
+		id, ok := relay["id"].(string)
+		if !ok || id == "" {
+			t.Fatal("expected relay id in response")
+		}
+		relayID = id
+	})
+
+	t.Run("delete relay server", func(t *testing.T) {
+		resp := authRequest(t, "DELETE", "/api/v1/nat/relays/"+relayID, nil, adminJWT)
+		expectStatus(t, resp, http.StatusNoContent)
+		resp.Body.Close()
+	})
+
+	t.Run("get NAT status for device", func(t *testing.T) {
+		var deviceID string
+		err := pool.QueryRow(context.Background(),
+			`SELECT id FROM devices LIMIT 1`).Scan(&deviceID)
+		if err != nil {
+			t.Skip("no device to test NAT status")
+		}
+
+		resp := authRequest(t, "GET", "/api/v1/nat/status/"+deviceID, nil, adminJWT)
+		// Accept 200 or 404 (no NAT check done yet).
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("expected 200 or 404, got %d", resp.StatusCode)
+		}
+		resp.Body.Close()
+	})
+}
+
+func TestTenants(t *testing.T) {
+	if adminJWT == "" {
+		t.Skip("no admin JWT available; TestAuth must run first")
+	}
+
+	// Clean up any leftover tenant from previous runs.
+	_, _ = pool.Exec(context.Background(),
+		`DELETE FROM tenants WHERE slug = 'e2e-test-org-v2'`)
+
+	var tenantID string
+
+	t.Run("create tenant", func(t *testing.T) {
+		body := map[string]any{
+			"name":        "E2E Test Org",
+			"slug":        "e2e-test-org-v2",
+			"plan":        "pro",
+			"max_users":   100,
+			"max_devices": 200,
+		}
+		resp := authRequest(t, "POST", "/api/v1/tenants", body, adminJWT)
+		expectStatus(t, resp, http.StatusCreated)
+
+		var tenant map[string]any
+		decodeJSON(t, resp, &tenant)
+		id, ok := tenant["id"].(string)
+		if !ok || id == "" {
+			t.Fatal("expected tenant id in response")
+		}
+		tenantID = id
+	})
+
+	t.Run("list tenants", func(t *testing.T) {
+		resp := authRequest(t, "GET", "/api/v1/tenants", nil, adminJWT)
+		expectStatus(t, resp, http.StatusOK)
+
+		var tenants []map[string]any
+		decodeJSON(t, resp, &tenants)
+		if len(tenants) == 0 {
+			t.Fatal("expected at least one tenant")
+		}
+	})
+
+	t.Run("get tenant", func(t *testing.T) {
+		resp := authRequest(t, "GET", "/api/v1/tenants/"+tenantID, nil, adminJWT)
+		expectStatus(t, resp, http.StatusOK)
+
+		var tenant map[string]any
+		decodeJSON(t, resp, &tenant)
+		if tenant["id"] != tenantID {
+			t.Fatalf("expected tenant id %s, got %v", tenantID, tenant["id"])
+		}
+	})
+
+	t.Run("get tenant stats", func(t *testing.T) {
+		resp := authRequest(t, "GET", "/api/v1/tenants/"+tenantID+"/stats", nil, adminJWT)
+		expectStatus(t, resp, http.StatusOK)
+
+		var stats map[string]any
+		decodeJSON(t, resp, &stats)
+		if stats["tenant_id"] == nil {
+			t.Fatal("expected tenant_id in stats response")
+		}
+	})
+
+	t.Run("update tenant", func(t *testing.T) {
+		body := map[string]any{
+			"name": "E2E Test Org Updated",
+		}
+		resp := authRequest(t, "PUT", "/api/v1/tenants/"+tenantID, body, adminJWT)
+		expectStatus(t, resp, http.StatusOK)
+
+		var tenant map[string]any
+		decodeJSON(t, resp, &tenant)
+		if tenant["name"] != "E2E Test Org Updated" {
+			t.Fatalf("expected updated name, got %v", tenant["name"])
+		}
+	})
+
+	t.Run("deactivate tenant", func(t *testing.T) {
+		resp := authRequest(t, "DELETE", "/api/v1/tenants/"+tenantID, nil, adminJWT)
+		expectStatus(t, resp, http.StatusNoContent)
+		resp.Body.Close()
+	})
+}
+
+func TestS2SMembers(t *testing.T) {
+	if adminJWT == "" {
+		t.Skip("no admin JWT available; TestAuth must run first")
+	}
+
+	// Create a tunnel and gateway to test members.
+	tunnelBody := map[string]any{
+		"name":        "e2e-member-test",
+		"topology":    "mesh",
+		"description": "Testing members",
+	}
+	tunnelResp := authRequest(t, "POST", "/api/v1/s2s-tunnels", tunnelBody, adminJWT)
+	expectStatus(t, tunnelResp, http.StatusCreated)
+	var tunnel map[string]any
+	decodeJSON(t, tunnelResp, &tunnel)
+	tunnelID := tunnel["id"].(string)
+
+	var netID string
+	_ = pool.QueryRow(context.Background(),
+		`SELECT id FROM networks WHERE name = 'default'`).Scan(&netID)
+
+	gwBody := map[string]any{
+		"name":       "s2s-member-gw",
+		"network_id": netID,
+		"endpoint":   "gw.s2s-member.test:51820",
+	}
+	gwResp := authRequest(t, "POST", "/api/v1/gateways", gwBody, adminJWT)
+	expectStatus(t, gwResp, http.StatusCreated)
+	var gw map[string]any
+	decodeJSON(t, gwResp, &gw)
+	gwID := gw["id"].(string)
+
+	t.Run("add member", func(t *testing.T) {
+		body := map[string]any{
+			"gateway_id":    gwID,
+			"local_subnets": []string{"192.168.1.0/24"},
+		}
+		resp := authRequest(t, "POST", "/api/v1/s2s-tunnels/"+tunnelID+"/members", body, adminJWT)
+		expectStatus(t, resp, http.StatusCreated)
+		resp.Body.Close()
+	})
+
+	t.Run("list members", func(t *testing.T) {
+		resp := authRequest(t, "GET", "/api/v1/s2s-tunnels/"+tunnelID+"/members", nil, adminJWT)
+		expectStatus(t, resp, http.StatusOK)
+
+		var members []map[string]any
+		decodeJSON(t, resp, &members)
+		if len(members) == 0 {
+			t.Fatal("expected at least one member")
+		}
+	})
+
+	t.Run("list routes", func(t *testing.T) {
+		resp := authRequest(t, "GET", "/api/v1/s2s-tunnels/"+tunnelID+"/routes", nil, adminJWT)
+		expectStatus(t, resp, http.StatusOK)
+		resp.Body.Close()
+	})
+
+	t.Run("remove member", func(t *testing.T) {
+		resp := authRequest(t, "DELETE", "/api/v1/s2s-tunnels/"+tunnelID+"/members/"+gwID, nil, adminJWT)
+		expectStatus(t, resp, http.StatusNoContent)
+		resp.Body.Close()
+	})
+
+	// Clean up.
+	delResp := authRequest(t, "DELETE", "/api/v1/s2s-tunnels/"+tunnelID, nil, adminJWT)
+	expectStatus(t, delResp, http.StatusNoContent)
+	delResp.Body.Close()
+
+	delGw := authRequest(t, "DELETE", "/api/v1/gateways/"+gwID, nil, adminJWT)
+	expectStatus(t, delGw, http.StatusNoContent)
+	delGw.Body.Close()
+}

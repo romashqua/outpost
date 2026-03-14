@@ -57,6 +57,8 @@ tags:
     description: Outbound webhook subscription management
   - name: Audit
     description: Audit log viewer and export
+  - name: ZTNA
+    description: Zero-Trust Network Access (device trust scores, access policies, split DNS)
 
 paths:
   # ── Health ──────────────────────────────────────────────────────────
@@ -2437,6 +2439,275 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  # ── ZTNA ───────────────────────────────────────────────────────────────
+  /api/v1/ztna/trust-scores/{deviceId}:
+    parameters:
+      - name: deviceId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getDeviceTrustScore
+      summary: Get current trust score for a device
+      tags: [ZTNA]
+      responses:
+        "200":
+          description: Device trust score
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrustScore"
+        "404":
+          description: Device or score not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/ztna/trust-scores:
+    get:
+      operationId: listTrustScores
+      summary: List trust scores for all devices
+      tags: [ZTNA]
+      responses:
+        "200":
+          description: List of device trust scores
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TrustScoreSummary"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/ztna/trust-config:
+    get:
+      operationId: getTrustConfig
+      summary: Get trust score configuration (weights, thresholds)
+      tags: [ZTNA]
+      responses:
+        "200":
+          description: Trust score configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrustScoreConfig"
+    put:
+      operationId: updateTrustConfig
+      summary: Update trust score configuration
+      tags: [ZTNA]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrustScoreConfig"
+      responses:
+        "200":
+          description: Configuration updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusOK"
+        "400":
+          description: Invalid configuration (weights must sum to 100, thresholds must be ordered)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/ztna/trust-history/{deviceId}:
+    parameters:
+      - name: deviceId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getTrustHistory
+      summary: Get trust score history for a device
+      tags: [ZTNA]
+      responses:
+        "200":
+          description: Historical trust scores
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TrustScore"
+
+  /api/v1/ztna/policies:
+    get:
+      operationId: listZTNAPolicies
+      summary: List all ZTNA access policies
+      tags: [ZTNA]
+      responses:
+        "200":
+          description: List of policies
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ZTNAPolicy"
+    post:
+      operationId: createZTNAPolicy
+      summary: Create a ZTNA access policy
+      tags: [ZTNA]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ZTNAPolicyRequest"
+      responses:
+        "201":
+          description: Policy created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ZTNAPolicy"
+        "400":
+          description: Invalid policy (action must be allow/restrict/deny)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/ztna/policies/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+    get:
+      operationId: getZTNAPolicy
+      summary: Get a ZTNA policy by ID
+      tags: [ZTNA]
+      responses:
+        "200":
+          description: Policy details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ZTNAPolicy"
+        "404":
+          description: Policy not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    put:
+      operationId: updateZTNAPolicy
+      summary: Update a ZTNA policy
+      tags: [ZTNA]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ZTNAPolicyRequest"
+      responses:
+        "200":
+          description: Policy updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ZTNAPolicy"
+        "400":
+          description: Invalid policy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Policy not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteZTNAPolicy
+      summary: Delete a ZTNA policy
+      tags: [ZTNA]
+      responses:
+        "204":
+          description: Policy deleted
+        "404":
+          description: Policy not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/ztna/dns-rules:
+    get:
+      operationId: listDNSRules
+      summary: List split DNS rules
+      tags: [ZTNA]
+      parameters:
+        - name: network_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+          description: Filter by network ID
+      responses:
+        "200":
+          description: List of DNS rules
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DNSRule"
+    post:
+      operationId: createDNSRule
+      summary: Create a split DNS rule
+      tags: [ZTNA]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DNSRuleRequest"
+      responses:
+        "201":
+          description: DNS rule created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DNSRule"
+        "400":
+          description: Invalid rule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/ztna/dns-rules/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+    delete:
+      operationId: deleteDNSRule
+      summary: Delete a split DNS rule
+      tags: [ZTNA]
+      responses:
+        "204":
+          description: DNS rule deleted
+        "404":
+          description: Rule not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
 # ══════════════════════════════════════════════════════════════════════
 # Components
 # ══════════════════════════════════════════════════════════════════════
@@ -3608,6 +3879,176 @@ components:
         count:
           type: integer
           format: int64
+
+    # ── ZTNA ──
+    TrustScore:
+      type: object
+      required: [device_id, score, level, evaluated_at]
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        level:
+          type: string
+          enum: [high, medium, low, critical]
+        violations:
+          type: array
+          items:
+            type: string
+        evaluated_at:
+          type: string
+          format: date-time
+
+    TrustScoreSummary:
+      type: object
+      required: [device_id, device_name, score, level, evaluated_at]
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        device_name:
+          type: string
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+        level:
+          type: string
+          enum: [high, medium, low, critical]
+        evaluated_at:
+          type: string
+          format: date-time
+
+    TrustScoreConfig:
+      type: object
+      required: [weight_disk_encryption, weight_screen_lock, weight_antivirus, weight_firewall, weight_os_version, weight_mfa, threshold_high, threshold_medium, threshold_low]
+      properties:
+        weight_disk_encryption:
+          type: integer
+          description: Weight for disk encryption (all weights must sum to 100)
+        weight_screen_lock:
+          type: integer
+        weight_antivirus:
+          type: integer
+        weight_firewall:
+          type: integer
+        weight_os_version:
+          type: integer
+        weight_mfa:
+          type: integer
+        threshold_high:
+          type: integer
+          description: Score >= this is "high" trust
+        threshold_medium:
+          type: integer
+          description: Score >= this is "medium" trust
+        threshold_low:
+          type: integer
+          description: Score >= this is "low" trust (below = "critical")
+        auto_restrict_below:
+          type: integer
+          description: Auto-restrict access for devices scoring below this
+        auto_block_below:
+          type: integer
+          description: Auto-block access for devices scoring below this
+
+    ZTNAPolicy:
+      type: object
+      required: [id, name, action, priority, is_active, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        conditions:
+          type: object
+          description: JSON conditions (e.g. trust_level, user_group, network)
+        action:
+          type: string
+          enum: [allow, restrict, deny]
+        network_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        priority:
+          type: integer
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ZTNAPolicyRequest:
+      type: object
+      required: [name, action, priority]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        conditions:
+          type: object
+        action:
+          type: string
+          enum: [allow, restrict, deny]
+        network_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        priority:
+          type: integer
+        is_active:
+          type: boolean
+          default: true
+
+    DNSRule:
+      type: object
+      required: [id, network_id, domain, dns_server, is_active, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        network_id:
+          type: string
+          format: uuid
+        domain:
+          type: string
+          description: Domain pattern (e.g. "*.corp.example.com")
+        dns_server:
+          type: string
+          description: DNS server address (e.g. "10.0.0.53:53")
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    DNSRuleRequest:
+      type: object
+      required: [network_id, domain, dns_server]
+      properties:
+        network_id:
+          type: string
+          format: uuid
+        domain:
+          type: string
+        dns_server:
+          type: string
+        is_active:
+          type: boolean
+          default: true
 
 security:
   - BearerAuth: []

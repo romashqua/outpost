@@ -21,7 +21,7 @@ export const useToastStore = create<ToastStore>((set) => ({
   addToast: (message, type = 'info') => {
     const id = String(++counter)
     set((state) => ({ toasts: [...state.toasts, { id, message, type }] }))
-    const duration = type === 'error' ? 15000 : 5000
+    const duration = type === 'error' ? 10000 : 5000
     setTimeout(() => {
       set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) }))
     }, duration)

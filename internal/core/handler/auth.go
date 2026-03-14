@@ -91,9 +91,12 @@ func (h *AuthHandler) login(w http.ResponseWriter, r *http.Request) {
 
 	// Check if user has MFA enabled.
 	var mfaEnabled bool
-	_ = h.pool.QueryRow(r.Context(),
+	if err := h.pool.QueryRow(r.Context(),
 		`SELECT mfa_enabled FROM users WHERE id = $1`, userID,
-	).Scan(&mfaEnabled)
+	).Scan(&mfaEnabled); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to check MFA status")
+		return
+	}
 
 	if mfaEnabled {
 		// Issue a short-lived MFA token instead of a full session token.
@@ -175,9 +178,12 @@ func (h *AuthHandler) verifyMFA(w http.ResponseWriter, r *http.Request) {
 
 	// Re-read full user info for the full session token.
 	var isAdmin bool
-	_ = h.pool.QueryRow(r.Context(),
+	if err := h.pool.QueryRow(r.Context(),
 		`SELECT is_admin FROM users WHERE id = $1`, claims.UserID,
-	).Scan(&isAdmin)
+	).Scan(&isAdmin); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to read user info")
+		return
+	}
 
 	expiresAt := time.Now().Add(24 * time.Hour)
 	token, err := auth.GenerateToken(h.jwtSecret, auth.TokenClaims{
@@ -212,12 +218,19 @@ func (h *AuthHandler) tryBackupCode(r *http.Request, userID, code string) bool {
 			continue
 		}
 		if auth.CheckPassword(codeHash, code) == nil {
-			// Mark code as used.
-			_, _ = h.pool.Exec(r.Context(),
-				`UPDATE mfa_backup_codes SET used = true, used_at = now() WHERE id = $1`, id,
+			// Atomically mark code as used to prevent race conditions.
+			// Only succeeds if the code hasn't been used between SELECT and UPDATE.
+			tag, err := h.pool.Exec(r.Context(),
+				`UPDATE mfa_backup_codes SET used = true WHERE id = $1 AND used = false`, id,
 			)
+			if err != nil || tag.RowsAffected() == 0 {
+				continue // Code was used by another concurrent request.
+			}
 			return true
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return false
 	}
 	return false
 }
@@ -243,7 +256,11 @@ func (h *AuthHandler) refreshToken(w http.ResponseWriter, r *http.Request) {
 	err = h.pool.QueryRow(r.Context(),
 		`SELECT is_active FROM users WHERE id = $1`, claims.UserID,
 	).Scan(&isActive)
-	if err != nil || !isActive {
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to verify account status")
+		return
+	}
+	if !isActive {
 		respondError(w, http.StatusForbidden, "account is disabled")
 		return
 	}

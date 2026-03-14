@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -134,8 +135,16 @@ func (h *NetworkHandler) create(w http.ResponseWriter, r *http.Request) {
 	if req.Port == 0 {
 		req.Port = 51820
 	}
+	if req.Port < 1 || req.Port > 65535 {
+		respondError(w, http.StatusBadRequest, "port must be between 1 and 65535")
+		return
+	}
 	if req.Keepalive == 0 {
 		req.Keepalive = 25
+	}
+	if req.Keepalive < 0 || req.Keepalive > 3600 {
+		respondError(w, http.StatusBadRequest, "keepalive must be between 0 and 3600")
+		return
 	}
 	if req.DNS == nil {
 		req.DNS = []string{}
@@ -184,7 +193,11 @@ func (h *NetworkHandler) get(w http.ResponseWriter, r *http.Request) {
 	).Scan(&n.ID, &n.Name, &n.Address, &n.DNS, &n.Port,
 		&n.Keepalive, &n.IsActive, &n.CreatedAt, &n.UpdatedAt)
 	if err != nil {
-		respondError(w, http.StatusNotFound, "network not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "network not found")
+		} else {
+			respondError(w, http.StatusInternalServerError, "failed to fetch network")
+		}
 		return
 	}
 
@@ -204,6 +217,16 @@ func (h *NetworkHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate port and keepalive if provided.
+	if req.Port != nil && (*req.Port < 1 || *req.Port > 65535) {
+		respondError(w, http.StatusBadRequest, "port must be between 1 and 65535")
+		return
+	}
+	if req.Keepalive != nil && (*req.Keepalive < 0 || *req.Keepalive > 3600) {
+		respondError(w, http.StatusBadRequest, "keepalive must be between 0 and 3600")
+		return
+	}
+
 	var n networkResponse
 	err = h.pool.QueryRow(r.Context(),
 		`UPDATE networks SET
@@ -220,7 +243,16 @@ func (h *NetworkHandler) update(w http.ResponseWriter, r *http.Request) {
 	).Scan(&n.ID, &n.Name, &n.Address, &n.DNS, &n.Port,
 		&n.Keepalive, &n.IsActive, &n.CreatedAt, &n.UpdatedAt)
 	if err != nil {
-		respondError(w, http.StatusNotFound, "network not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "network not found")
+		} else {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+				respondError(w, http.StatusConflict, "network with this name already exists")
+			} else {
+				respondError(w, http.StatusInternalServerError, "failed to update network")
+			}
+		}
 		return
 	}
 

@@ -254,7 +254,22 @@ func (h *UserHandler) update(w http.ResponseWriter, r *http.Request) {
 	).Scan(&u.ID, &u.Username, &u.Email, &u.FirstName, &u.LastName,
 		&u.Phone, &u.IsActive, &u.IsAdmin, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
-		respondError(w, http.StatusNotFound, "user not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "user not found")
+		} else {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+				msg := "user already exists"
+				if strings.Contains(pgErr.ConstraintName, "email") {
+					msg = "user with this email already exists"
+				} else if strings.Contains(pgErr.ConstraintName, "username") {
+					msg = "user with this username already exists"
+				}
+				respondError(w, http.StatusConflict, msg)
+			} else {
+				respondError(w, http.StatusInternalServerError, "failed to update user")
+			}
+		}
 		return
 	}
 

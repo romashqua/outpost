@@ -21,18 +21,18 @@ func NewHealthHandler(pool *pgxpool.Pool) *HealthHandler {
 // Routes returns a chi.Router with health check endpoints mounted.
 func (h *HealthHandler) Routes() chi.Router {
 	r := chi.NewRouter()
-	r.Get("/healthz", h.healthz)
-	r.Get("/readyz", h.readyz)
+	r.Get("/healthz", h.Healthz)
+	r.Get("/readyz", h.Readyz)
 	return r
 }
 
-// healthz is a liveness probe that always returns 200.
-func (h *HealthHandler) healthz(w http.ResponseWriter, _ *http.Request) {
+// Healthz is a liveness probe that always returns 200.
+func (h *HealthHandler) Healthz(w http.ResponseWriter, _ *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-// readyz is a readiness probe that verifies database connectivity.
-func (h *HealthHandler) readyz(w http.ResponseWriter, r *http.Request) {
+// Readyz is a readiness probe that verifies database connectivity.
+func (h *HealthHandler) Readyz(w http.ResponseWriter, r *http.Request) {
 	if h.pool == nil {
 		respondError(w, http.StatusServiceUnavailable, "database pool not configured")
 		return
