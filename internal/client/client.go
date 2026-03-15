@@ -206,13 +206,39 @@ func CollectPosture() *DevicePosture {
 	return posture
 }
 
-// ReportPosture collects device posture but currently skips reporting
-// because no server-side posture ingestion endpoint exists yet.
-// When a ZTNA posture endpoint is added, this should send data there.
-func (c *Client) ReportPosture(_ context.Context) error {
-	// No posture reporting endpoint exists on the server yet.
-	// Collect posture locally for future use but skip the HTTP call.
-	_ = CollectPosture()
+// ReportPosture collects device posture and sends it to the server for ZTNA trust scoring.
+func (c *Client) ReportPosture(ctx context.Context) error {
+	if c.deviceID == "" {
+		return fmt.Errorf("device not enrolled, cannot report posture")
+	}
+
+	posture := CollectPosture()
+
+	report := map[string]any{
+		"device_id":          c.deviceID,
+		"os_type":            posture.OSType,
+		"os_version":         posture.OSVersion,
+		"disk_encrypted":     posture.DiskEncrypted,
+		"screen_lock_enabled": posture.ScreenLockEnabled,
+		"antivirus_active":   posture.AntivirusActive,
+		"firewall_enabled":   posture.FirewallEnabled,
+	}
+
+	body, err := json.Marshal(report)
+	if err != nil {
+		return fmt.Errorf("marshal posture report: %w", err)
+	}
+
+	resp, err := c.doRequest(ctx, http.MethodPost, "/api/v1/ztna/posture", body, true)
+	if err != nil {
+		return fmt.Errorf("report posture: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+
 	return nil
 }
 

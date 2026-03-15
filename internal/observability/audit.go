@@ -35,7 +35,7 @@ func (a *AuditLogger) Log(
 	}
 
 	const query = `
-		INSERT INTO audit_log (user_id, action, resource, details, ip_address, user_agent, created_at)
+		INSERT INTO audit_log (user_id, action, resource, details, ip_address, user_agent, timestamp)
 		VALUES ($1, $2, $3, $4, $5, $6, now())
 	`
 

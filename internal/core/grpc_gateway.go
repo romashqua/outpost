@@ -80,14 +80,16 @@ func (s *gatewayService) GetConfig(ctx context.Context, req *gatewayv1.ConfigReq
 	}, nil
 }
 
-// fetchPeers returns all approved device peers.
-// Currently returns all approved devices since the data model does not
-// associate devices with specific networks (all devices are on the default network).
-func (s *gatewayService) fetchPeers(ctx context.Context, _ string) ([]*commonv1.Peer, error) {
+// fetchPeers returns approved device peers for the gateway's network.
+func (s *gatewayService) fetchPeers(ctx context.Context, gatewayID string) ([]*commonv1.Peer, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT wireguard_pubkey, host(assigned_ip) || '/32'
-		 FROM devices
-		 WHERE is_approved = true AND wireguard_pubkey != ''`,
+		`SELECT d.wireguard_pubkey, host(d.assigned_ip) || '/32'
+		 FROM devices d
+		 JOIN gateways g ON g.network_id = d.network_id
+		 WHERE g.id::text = $1
+		   AND d.is_approved = true
+		   AND d.wireguard_pubkey != ''`,
+		gatewayID,
 	)
 	if err != nil {
 		return nil, err

@@ -316,18 +316,18 @@ func (h *DeviceHandler) create(w http.ResponseWriter, r *http.Request) {
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		err = h.pool.QueryRow(r.Context(),
 			`WITH net AS (
-				SELECT address FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1
+				SELECT id, address FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1
 			),
 			candidate AS (
-				SELECT host(network(net.address) + s.off) AS ip
+				SELECT host(network(net.address) + s.off) AS ip, net.id AS net_id
 				FROM net, generate_series(2, (1 << (32 - masklen(net.address))) - 2) AS s(off)
 				WHERE NOT EXISTS (
 					SELECT 1 FROM devices WHERE assigned_ip = (network(net.address) + s.off)::inet
 				)
 				LIMIT 1
 			)
-			INSERT INTO devices (user_id, name, wireguard_pubkey, wireguard_privkey, assigned_ip)
-			SELECT $1, $2, $3, $4, candidate.ip
+			INSERT INTO devices (user_id, name, wireguard_pubkey, wireguard_privkey, assigned_ip, network_id)
+			SELECT $1, $2, $3, $4, candidate.ip::inet, candidate.net_id
 			FROM candidate
 			RETURNING id, user_id, name, wireguard_pubkey, host(assigned_ip), is_approved, last_handshake, created_at, updated_at`,
 			userID, req.Name, req.WireguardPubkey, ptrOrNil(generatedPrivKey),
@@ -655,18 +655,18 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 	for attempt := 0; attempt < maxEnrollRetries; attempt++ {
 		err = h.pool.QueryRow(r.Context(),
 			`WITH net AS (
-				SELECT address FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1
+				SELECT id, address FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1
 			),
 			candidate AS (
-				SELECT host(network(net.address) + s.off) AS ip
+				SELECT host(network(net.address) + s.off) AS ip, net.id AS net_id
 				FROM net, generate_series(2, (1 << (32 - masklen(net.address))) - 2) AS s(off)
 				WHERE NOT EXISTS (
 					SELECT 1 FROM devices WHERE assigned_ip = (network(net.address) + s.off)::inet
 				)
 				LIMIT 1
 			)
-			INSERT INTO devices (user_id, name, wireguard_pubkey, assigned_ip, is_approved)
-			SELECT $1, $2, $3, candidate.ip, true
+			INSERT INTO devices (user_id, name, wireguard_pubkey, assigned_ip, is_approved, network_id)
+			SELECT $1, $2, $3, candidate.ip::inet, true, candidate.net_id
 			FROM candidate
 			RETURNING id, host(assigned_ip)`,
 			userID, req.Name, req.WireguardPubkey,

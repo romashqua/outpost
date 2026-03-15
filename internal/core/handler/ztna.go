@@ -47,6 +47,9 @@ func (h *ZTNAHandler) Routes() chi.Router {
 	r.With(auth.RequireAdmin).Put("/policies/{id}", h.updatePolicy)
 	r.With(auth.RequireAdmin).Delete("/policies/{id}", h.deletePolicy)
 
+	// Posture ingestion (any authenticated user can report their device posture).
+	r.Post("/posture", h.reportPosture)
+
 	// DNS rules.
 	r.Get("/dns-rules", h.listDNSRules)
 	r.With(auth.RequireAdmin).Post("/dns-rules", h.createDNSRule)
@@ -689,6 +692,124 @@ func (h *ZTNAHandler) deleteDNSRule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Posture ingestion ---
+
+type postureReport struct {
+	DeviceID          string `json:"device_id"`
+	OSType            string `json:"os_type"`
+	OSVersion         string `json:"os_version"`
+	DiskEncrypted     bool   `json:"disk_encrypted"`
+	ScreenLockEnabled bool   `json:"screen_lock_enabled"`
+	AntivirusActive   bool   `json:"antivirus_active"`
+	FirewallEnabled   bool   `json:"firewall_enabled"`
+}
+
+// @Summary Report device posture
+// @Description Submit device posture data for ZTNA trust scoring. The device must belong to the authenticated user.
+// @Tags ZTNA
+// @Accept json
+// @Produce json
+// @Param body body postureReport true "Device posture data"
+// @Success 200 {object} map[string]any
+// @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /ztna/posture [post]
+func (h *ZTNAHandler) reportPosture(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.GetUserFromContext(r.Context())
+	if !ok || claims == nil {
+		respondError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	var req postureReport
+	if err := parseBody(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if req.DeviceID == "" {
+		respondError(w, http.StatusBadRequest, "device_id is required")
+		return
+	}
+	deviceID, err := uuid.Parse(req.DeviceID)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "invalid device_id")
+		return
+	}
+	if req.OSType == "" {
+		respondError(w, http.StatusBadRequest, "os_type is required")
+		return
+	}
+
+	// Verify the device belongs to the authenticated user (IDOR protection).
+	var ownerID string
+	err = h.pool.QueryRow(r.Context(),
+		`SELECT user_id::text FROM devices WHERE id = $1`, deviceID,
+	).Scan(&ownerID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "device not found")
+		} else {
+			respondError(w, http.StatusInternalServerError, "failed to verify device ownership")
+		}
+		return
+	}
+	if ownerID != claims.UserID && !claims.IsAdmin {
+		respondError(w, http.StatusForbidden, "you can only report posture for your own devices")
+		return
+	}
+
+	// Compute a posture score (0-100).
+	score := 100
+	if !req.DiskEncrypted {
+		score -= 25
+	}
+	if !req.ScreenLockEnabled {
+		score -= 15
+	}
+	if !req.AntivirusActive {
+		score -= 20
+	}
+	if !req.FirewallEnabled {
+		score -= 15
+	}
+	if score < 0 {
+		score = 0
+	}
+
+	// Upsert into device_posture table.
+	_, err = h.pool.Exec(r.Context(), `
+		INSERT INTO device_posture (id, device_id, os_type, os_version,
+			disk_encrypted, screen_lock, antivirus, firewall, score, checked_at)
+		VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, now())
+	`, deviceID, req.OSType, req.OSVersion,
+		req.DiskEncrypted, req.ScreenLockEnabled, req.AntivirusActive, req.FirewallEnabled, score)
+	if err != nil {
+		h.log.Error("failed to save posture report", "error", err, "device_id", deviceID)
+		respondError(w, http.StatusInternalServerError, "failed to save posture report")
+		return
+	}
+
+	// Recalculate trust score after posture update.
+	config := h.loadTrustConfig(r)
+	calc := ztna.NewTrustScoreCalculator(h.pool, config)
+	result, calcErr := calc.Calculate(r.Context(), deviceID)
+
+	resp := map[string]any{
+		"status":        "accepted",
+		"posture_score": score,
+	}
+	if calcErr == nil {
+		resp["trust_score"] = result.Score
+		resp["trust_level"] = result.Level
+	}
+
+	h.log.Info("posture reported", "device_id", deviceID, "score", score)
+	respondJSON(w, http.StatusOK, resp)
 }
 
 // --- Helpers ---
