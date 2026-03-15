@@ -166,15 +166,128 @@ DNS = 1.1.1.1, 8.8.8.8
 [Peer]
 PublicKey = <публичный-ключ-шлюза>
 Endpoint = vpn.example.com:51820
-AllowedIPs = 0.0.0.0/0
+AllowedIPs = 10.10.0.0/16
 PersistentKeepalive = 25
 ```
+
+> **Split tunneling:** `AllowedIPs` содержит CIDR вашей VPN-сети (например `10.10.0.0/16`), а не `0.0.0.0/0`. Это означает, что только VPN-трафик идёт через туннель, а интернет работает напрямую. Если нужно направить весь трафик через VPN, настройте ACL группы с `allowed_ips: ["0.0.0.0/0"]`.
 
 Импортируйте этот файл в любой WireGuard-клиент:
 - **Linux:** `wg-quick up ./outpost.conf`
 - **macOS/Windows:** Импорт через WireGuard GUI
 - **iOS/Android:** Сканирование QR-кода или импорт файла
-- **Outpost Client:** `outpost-client connect --config outpost.conf`
+- **Outpost Client:** `outpost-client up` (после `login` и `enroll`)
+
+## Как пользователи подключаются к сетям
+
+В Outpost пользователи привязываются к сетям **через устройства**:
+
+```
+Пользователь (1) → (N) Устройства → (1) Сеть
+```
+
+Один пользователь может иметь несколько устройств в разных сетях.
+
+**Пошаговый процесс:**
+1. Создайте **сеть** (Networks → Создать сеть, укажите CIDR и DNS)
+2. Создайте **шлюз** для сети (Gateways → Создать, привяжите к сети)
+3. Создайте **устройство** для пользователя (Devices → Добавить) — оно автоматически получит IP из активной сети
+4. **Одобрите** устройство (кнопка Approve)
+5. **Скачайте конфиг** (кнопка Download) — файл `.conf` готов к импорту в WireGuard
+
+### Подключение через CLI-клиент
+
+```bash
+# Авторизация
+outpost-client login --server https://vpn.example.com --username ivan
+
+# Регистрация устройства (автоматически получает конфиг)
+outpost-client enroll --name "my-laptop"
+
+# Поднять туннель
+outpost-client up
+
+# Опустить туннель
+outpost-client down
+```
+
+### Контроль доступа
+
+- **Группы + ACL:** Создайте группу → добавьте пользователей → настройте ACL с разрешёнными подсетями
+- **ZTNA-политики:** Автоматический контроль на основе posture checks (шифрование диска, антивирус, версия ОС)
+
+## Настройка S2S-туннелей (Site-to-Site)
+
+S2S-туннели соединяют ваши офисы/ЦОД через WireGuard. Всё делается за 4 шага.
+
+### Шаг 1: Создайте шлюзы в каждом офисе
+
+У каждого офиса должен быть свой шлюз, привязанный к своей сети:
+
+```bash
+# Офис Москва
+POST /api/v1/networks
+{"name": "moscow", "address": "10.1.0.0/24", "dns": ["1.1.1.1"], "port": 51820}
+
+POST /api/v1/gateways
+{"name": "gw-moscow", "network_id": "<moscow-network-id>", "endpoint": "moscow.vpn.company.com:51820"}
+
+# Офис СПб
+POST /api/v1/networks
+{"name": "spb", "address": "10.2.0.0/24", "dns": ["1.1.1.1"], "port": 51820}
+
+POST /api/v1/gateways
+{"name": "gw-spb", "network_id": "<spb-network-id>", "endpoint": "spb.vpn.company.com:51820"}
+```
+
+Или через UI: **Сети → Создать сеть**, затем **Шлюзы → Создать шлюз**.
+
+### Шаг 2: Создайте S2S-туннель
+
+```bash
+POST /api/v1/s2s-tunnels
+{"name": "office-mesh", "topology": "mesh", "description": "Mesh офисов"}
+```
+
+Или через UI: **S2S → Новый туннель**, выберите топологию:
+- **Mesh** — все шлюзы напрямую соединены друг с другом
+- **Hub & Spoke** — все шлюзы подключены через один центральный (hub)
+
+### Шаг 3: Добавьте шлюзы как участников
+
+```bash
+POST /api/v1/s2s-tunnels/<tunnel-id>/members
+{"gateway_id": "<gw-moscow-id>", "local_subnets": ["10.1.0.0/24"]}
+
+POST /api/v1/s2s-tunnels/<tunnel-id>/members
+{"gateway_id": "<gw-spb-id>", "local_subnets": ["10.2.0.0/24"]}
+```
+
+Или через UI: в деталях туннеля, секция **Участники** → выберите шлюз → **Создать**.
+
+### Шаг 4: Добавьте маршруты
+
+```bash
+POST /api/v1/s2s-tunnels/<tunnel-id>/routes
+{"destination": "10.2.0.0/24", "via_gateway": "<gw-spb-id>", "metric": 100}
+
+POST /api/v1/s2s-tunnels/<tunnel-id>/routes
+{"destination": "10.1.0.0/24", "via_gateway": "<gw-moscow-id>", "metric": 100}
+```
+
+Или через UI: секция **Маршруты** → укажите CIDR, выберите шлюз → **Создать**.
+
+### Готово!
+
+Скачайте WireGuard-конфиг для каждого шлюза:
+
+```bash
+GET /api/v1/s2s-tunnels/<tunnel-id>/config/<gateway-id>
+```
+
+Или через UI: нажмите иконку 📥 у участника в деталях туннеля.
+
+Конфиг содержит `[Interface]` с приватным ключом и `[Peer]` секции для каждого другого шлюза с правильными `AllowedIPs` и `Endpoint`.
 
 ## Сборка из исходников
 

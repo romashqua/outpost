@@ -843,7 +843,7 @@ func (h *SmartRouteHandler) addRouteNetwork(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
+	respondJSON(w, http.StatusCreated, map[string]string{"status": "associated"})
 }
 
 // @Summary Remove network from smart route

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/grpc"
@@ -71,12 +72,16 @@ func (s *gatewayService) GetConfig(ctx context.Context, req *gatewayv1.ConfigReq
 		s.logger.Error("failed to fetch peers for config", "error", err, "gateway_id", gwID)
 	}
 
+	// Fetch S2S tunnel configs for this gateway.
+	s2sTunnels := s.fetchS2STunnels(ctx, gwID)
+
 	return &gatewayv1.GatewayConfig{
 		GatewayId:   gwID,
 		NetworkName: gwName,
 		ListenPort:  listenPort,
 		Addresses:   addresses,
 		Peers:       peers,
+		S2STunnels:  s2sTunnels,
 	}, nil
 }
 
@@ -109,6 +114,64 @@ func (s *gatewayService) fetchPeers(ctx context.Context, gatewayID string) ([]*c
 		})
 	}
 	return peers, rows.Err()
+}
+
+// fetchS2STunnels returns S2S tunnel configs for a gateway.
+func (s *gatewayService) fetchS2STunnels(ctx context.Context, gatewayID string) []*gatewayv1.S2STunnelConfig {
+	rows, err := s.pool.Query(ctx,
+		`SELECT t.id, t.name, t.topology
+		 FROM s2s_tunnels t
+		 JOIN s2s_tunnel_members m ON m.tunnel_id = t.id
+		 WHERE m.gateway_id::text = $1 AND t.is_active = true`, gatewayID)
+	if err != nil {
+		s.logger.Warn("failed to fetch S2S tunnels", "gateway_id", gatewayID, "error", err)
+		return nil
+	}
+	defer rows.Close()
+
+	var configs []*gatewayv1.S2STunnelConfig
+	for rows.Next() {
+		var tunnelID, tunnelName, topology string
+		if err := rows.Scan(&tunnelID, &tunnelName, &topology); err != nil {
+			continue
+		}
+
+		peerRows, err := s.pool.Query(ctx,
+			`SELECT m.gateway_id, g.wireguard_pubkey, g.endpoint,
+			        ARRAY(SELECT unnest(m.local_subnets)::text)
+			 FROM s2s_tunnel_members m
+			 JOIN gateways g ON g.id = m.gateway_id
+			 WHERE m.tunnel_id = $1 AND m.gateway_id::text != $2`,
+			tunnelID, gatewayID)
+		if err != nil {
+			continue
+		}
+
+		var peers []*gatewayv1.S2SPeer
+		for peerRows.Next() {
+			var gwID, pubkey, endpoint string
+			var subnets []string
+			if err := peerRows.Scan(&gwID, &pubkey, &endpoint, &subnets); err != nil {
+				continue
+			}
+			peers = append(peers, &gatewayv1.S2SPeer{
+				GatewayId:           gwID,
+				PublicKey:           pubkey,
+				Endpoint:            endpoint,
+				AllowedIps:          subnets,
+				PersistentKeepalive: 25,
+			})
+		}
+		peerRows.Close()
+
+		configs = append(configs, &gatewayv1.S2STunnelConfig{
+			TunnelId:      tunnelID,
+			InterfaceName: "wg-s2s-" + tunnelName,
+			Peers:         peers,
+		})
+	}
+
+	return configs
 }
 
 // authenticateStream extracts the gateway token from gRPC metadata,
@@ -156,12 +219,14 @@ func (s *gatewayService) Sync(stream grpc.BidiStreamingServer[gatewayv1.GatewayE
 
 	// Send a full resync with current config so gateway is up to date.
 	peers, err := s.fetchPeers(stream.Context(), gwID)
-	if err == nil && len(peers) > 0 {
+	s2sTunnels := s.fetchS2STunnels(stream.Context(), gwID)
+	if err == nil && (len(peers) > 0 || len(s2sTunnels) > 0) {
 		_ = stream.Send(&gatewayv1.CoreEvent{
 			Event: &gatewayv1.CoreEvent_FullResync{
 				FullResync: &gatewayv1.FullResync{
 					Config: &gatewayv1.GatewayConfig{
-						Peers: peers,
+						Peers:      peers,
+						S2STunnels: s2sTunnels,
 					},
 				},
 			},
@@ -189,23 +254,53 @@ func (s *gatewayService) Sync(stream grpc.BidiStreamingServer[gatewayv1.GatewayE
 }
 
 // handlePeerStats updates last_handshake for devices based on gateway stats,
-// scoped to the gateway's network to prevent cross-network updates.
+// records peer_stats and flow_records for bandwidth analytics.
 func (s *gatewayService) handlePeerStats(ctx context.Context, gatewayID string, stats *gatewayv1.PeerStatsReport) {
 	for _, ps := range stats.GetPeers() {
-		if ps.GetLastHandshake() == nil {
-			continue
+		pubkey := ps.GetPublicKey()
+
+		// Update last_handshake if present.
+		if ps.GetLastHandshake() != nil {
+			ht := ps.GetLastHandshake().AsTime()
+			if !ht.IsZero() {
+				_, _ = s.pool.Exec(ctx,
+					`UPDATE devices SET last_handshake = $1 WHERE wireguard_pubkey = $2`,
+					ht, pubkey,
+				)
+			}
 		}
-		ht := ps.GetLastHandshake().AsTime()
-		if ht.IsZero() {
-			continue
+
+		// Record peer stats (for bandwidth chart).
+		var endpoint string
+		if ps.GetEndpoint() != "" {
+			endpoint = ps.GetEndpoint()
+		}
+		var lastHS *time.Time
+		if ps.GetLastHandshake() != nil {
+			t := ps.GetLastHandshake().AsTime()
+			if !t.IsZero() {
+				lastHS = &t
+			}
 		}
 		_, err := s.pool.Exec(ctx,
-			`UPDATE devices SET last_handshake = $1
-			 WHERE wireguard_pubkey = $2`,
-			ht, ps.GetPublicKey(),
+			`INSERT INTO peer_stats (gateway_id, device_id, rx_bytes, tx_bytes, last_handshake, endpoint)
+			 SELECT $1::uuid, d.id, $3, $4, $5, $6
+			 FROM devices d WHERE d.wireguard_pubkey = $2`,
+			gatewayID, pubkey, ps.GetRxBytes(), ps.GetTxBytes(), lastHS, endpoint,
 		)
 		if err != nil {
-			s.logger.Warn("failed to update last_handshake", "pubkey", ps.GetPublicKey(), "error", err)
+			s.logger.Warn("failed to insert peer_stats", "pubkey", pubkey, "error", err)
+		}
+
+		// Record flow record (for analytics/bandwidth chart on dashboard).
+		_, err = s.pool.Exec(ctx,
+			`INSERT INTO flow_records (gateway_id, device_id, user_id, src_ip, dst_ip, protocol, dst_port, bytes_sent, bytes_recv)
+			 SELECT $1::uuid, d.id, d.user_id, COALESCE(d.assigned_ip, '0.0.0.0'::inet), '0.0.0.0'::inet, 'wg', 0, $3, $4
+			 FROM devices d WHERE d.wireguard_pubkey = $2`,
+			gatewayID, pubkey, ps.GetTxBytes(), ps.GetRxBytes(),
+		)
+		if err != nil {
+			s.logger.Warn("failed to insert flow_record", "pubkey", pubkey, "error", err)
 		}
 	}
 }

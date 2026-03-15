@@ -306,6 +306,7 @@ func (s *Server) setupHTTPRouter() chi.Router {
 			IDPMetadataURL: s.cfg.SAML.IDPMetadataURL,
 			CertFile:       s.cfg.SAML.CertFile,
 			KeyFile:        s.cfg.SAML.KeyFile,
+			JWTSecret:      s.cfg.Auth.JWTSecret,
 		}, s.pool, s.logger)
 		r.Mount("/saml", samlSP.Routes())
 	}
@@ -359,7 +360,8 @@ func (s *Server) setupHTTPRouter() chi.Router {
 			r.Mount("/webhooks", webhook.NewDispatcher(s.pool, s.logger).Routes())
 
 			// S2S tunnel management.
-			r.Mount("/s2s-tunnels", handler.NewS2SHandler(s.pool, s.logger).Routes())
+			s2sNotifier := &hubS2SNotifier{hub: s.streamHub, pool: s.pool}
+			r.Mount("/s2s-tunnels", handler.NewS2SHandler(s.pool, s2sNotifier, s.logger).Routes())
 
 			// Settings management.
 			r.Mount("/settings", handler.NewSettingsHandler(s.pool, s.mailer).Routes())

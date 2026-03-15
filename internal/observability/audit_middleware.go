@@ -3,6 +3,7 @@ package observability
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 
@@ -49,6 +50,9 @@ func AuditMiddleware(logger *AuditLogger) func(http.Handler) http.Handler {
 			path := r.URL.Path
 			query := r.URL.RawQuery
 			ipAddress := r.RemoteAddr
+			if host, _, err := net.SplitHostPort(ipAddress); err == nil {
+				ipAddress = host
+			}
 			userAgent := r.UserAgent()
 			statusCode := sw.status
 

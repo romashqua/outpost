@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,17 +18,23 @@ import (
 	"github.com/romashqua/outpost/internal/auth"
 )
 
-type S2SHandler struct {
-	pool *pgxpool.Pool
-	log  *slog.Logger
+// S2SNotifier pushes S2S config updates to connected gateways.
+type S2SNotifier interface {
+	NotifyS2SUpdate(gatewayID string, tunnelID string, action string)
 }
 
-func NewS2SHandler(pool *pgxpool.Pool, logger ...*slog.Logger) *S2SHandler {
+type S2SHandler struct {
+	pool     *pgxpool.Pool
+	log      *slog.Logger
+	notifier S2SNotifier
+}
+
+func NewS2SHandler(pool *pgxpool.Pool, notifier S2SNotifier, logger ...*slog.Logger) *S2SHandler {
 	l := slog.Default()
 	if len(logger) > 0 && logger[0] != nil {
 		l = logger[0]
 	}
-	return &S2SHandler{pool: pool, log: l.With("handler", "s2s")}
+	return &S2SHandler{pool: pool, log: l.With("handler", "s2s"), notifier: notifier}
 }
 
 func (h *S2SHandler) Routes() chi.Router {
@@ -44,6 +51,9 @@ func (h *S2SHandler) Routes() chi.Router {
 		r.With(auth.RequireAdmin).Post("/routes", h.addRoute)
 		r.With(auth.RequireAdmin).Delete("/routes/{routeId}", h.removeRoute)
 		r.Get("/config/{gatewayId}", h.generateConfig)
+		r.Get("/domains", h.listDomains)
+		r.With(auth.RequireAdmin).Post("/domains", h.addDomain)
+		r.With(auth.RequireAdmin).Delete("/domains/{domainId}", h.removeDomain)
 	})
 	return r
 }
@@ -333,7 +343,10 @@ func (h *S2SHandler) addMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.log.Info("s2s member added", "tunnel_id", tunnelID, "gateway_id", gatewayID)
-	w.WriteHeader(http.StatusCreated)
+	if h.notifier != nil {
+		h.notifier.NotifyS2SUpdate(req.GatewayID, tunnelID.String(), "add")
+	}
+	respondJSON(w, http.StatusCreated, map[string]string{"status": "added", "tunnel_id": tunnelID.String(), "gateway_id": gatewayID.String()})
 }
 
 // @Summary Remove S2S tunnel member
@@ -370,6 +383,10 @@ func (h *S2SHandler) removeMember(w http.ResponseWriter, r *http.Request) {
 	if tag.RowsAffected() == 0 {
 		respondError(w, http.StatusNotFound, "member not found")
 		return
+	}
+
+	if h.notifier != nil {
+		h.notifier.NotifyS2SUpdate(gatewayID.String(), tunnelID.String(), "remove")
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -504,6 +521,9 @@ func (h *S2SHandler) addRoute(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.log.Info("s2s route added", "tunnel_id", tunnelID, "destination", req.Destination, "via", viaGW)
+	if h.notifier != nil {
+		h.notifyTunnelMembers(r.Context(), tunnelID.String(), "route_add")
+	}
 	respondJSON(w, http.StatusCreated, rt)
 }
 
@@ -543,7 +563,31 @@ func (h *S2SHandler) removeRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.notifier != nil {
+		h.notifyTunnelMembers(r.Context(), tunnelID.String(), "route_remove")
+	}
+
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// notifyTunnelMembers sends an S2S update notification to all gateways
+// that are members of the given tunnel.
+func (h *S2SHandler) notifyTunnelMembers(ctx context.Context, tunnelID string, action string) {
+	rows, err := h.pool.Query(ctx,
+		`SELECT gateway_id::text FROM s2s_tunnel_members WHERE tunnel_id = $1`, tunnelID)
+	if err != nil {
+		h.log.Warn("failed to query tunnel members for notification", "tunnel_id", tunnelID, "error", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var gwID string
+		if err := rows.Scan(&gwID); err != nil {
+			continue
+		}
+		h.notifier.NotifyS2SUpdate(gwID, tunnelID, action)
+	}
 }
 
 // --- Config Generation ---
@@ -711,4 +755,151 @@ func (h *S2SHandler) generateConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(b.String()))
+}
+
+// --- Allowed Domains ---
+
+type s2sAllowedDomain struct {
+	ID        string `json:"id"`
+	TunnelID  string `json:"tunnel_id"`
+	Domain    string `json:"domain"`
+	CreatedAt string `json:"created_at"`
+}
+
+// @Summary List S2S tunnel allowed domains
+// @Description Returns all allowed domains for a tunnel.
+// @Tags S2S Tunnels
+// @Produce json
+// @Param id path string true "Tunnel ID (UUID)"
+// @Success 200 {array} s2sAllowedDomain
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /s2s-tunnels/{id}/domains [get]
+func (h *S2SHandler) listDomains(w http.ResponseWriter, r *http.Request) {
+	tunnelID, err := parseUUID(r, "id")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	rows, err := h.pool.Query(r.Context(),
+		`SELECT id, tunnel_id, domain, created_at FROM s2s_allowed_domains WHERE tunnel_id = $1 ORDER BY created_at`, tunnelID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to list domains")
+		return
+	}
+	defer rows.Close()
+
+	domains := make([]s2sAllowedDomain, 0)
+	for rows.Next() {
+		var d s2sAllowedDomain
+		if err := rows.Scan(&d.ID, &d.TunnelID, &d.Domain, &d.CreatedAt); err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to scan domain")
+			return
+		}
+		domains = append(domains, d)
+	}
+	if err := rows.Err(); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to iterate domains")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, domains)
+}
+
+// @Summary Add S2S tunnel allowed domain
+// @Description Add an allowed domain to a tunnel. Requires admin privileges.
+// @Tags S2S Tunnels
+// @Accept json
+// @Produce json
+// @Param id path string true "Tunnel ID (UUID)"
+// @Param body body object true "Domain data"
+// @Success 201 {object} s2sAllowedDomain
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /s2s-tunnels/{id}/domains [post]
+func (h *S2SHandler) addDomain(w http.ResponseWriter, r *http.Request) {
+	tunnelID, err := parseUUID(r, "id")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var req struct {
+		Domain string `json:"domain"`
+	}
+	if err := parseBody(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.Domain == "" {
+		respondError(w, http.StatusBadRequest, "domain is required")
+		return
+	}
+
+	var d s2sAllowedDomain
+	err = h.pool.QueryRow(r.Context(),
+		`INSERT INTO s2s_allowed_domains (tunnel_id, domain) VALUES ($1, $2)
+		 RETURNING id, tunnel_id, domain, created_at`,
+		tunnelID, req.Domain,
+	).Scan(&d.ID, &d.TunnelID, &d.Domain, &d.CreatedAt)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			respondError(w, http.StatusConflict, "domain already exists for this tunnel")
+			return
+		}
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			respondError(w, http.StatusNotFound, "tunnel not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "failed to add domain")
+		return
+	}
+
+	h.log.Info("s2s domain added", "tunnel_id", tunnelID, "domain", req.Domain)
+	respondJSON(w, http.StatusCreated, d)
+}
+
+// @Summary Remove S2S tunnel allowed domain
+// @Description Remove an allowed domain from a tunnel. Requires admin privileges.
+// @Tags S2S Tunnels
+// @Produce json
+// @Param id path string true "Tunnel ID (UUID)"
+// @Param domainId path string true "Domain ID (UUID)"
+// @Success 204 "No Content"
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /s2s-tunnels/{id}/domains/{domainId} [delete]
+func (h *S2SHandler) removeDomain(w http.ResponseWriter, r *http.Request) {
+	tunnelID, err := parseUUID(r, "id")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	domainID, err := parseUUID(r, "domainId")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	tag, err := h.pool.Exec(r.Context(),
+		`DELETE FROM s2s_allowed_domains WHERE id = $1 AND tunnel_id = $2`,
+		domainID, tunnelID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to delete domain")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		respondError(w, http.StatusNotFound, "domain not found")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

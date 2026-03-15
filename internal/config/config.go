@@ -122,12 +122,20 @@ type Gateway struct {
 	Token         string
 	CoreAddr      string
 	InterfaceName string // WireGuard interface name (default: wg0)
+
+	// TLS settings for gRPC connection to core.
+	TLSEnabled            bool
+	TLSCertFile           string // Client certificate for mTLS (optional).
+	TLSKeyFile            string // Client key for mTLS (optional).
+	TLSCAFile             string // Custom CA certificate to verify server (optional).
+	TLSInsecureSkipVerify bool   // Skip server certificate verification (testing only).
 }
 
 // Proxy holds configuration for the proxy component.
 type Proxy struct {
 	ListenAddr string
-	CoreAddr   string
+	CoreAddr   string // gRPC address of outpost-core
+	CoreURL    string // HTTP base URL of outpost-core (e.g. http://core:8080)
 }
 
 // Log holds logging configuration.
@@ -196,12 +204,19 @@ func Load() *Config {
 			KeyFile:        env("OUTPOST_SAML_KEY_FILE", ""),
 		},
 		Gateway: Gateway{
-			Token:    env("OUTPOST_GATEWAY_TOKEN", ""),
-			CoreAddr: env("OUTPOST_GATEWAY_CORE_ADDR", "localhost:9090"),
+			Token:                 env("OUTPOST_GATEWAY_TOKEN", ""),
+			CoreAddr:              env("OUTPOST_GATEWAY_CORE_ADDR", "localhost:9090"),
+			InterfaceName:         env("OUTPOST_GATEWAY_INTERFACE", ""),
+			TLSEnabled:            env("OUTPOST_GATEWAY_TLS_ENABLED", "false") == "true",
+			TLSCertFile:           env("OUTPOST_GATEWAY_TLS_CERT", ""),
+			TLSKeyFile:            env("OUTPOST_GATEWAY_TLS_KEY", ""),
+			TLSCAFile:             env("OUTPOST_GATEWAY_TLS_CA", ""),
+			TLSInsecureSkipVerify: env("OUTPOST_GATEWAY_TLS_SKIP_VERIFY", "false") == "true",
 		},
 		Proxy: Proxy{
 			ListenAddr: env("OUTPOST_PROXY_LISTEN_ADDR", ":8081"),
 			CoreAddr:   env("OUTPOST_PROXY_CORE_ADDR", "localhost:9090"),
+			CoreURL:    env("OUTPOST_PROXY_CORE_URL", "http://localhost:8080"),
 		},
 		Log: Log{
 			Level:  env("OUTPOST_LOG_LEVEL", "info"),

@@ -679,16 +679,108 @@ func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// --- Group Endpoints (stubs) ---
+// --- Group Endpoints ---
+
+// dbGroupToSCIM converts database group fields into a SCIM Group resource.
+func dbGroupToSCIM(id uuid.UUID, name string, createdAt time.Time, members []SCIMMember) SCIMGroup {
+	return SCIMGroup{
+		Schemas: []string{schemaGroup},
+		ID:      id.String(),
+		Name:    name,
+		Members: members,
+		Meta: SCIMMeta{
+			ResourceType: "Group",
+			Created:      createdAt.UTC().Format(time.RFC3339),
+			LastModified: createdAt.UTC().Format(time.RFC3339),
+		},
+	}
+}
+
+// loadGroupMembers fetches all members of a group from the user_groups junction table.
+func (h *Handler) loadGroupMembers(ctx context.Context, groupID uuid.UUID) ([]SCIMMember, error) {
+	rows, err := h.pool.Query(ctx,
+		`SELECT u.id, u.username
+		 FROM user_groups ug
+		 JOIN users u ON u.id = ug.user_id
+		 WHERE ug.group_id = $1
+		 ORDER BY u.username`, groupID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	members := make([]SCIMMember, 0)
+	for rows.Next() {
+		var (
+			uid      uuid.UUID
+			username string
+		)
+		if err := rows.Scan(&uid, &username); err != nil {
+			return nil, err
+		}
+		members = append(members, SCIMMember{
+			Value:   uid.String(),
+			Display: username,
+		})
+	}
+	return members, rows.Err()
+}
 
 func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
-	_ = r
+	startIndex, count := parseSCIMPagination(r)
+	offset := startIndex - 1
+
+	var total int
+	if err := h.pool.QueryRow(r.Context(), `SELECT count(*) FROM groups`).Scan(&total); err != nil {
+		h.logger.Error("scim: counting groups", "error", err)
+		respondSCIMError(w, http.StatusInternalServerError, "failed to count groups")
+		return
+	}
+
+	rows, err := h.pool.Query(r.Context(),
+		`SELECT id, name, created_at
+		 FROM groups
+		 ORDER BY created_at
+		 LIMIT $1 OFFSET $2`, count, offset)
+	if err != nil {
+		h.logger.Error("scim: listing groups", "error", err)
+		respondSCIMError(w, http.StatusInternalServerError, "failed to list groups")
+		return
+	}
+	defer rows.Close()
+
+	groups := make([]SCIMGroup, 0)
+	for rows.Next() {
+		var (
+			id        uuid.UUID
+			name      string
+			createdAt time.Time
+		)
+		if err := rows.Scan(&id, &name, &createdAt); err != nil {
+			h.logger.Error("scim: scanning group", "error", err)
+			respondSCIMError(w, http.StatusInternalServerError, "failed to read group")
+			return
+		}
+		members, err := h.loadGroupMembers(r.Context(), id)
+		if err != nil {
+			h.logger.Error("scim: loading group members", "error", err, "group_id", id)
+			respondSCIMError(w, http.StatusInternalServerError, "failed to load group members")
+			return
+		}
+		groups = append(groups, dbGroupToSCIM(id, name, createdAt, members))
+	}
+	if err := rows.Err(); err != nil {
+		h.logger.Error("scim: iterating groups", "error", err)
+		respondSCIMError(w, http.StatusInternalServerError, "failed to iterate groups")
+		return
+	}
+
 	respondSCIM(w, http.StatusOK, SCIMListResponse{
 		Schemas:      []string{schemaListResponse},
-		TotalResults: 0,
-		StartIndex:   1,
-		ItemsPerPage: 0,
-		Resources:    []SCIMGroup{},
+		TotalResults: total,
+		StartIndex:   startIndex,
+		ItemsPerPage: len(groups),
+		Resources:    groups,
 	})
 }
 
@@ -707,40 +799,384 @@ func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Insert group into groups table when the schema is available.
-	id := uuid.New()
-	now := time.Now().UTC()
-	respondSCIM(w, http.StatusCreated, SCIMGroup{
-		Schemas: []string{schemaGroup},
-		ID:      id.String(),
-		Name:    body.DisplayName,
-		Members: body.Members,
-		Meta: SCIMMeta{
-			ResourceType: "Group",
-			Created:      now.Format(time.RFC3339),
-			LastModified: now.Format(time.RFC3339),
-		},
-	})
+	var (
+		id        uuid.UUID
+		createdAt time.Time
+	)
+	err := h.pool.QueryRow(r.Context(),
+		`INSERT INTO groups (name) VALUES ($1)
+		 RETURNING id, created_at`, body.DisplayName,
+	).Scan(&id, &createdAt)
+	if err != nil {
+		h.logger.Error("scim: creating group", "error", err, "name", body.DisplayName)
+		respondSCIMError(w, http.StatusConflict, "group already exists or invalid data")
+		return
+	}
+
+	// Add members if provided.
+	for _, m := range body.Members {
+		memberID, err := uuid.Parse(m.Value)
+		if err != nil {
+			h.logger.Warn("scim: invalid member ID in create group", "value", m.Value)
+			continue
+		}
+		_, err = h.pool.Exec(r.Context(),
+			`INSERT INTO user_groups (user_id, group_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+			memberID, id)
+		if err != nil {
+			h.logger.Error("scim: adding member to group", "error", err, "user_id", memberID, "group_id", id)
+		}
+	}
+
+	// Reload members to get display names.
+	members, err := h.loadGroupMembers(r.Context(), id)
+	if err != nil {
+		h.logger.Error("scim: loading members after create", "error", err, "group_id", id)
+		members = []SCIMMember{}
+	}
+
+	h.logger.Info("scim: group created", "id", id, "name", body.DisplayName)
+	respondSCIM(w, http.StatusCreated, dbGroupToSCIM(id, body.DisplayName, createdAt, members))
 }
 
 func (h *Handler) getGroup(w http.ResponseWriter, r *http.Request) {
-	_ = r
-	respondSCIMError(w, http.StatusNotFound, "group not found")
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respondSCIMError(w, http.StatusBadRequest, "invalid group ID")
+		return
+	}
+
+	var (
+		name      string
+		createdAt time.Time
+	)
+	err = h.pool.QueryRow(r.Context(),
+		`SELECT name, created_at FROM groups WHERE id = $1`, id,
+	).Scan(&name, &createdAt)
+	if err != nil {
+		respondSCIMError(w, http.StatusNotFound, "group not found")
+		return
+	}
+
+	members, err := h.loadGroupMembers(r.Context(), id)
+	if err != nil {
+		h.logger.Error("scim: loading group members", "error", err, "group_id", id)
+		respondSCIMError(w, http.StatusInternalServerError, "failed to load group members")
+		return
+	}
+
+	respondSCIM(w, http.StatusOK, dbGroupToSCIM(id, name, createdAt, members))
 }
 
 func (h *Handler) replaceGroup(w http.ResponseWriter, r *http.Request) {
-	_ = r
-	respondSCIMError(w, http.StatusNotFound, "group not found")
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respondSCIMError(w, http.StatusBadRequest, "invalid group ID")
+		return
+	}
+
+	var body struct {
+		Schemas     []string     `json:"schemas"`
+		DisplayName string       `json:"displayName"`
+		Members     []SCIMMember `json:"members,omitempty"`
+	}
+	if err := parseSCIMBody(r, &body); err != nil {
+		respondSCIMError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if body.DisplayName == "" {
+		respondSCIMError(w, http.StatusBadRequest, "displayName is required")
+		return
+	}
+
+	var createdAt time.Time
+	err = h.pool.QueryRow(r.Context(),
+		`UPDATE groups SET name = $2 WHERE id = $1 RETURNING created_at`,
+		id, body.DisplayName,
+	).Scan(&createdAt)
+	if err != nil {
+		respondSCIMError(w, http.StatusNotFound, "group not found")
+		return
+	}
+
+	// Replace all members: delete existing, then insert new ones.
+	_, err = h.pool.Exec(r.Context(),
+		`DELETE FROM user_groups WHERE group_id = $1`, id)
+	if err != nil {
+		h.logger.Error("scim: clearing group members", "error", err, "group_id", id)
+		respondSCIMError(w, http.StatusInternalServerError, "failed to update group members")
+		return
+	}
+
+	for _, m := range body.Members {
+		memberID, err := uuid.Parse(m.Value)
+		if err != nil {
+			h.logger.Warn("scim: invalid member ID in replace group", "value", m.Value)
+			continue
+		}
+		_, err = h.pool.Exec(r.Context(),
+			`INSERT INTO user_groups (user_id, group_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+			memberID, id)
+		if err != nil {
+			h.logger.Error("scim: adding member to group", "error", err, "user_id", memberID, "group_id", id)
+		}
+	}
+
+	// Reload members to get display names.
+	members, err := h.loadGroupMembers(r.Context(), id)
+	if err != nil {
+		h.logger.Error("scim: loading members after replace", "error", err, "group_id", id)
+		members = []SCIMMember{}
+	}
+
+	h.logger.Info("scim: group replaced", "id", id, "name", body.DisplayName)
+	respondSCIM(w, http.StatusOK, dbGroupToSCIM(id, body.DisplayName, createdAt, members))
 }
 
 func (h *Handler) patchGroup(w http.ResponseWriter, r *http.Request) {
-	_ = r
-	respondSCIMError(w, http.StatusNotFound, "group not found")
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respondSCIMError(w, http.StatusBadRequest, "invalid group ID")
+		return
+	}
+
+	// Verify group exists.
+	var exists bool
+	err = h.pool.QueryRow(r.Context(),
+		`SELECT EXISTS(SELECT 1 FROM groups WHERE id = $1)`, id,
+	).Scan(&exists)
+	if err != nil || !exists {
+		respondSCIMError(w, http.StatusNotFound, "group not found")
+		return
+	}
+
+	var patch SCIMPatchOp
+	if err := parseSCIMBody(r, &patch); err != nil {
+		respondSCIMError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	for _, op := range patch.Operations {
+		switch op.Op {
+		case "replace", "Replace":
+			if err := h.applyGroupPatch(r.Context(), id, op); err != nil {
+				h.logger.Error("scim: group patch replace failed", "error", err, "id", id, "path", op.Path)
+				respondSCIMError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+		case "add", "Add":
+			if err := h.applyGroupAdd(r.Context(), id, op); err != nil {
+				h.logger.Error("scim: group patch add failed", "error", err, "id", id, "path", op.Path)
+				respondSCIMError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+		case "remove", "Remove":
+			if err := h.applyGroupRemove(r.Context(), id, op); err != nil {
+				h.logger.Error("scim: group patch remove failed", "error", err, "id", id, "path", op.Path)
+				respondSCIMError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+		default:
+			respondSCIMError(w, http.StatusBadRequest, fmt.Sprintf("unsupported operation: %s", op.Op))
+			return
+		}
+	}
+
+	h.logger.Info("scim: group patched", "id", id)
+
+	// Return the updated group.
+	h.getGroup(w, r)
+}
+
+// applyGroupPatch handles replace operations on a group.
+func (h *Handler) applyGroupPatch(ctx context.Context, id uuid.UUID, op PatchOperation) error {
+	switch op.Path {
+	case "displayName":
+		val, ok := op.Value.(string)
+		if !ok {
+			return fmt.Errorf("invalid value for displayName: expected string")
+		}
+		_, err := h.pool.Exec(ctx,
+			`UPDATE groups SET name = $2 WHERE id = $1`, id, val)
+		return err
+
+	case "members":
+		// Replace replaces all members.
+		members, err := patchValueToMembers(op.Value)
+		if err != nil {
+			return err
+		}
+		_, err = h.pool.Exec(ctx, `DELETE FROM user_groups WHERE group_id = $1`, id)
+		if err != nil {
+			return fmt.Errorf("failed to clear members: %w", err)
+		}
+		for _, m := range members {
+			memberID, err := uuid.Parse(m.Value)
+			if err != nil {
+				continue
+			}
+			_, err = h.pool.Exec(ctx,
+				`INSERT INTO user_groups (user_id, group_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+				memberID, id)
+			if err != nil {
+				return fmt.Errorf("failed to add member %s: %w", m.Value, err)
+			}
+		}
+		return nil
+
+	case "":
+		// No path — the value is a map of attributes to set.
+		valueMap, ok := op.Value.(map[string]any)
+		if !ok {
+			return fmt.Errorf("expected object value when path is empty")
+		}
+		for key, val := range valueMap {
+			subOp := PatchOperation{Op: op.Op, Path: key, Value: val}
+			if err := h.applyGroupPatch(ctx, id, subOp); err != nil {
+				return err
+			}
+		}
+		return nil
+
+	default:
+		return fmt.Errorf("unsupported patch path: %s", op.Path)
+	}
+}
+
+// applyGroupAdd handles add operations on a group (add members).
+func (h *Handler) applyGroupAdd(ctx context.Context, id uuid.UUID, op PatchOperation) error {
+	switch op.Path {
+	case "members":
+		members, err := patchValueToMembers(op.Value)
+		if err != nil {
+			return err
+		}
+		for _, m := range members {
+			memberID, err := uuid.Parse(m.Value)
+			if err != nil {
+				continue
+			}
+			_, err = h.pool.Exec(ctx,
+				`INSERT INTO user_groups (user_id, group_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+				memberID, id)
+			if err != nil {
+				return fmt.Errorf("failed to add member %s: %w", m.Value, err)
+			}
+		}
+		return nil
+
+	case "displayName":
+		return h.applyGroupPatch(ctx, id, op)
+
+	case "":
+		valueMap, ok := op.Value.(map[string]any)
+		if !ok {
+			return fmt.Errorf("expected object value when path is empty")
+		}
+		for key, val := range valueMap {
+			subOp := PatchOperation{Op: op.Op, Path: key, Value: val}
+			if err := h.applyGroupAdd(ctx, id, subOp); err != nil {
+				return err
+			}
+		}
+		return nil
+
+	default:
+		return fmt.Errorf("unsupported patch path: %s", op.Path)
+	}
+}
+
+// applyGroupRemove handles remove operations on a group (remove members).
+func (h *Handler) applyGroupRemove(ctx context.Context, id uuid.UUID, op PatchOperation) error {
+	// Handle "members[value eq \"<uuid>\"]" filter syntax used by Azure AD / Okta.
+	if memberID, ok := parseMemberFilter(op.Path); ok {
+		uid, err := uuid.Parse(memberID)
+		if err != nil {
+			return fmt.Errorf("invalid member ID in filter: %s", memberID)
+		}
+		_, err = h.pool.Exec(ctx,
+			`DELETE FROM user_groups WHERE user_id = $1 AND group_id = $2`, uid, id)
+		return err
+	}
+
+	switch op.Path {
+	case "members":
+		// If value is provided, remove specific members; otherwise remove all.
+		if op.Value == nil {
+			_, err := h.pool.Exec(ctx, `DELETE FROM user_groups WHERE group_id = $1`, id)
+			return err
+		}
+		members, err := patchValueToMembers(op.Value)
+		if err != nil {
+			return err
+		}
+		for _, m := range members {
+			memberID, err := uuid.Parse(m.Value)
+			if err != nil {
+				continue
+			}
+			_, err = h.pool.Exec(ctx,
+				`DELETE FROM user_groups WHERE user_id = $1 AND group_id = $2`,
+				memberID, id)
+			if err != nil {
+				return fmt.Errorf("failed to remove member %s: %w", m.Value, err)
+			}
+		}
+		return nil
+
+	default:
+		return fmt.Errorf("unsupported remove path: %s", op.Path)
+	}
+}
+
+// parseMemberFilter parses SCIM filter path like: members[value eq "uuid"]
+// and returns the UUID string and true, or empty string and false if not a match.
+func parseMemberFilter(path string) (string, bool) {
+	// Expected format: members[value eq "some-uuid"]
+	const prefix = `members[value eq "`
+	const suffix = `"]`
+	if len(path) > len(prefix)+len(suffix) &&
+		path[:len(prefix)] == prefix &&
+		path[len(path)-len(suffix):] == suffix {
+		return path[len(prefix) : len(path)-len(suffix)], true
+	}
+	return "", false
+}
+
+// patchValueToMembers converts a PATCH value to a slice of SCIMMember.
+func patchValueToMembers(value any) ([]SCIMMember, error) {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, fmt.Errorf("invalid members value: %w", err)
+	}
+	var members []SCIMMember
+	if err := json.Unmarshal(raw, &members); err != nil {
+		return nil, fmt.Errorf("invalid members format: %w", err)
+	}
+	return members, nil
 }
 
 func (h *Handler) deleteGroup(w http.ResponseWriter, r *http.Request) {
-	_ = r
-	respondSCIMError(w, http.StatusNotFound, "group not found")
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respondSCIMError(w, http.StatusBadRequest, "invalid group ID")
+		return
+	}
+
+	tag, err := h.pool.Exec(r.Context(),
+		`DELETE FROM groups WHERE id = $1`, id)
+	if err != nil {
+		h.logger.Error("scim: deleting group", "error", err, "id", id)
+		respondSCIMError(w, http.StatusInternalServerError, "failed to delete group")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		respondSCIMError(w, http.StatusNotFound, "group not found")
+		return
+	}
+
+	h.logger.Info("scim: group deleted", "id", id)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- Discovery Endpoints ---

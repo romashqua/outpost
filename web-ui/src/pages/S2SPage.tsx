@@ -68,8 +68,6 @@ function TunnelDetailPanel({
   const [routeForm, setRouteForm] = useState({ destination: '', via_gateway: '', metric: '100' })
   const [showAddDomain, setShowAddDomain] = useState(false)
   const [domainName, setDomainName] = useState('')
-  const [domains, setDomains] = useState<AllowedDomain[]>([])
-  const [domainsApiUnavailable, setDomainsApiUnavailable] = useState(true)
 
   // Fetch members
   const { data: members = [], isLoading: membersLoading } = useQuery<TunnelMember[]>({
@@ -146,69 +144,43 @@ function TunnelDetailPanel({
     },
   })
 
+  // Fetch domains
+  const { data: domains = [], isLoading: domainsLoading } = useQuery<AllowedDomain[]>({
+    queryKey: ['s2s-tunnels', tunnel.id, 'domains'],
+    queryFn: () => api.get(`/s2s-tunnels/${tunnel.id}/domains`),
+  })
+
+  // Add domain mutation
+  const addDomainMutation = useMutation({
+    mutationFn: (domain: string) =>
+      api.post(`/s2s-tunnels/${tunnel.id}/domains`, { domain }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['s2s-tunnels', tunnel.id, 'domains'] })
+      setShowAddDomain(false)
+      setDomainName('')
+      addToast(t('s2s.addDomain'), 'success')
+    },
+    onError: (err) => {
+      addToast((err as Error).message, 'error')
+    },
+  })
+
+  // Remove domain mutation
+  const removeDomainMutation = useMutation({
+    mutationFn: (domainId: string) =>
+      api.delete(`/s2s-tunnels/${tunnel.id}/domains/${domainId}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['s2s-tunnels', tunnel.id, 'domains'] })
+      addToast(t('s2s.removeDomain'), 'success')
+    },
+    onError: (err) => {
+      addToast((err as Error).message, 'error')
+    },
+  })
+
   // Filter out gateways already in the tunnel
   const memberGatewayIds = new Set(members.map((m) => m.gateway_id))
   const availableGateways = gateways.filter((g) => !memberGatewayIds.has(g.id))
-
-  const handleAddDomain = () => {
-    if (!domainName.trim()) return
-    if (domainsApiUnavailable) {
-      // Local-only mode
-      setDomains((prev) => [
-        ...prev,
-        { id: crypto.randomUUID(), domain: domainName.trim() },
-      ])
-      setDomainName('')
-      setShowAddDomain(false)
-      return
-    }
-    // Try the API; fall back to local state on 404
-    api
-      .post<AllowedDomain>(`/s2s-tunnels/${tunnel.id}/domains`, {
-        domain: domainName.trim(),
-      })
-      .then((newDomain) => {
-        setDomains((prev) => [...prev, newDomain])
-        setDomainName('')
-        setShowAddDomain(false)
-        addToast(t('s2s.addDomain'), 'success')
-      })
-      .catch((err) => {
-        if ((err as Error).message?.includes('404') || (err as Error).message?.includes('Not Found')) {
-          setDomainsApiUnavailable(true)
-          // Still add locally
-          setDomains((prev) => [
-            ...prev,
-            { id: crypto.randomUUID(), domain: domainName.trim() },
-          ])
-          setDomainName('')
-          setShowAddDomain(false)
-        } else {
-          addToast((err as Error).message, 'error')
-        }
-      })
-  }
-
-  const handleRemoveDomain = (domainId: string) => {
-    if (domainsApiUnavailable) {
-      setDomains((prev) => prev.filter((d) => d.id !== domainId))
-      return
-    }
-    api
-      .delete(`/s2s-tunnels/${tunnel.id}/domains/${domainId}`)
-      .then(() => {
-        setDomains((prev) => prev.filter((d) => d.id !== domainId))
-        addToast(t('s2s.removeDomain'), 'success')
-      })
-      .catch((err) => {
-        if ((err as Error).message?.includes('404') || (err as Error).message?.includes('Not Found')) {
-          setDomainsApiUnavailable(true)
-          setDomains((prev) => prev.filter((d) => d.id !== domainId))
-        } else {
-          addToast((err as Error).message, 'error')
-        }
-      })
-  }
 
   const sectionHeader = 'text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-2 flex items-center gap-2'
   const listItem = 'flex items-center justify-between px-3 py-2 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)]'
@@ -449,12 +421,9 @@ function TunnelDetailPanel({
             <Globe size={14} />
             {t('s2s.allowedDomains')}
           </div>
-          {domainsApiUnavailable && (
-            <p className="text-xs text-[var(--accent)] bg-[var(--accent-glow)] rounded px-2 py-1 mb-2">
-              {t('s2s.comingSoon')}
-            </p>
-          )}
-          {domains.length === 0 ? (
+          {domainsLoading ? (
+            <p className="text-sm text-[var(--text-muted)]">{t('common.loading')}</p>
+          ) : domains.length === 0 ? (
             <p className="text-sm text-[var(--text-muted)] italic">{t('s2s.noDomains')}</p>
           ) : (
             <div className="flex flex-col gap-2">
@@ -464,7 +433,8 @@ function TunnelDetailPanel({
                     {d.domain}
                   </span>
                   <button
-                    onClick={() => handleRemoveDomain(d.id)}
+                    onClick={() => removeDomainMutation.mutate(d.id)}
+                    disabled={removeDomainMutation.isPending}
                     className="text-[var(--text-muted)] hover:text-[var(--danger)] transition-colors"
                   >
                     <Trash2 size={14} />
@@ -483,10 +453,12 @@ function TunnelDetailPanel({
               />
               <Button
                 size="sm"
-                disabled={!domainName.trim()}
-                onClick={handleAddDomain}
+                disabled={!domainName.trim() || addDomainMutation.isPending}
+                onClick={() => {
+                  if (domainName.trim()) addDomainMutation.mutate(domainName.trim())
+                }}
               >
-                {t('common.create')}
+                {addDomainMutation.isPending ? t('s2s.adding') : t('common.create')}
               </Button>
               <Button variant="ghost" size="sm" onClick={() => setShowAddDomain(false)}>
                 {t('common.cancel')}
@@ -497,7 +469,10 @@ function TunnelDetailPanel({
               variant="ghost"
               size="sm"
               className="mt-2"
-              onClick={() => setShowAddDomain(true)}
+              onClick={() => {
+                addDomainMutation.reset()
+                setShowAddDomain(true)
+              }}
             >
               <Plus size={14} className="mr-1" /> {t('s2s.addDomain')}
             </Button>

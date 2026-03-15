@@ -113,6 +113,8 @@ const docSections: DocSection[] = [
       { id: 'creating-tunnels', titleKey: 'docs.s2sTunnels.creatingTunnels.title', contentKey: 'docs.s2sTunnels.creatingTunnels.content' },
       { id: 'adding-members', titleKey: 'docs.s2sTunnels.addingMembers.title', contentKey: 'docs.s2sTunnels.addingMembers.content' },
       { id: 'route-mgmt', titleKey: 'docs.s2sTunnels.routeManagement.title', contentKey: 'docs.s2sTunnels.routeManagement.content' },
+      { id: 'allowed-domains', titleKey: 'docs.s2sTunnels.allowedDomains.title', contentKey: 'docs.s2sTunnels.allowedDomains.content' },
+      { id: 'config-generation', titleKey: 'docs.s2sTunnels.configGeneration.title', contentKey: 'docs.s2sTunnels.configGeneration.content' },
       { id: 's2s-client', titleKey: 'docs.s2sTunnels.s2sClient.title', contentKey: 'docs.s2sTunnels.s2sClient.content' },
       { id: 'systemd-setup', titleKey: 'docs.s2sTunnels.systemdSetup.title', contentKey: 'docs.s2sTunnels.systemdSetup.content' },
     ],

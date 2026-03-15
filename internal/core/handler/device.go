@@ -319,15 +319,15 @@ func (h *DeviceHandler) create(w http.ResponseWriter, r *http.Request) {
 				SELECT id, address FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1
 			),
 			candidate AS (
-				SELECT host(network(net.address) + s.off) AS ip, net.id AS net_id
+				SELECT host(network(net.address) + s.off)::inet AS ip, net.id AS net_id
 				FROM net, generate_series(2, (1 << (32 - masklen(net.address))) - 2) AS s(off)
 				WHERE NOT EXISTS (
-					SELECT 1 FROM devices WHERE assigned_ip = (network(net.address) + s.off)::inet
+					SELECT 1 FROM devices WHERE assigned_ip = host(network(net.address) + s.off)::inet
 				)
 				LIMIT 1
 			)
 			INSERT INTO devices (user_id, name, wireguard_pubkey, wireguard_privkey, assigned_ip, network_id)
-			SELECT $1, $2, $3, $4, candidate.ip::inet, candidate.net_id
+			SELECT $1, $2, $3, $4, candidate.ip, candidate.net_id
 			FROM candidate
 			RETURNING id, user_id, name, wireguard_pubkey, host(assigned_ip), is_approved, last_handshake, created_at, updated_at`,
 			userID, req.Name, req.WireguardPubkey, ptrOrNil(generatedPrivKey),
@@ -600,14 +600,15 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read network configuration (DNS, mask) and gateway info.
+	// Read network configuration (DNS, mask, CIDR) and gateway info.
 	var err error
 	var maskLen int
+	var networkCIDR string
 	var networkDNS []string
 	err = h.pool.QueryRow(r.Context(),
-		`SELECT masklen(address), dns
+		`SELECT masklen(address), address::text, dns
 		 FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1`,
-	).Scan(&maskLen, &networkDNS)
+	).Scan(&maskLen, &networkCIDR, &networkDNS)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to allocate IP address: no active network found")
 		return
@@ -658,15 +659,15 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 				SELECT id, address FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1
 			),
 			candidate AS (
-				SELECT host(network(net.address) + s.off) AS ip, net.id AS net_id
+				SELECT host(network(net.address) + s.off)::inet AS ip, net.id AS net_id
 				FROM net, generate_series(2, (1 << (32 - masklen(net.address))) - 2) AS s(off)
 				WHERE NOT EXISTS (
-					SELECT 1 FROM devices WHERE assigned_ip = (network(net.address) + s.off)::inet
+					SELECT 1 FROM devices WHERE assigned_ip = host(network(net.address) + s.off)::inet
 				)
 				LIMIT 1
 			)
 			INSERT INTO devices (user_id, name, wireguard_pubkey, assigned_ip, is_approved, network_id)
-			SELECT $1, $2, $3, candidate.ip::inet, true, candidate.net_id
+			SELECT $1, $2, $3, candidate.ip, true, candidate.net_id
 			FROM candidate
 			RETURNING id, host(assigned_ip)`,
 			userID, req.Name, req.WireguardPubkey,
@@ -710,7 +711,7 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 		DNS:                 networkDNS,
 		Endpoint:            gatewayEndpoint,
 		ServerPublicKey:     gatewayPubkey,
-		AllowedIPs:          []string{"0.0.0.0/0"},
+		AllowedIPs:          []string{networkCIDR},
 		PersistentKeepalive: 25,
 	}
 
@@ -754,9 +755,10 @@ func (h *DeviceHandler) downloadConfig(w http.ResponseWriter, r *http.Request) {
 	var assignedIP string
 	var deviceName string
 	var ownerID string
+	var deviceNetworkID *string
 	err = h.pool.QueryRow(r.Context(),
-		`SELECT name, host(assigned_ip), user_id::text FROM devices WHERE id = $1`, id,
-	).Scan(&deviceName, &assignedIP, &ownerID)
+		`SELECT name, host(assigned_ip), user_id::text, network_id::text FROM devices WHERE id = $1`, id,
+	).Scan(&deviceName, &assignedIP, &ownerID, &deviceNetworkID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			respondError(w, http.StatusNotFound, "device not found")
@@ -771,12 +773,19 @@ func (h *DeviceHandler) downloadConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get the mask length and DNS from the active network.
+	// Get the mask length and DNS from the device's network (fallback to first active).
 	var maskLen int
+	var networkCIDR string
 	var networkDNS []string
-	err = h.pool.QueryRow(r.Context(),
-		`SELECT masklen(address), dns FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1`,
-	).Scan(&maskLen, &networkDNS)
+	if deviceNetworkID != nil {
+		err = h.pool.QueryRow(r.Context(),
+			`SELECT masklen(address), address::text, dns FROM networks WHERE id = $1`, *deviceNetworkID,
+		).Scan(&maskLen, &networkCIDR, &networkDNS)
+	} else {
+		err = h.pool.QueryRow(r.Context(),
+			`SELECT masklen(address), address::text, dns FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1`,
+		).Scan(&maskLen, &networkCIDR, &networkDNS)
+	}
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to read network mask")
 		return
@@ -848,7 +857,7 @@ func (h *DeviceHandler) downloadConfig(w http.ResponseWriter, r *http.Request) {
 		Peers: []wireguard.PeerConfig{
 			{
 				PublicKey:           gatewayPubkey,
-				AllowedIPs:          []string{"0.0.0.0/0"},
+				AllowedIPs:          []string{networkCIDR},
 				Endpoint:            gatewayEndpoint,
 				PersistentKeepalive: 25,
 			},
@@ -921,15 +930,23 @@ func (h *DeviceHandler) sendConfig(w http.ResponseWriter, r *http.Request) {
 
 	// Build the config (same logic as downloadConfig).
 	var assignedIP string
+	var sendDeviceNetworkID *string
 	_ = h.pool.QueryRow(r.Context(),
-		`SELECT host(assigned_ip) FROM devices WHERE id = $1`, id,
-	).Scan(&assignedIP)
+		`SELECT host(assigned_ip), network_id::text FROM devices WHERE id = $1`, id,
+	).Scan(&assignedIP, &sendDeviceNetworkID)
 
 	var maskLen int
+	var networkCIDR string
 	var networkDNS []string
-	err = h.pool.QueryRow(r.Context(),
-		`SELECT masklen(address), dns FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1`,
-	).Scan(&maskLen, &networkDNS)
+	if sendDeviceNetworkID != nil {
+		err = h.pool.QueryRow(r.Context(),
+			`SELECT masklen(address), address::text, dns FROM networks WHERE id = $1`, *sendDeviceNetworkID,
+		).Scan(&maskLen, &networkCIDR, &networkDNS)
+	} else {
+		err = h.pool.QueryRow(r.Context(),
+			`SELECT masklen(address), address::text, dns FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1`,
+		).Scan(&maskLen, &networkCIDR, &networkDNS)
+	}
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to read network configuration")
 		return
@@ -986,7 +1003,7 @@ func (h *DeviceHandler) sendConfig(w http.ResponseWriter, r *http.Request) {
 		Peers: []wireguard.PeerConfig{
 			{
 				PublicKey:           gatewayPubkey,
-				AllowedIPs:          []string{"0.0.0.0/0"},
+				AllowedIPs:          []string{networkCIDR},
 				Endpoint:            gatewayEndpoint,
 				PersistentKeepalive: 25,
 			},

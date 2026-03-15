@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -249,10 +251,182 @@ func (g *GatewayMode) buildWireGuardConfig(config *s2sConfigResponse) (string, e
 	return wireguard.RenderConfig(iface), nil
 }
 
-func (g *GatewayMode) reportHealth(_ context.Context) {
-	// The /health endpoint for S2S tunnels does not exist yet.
-	// Log at debug level and skip the call to avoid noisy errors.
-	g.logger.Debug("skipping S2S health report: endpoint not implemented yet")
+// peerHealthStatus represents the health of a single S2S tunnel peer
+// based on the WireGuard last handshake time.
+type peerHealthStatus struct {
+	PublicKey     string `json:"public_key"`
+	Status        string `json:"status"` // HEALTHY, DEGRADED, DOWN
+	LastHandshake int64  `json:"last_handshake_unix"`
+	RxBytes       int64  `json:"rx_bytes"`
+	TxBytes       int64  `json:"tx_bytes"`
+	Endpoint      string `json:"endpoint,omitempty"`
+}
+
+// s2sHealthReport is sent to core to report tunnel peer health.
+type s2sHealthReport struct {
+	TunnelID  string             `json:"tunnel_id"`
+	GatewayID string             `json:"gateway_id"`
+	Peers     []peerHealthStatus `json:"peers"`
+	Timestamp int64              `json:"timestamp"`
+}
+
+// classifyHealth determines peer health from the WireGuard last handshake time.
+//   - HEALTHY:  handshake within the last 2 minutes
+//   - DEGRADED: handshake within the last 5 minutes
+//   - DOWN:     no handshake or older than 5 minutes
+func classifyHealth(lastHandshake time.Time) string {
+	if lastHandshake.IsZero() {
+		return "DOWN"
+	}
+	age := time.Since(lastHandshake)
+	switch {
+	case age < 2*time.Minute:
+		return "HEALTHY"
+	case age < 5*time.Minute:
+		return "DEGRADED"
+	default:
+		return "DOWN"
+	}
+}
+
+// reportHealth collects WireGuard peer stats for the S2S interface and
+// reports health status to core. Health is determined by the last handshake
+// time from wgctrl, which is more reliable than ICMP and requires no
+// special permissions.
+func (g *GatewayMode) reportHealth(ctx context.Context) {
+	g.mu.RLock()
+	tunnelID := g.tunnelID
+	gatewayID := g.gatewayID
+	g.mu.RUnlock()
+
+	// Collect WireGuard peer stats by parsing "wg show" output.
+	// We use wg show because the client does not have direct wgctrl access
+	// (that lives in the gateway package); the S2S interface is managed
+	// via wg-quick, so "wg show" is the portable way to read stats.
+	peers, err := g.collectWGPeerStats()
+	if err != nil {
+		g.logger.Warn("failed to collect WireGuard peer stats for health report", "error", err)
+		return
+	}
+
+	if len(peers) == 0 {
+		g.logger.Debug("no S2S peers found, skipping health report")
+		return
+	}
+
+	report := s2sHealthReport{
+		TunnelID:  tunnelID,
+		GatewayID: gatewayID,
+		Peers:     peers,
+		Timestamp: time.Now().Unix(),
+	}
+
+	body, err := json.Marshal(report)
+	if err != nil {
+		g.logger.Warn("failed to marshal health report", "error", err)
+		return
+	}
+
+	resp, err := g.client.doRequest(ctx, "POST",
+		fmt.Sprintf("/api/v1/s2s-tunnels/%s/health", tunnelID), body, true)
+	if err != nil {
+		g.logger.Debug("failed to send S2S health report", "error", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		healthy := 0
+		degraded := 0
+		down := 0
+		for _, p := range peers {
+			switch p.Status {
+			case "HEALTHY":
+				healthy++
+			case "DEGRADED":
+				degraded++
+			case "DOWN":
+				down++
+			}
+		}
+		g.logger.Info("S2S health report sent",
+			"peers", len(peers),
+			"healthy", healthy,
+			"degraded", degraded,
+			"down", down,
+		)
+	} else {
+		g.logger.Debug("S2S health report rejected by server", "status", resp.StatusCode)
+	}
+}
+
+// collectWGPeerStats runs "wg show outpost-s2s dump" and parses the output
+// to extract per-peer stats including the last handshake timestamp.
+// The dump format (tab-separated, one peer per line after the interface line):
+//
+//	public-key  preshared-key  endpoint  allowed-ips  latest-handshake  transfer-rx  transfer-tx  persistent-keepalive
+func (g *GatewayMode) collectWGPeerStats() ([]peerHealthStatus, error) {
+	// Determine the interface name from the config file name.
+	ifaceName := "outpost-s2s"
+
+	cmd := exec.Command("wg", "show", ifaceName, "dump")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("wg show %s dump: %w (stderr: %s)", ifaceName, err, stderr.String())
+	}
+
+	var peers []peerHealthStatus
+	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+
+	// First line is the interface line, skip it.
+	for i, line := range lines {
+		if i == 0 {
+			continue
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+
+		fields := strings.Split(line, "\t")
+		if len(fields) < 7 {
+			continue
+		}
+
+		pubKey := fields[0]
+		endpoint := fields[2]
+		// fields[4] = latest-handshake (unix timestamp, 0 if never)
+		// fields[5] = transfer-rx (bytes)
+		// fields[6] = transfer-tx (bytes)
+
+		var handshakeUnix int64
+		fmt.Sscanf(fields[4], "%d", &handshakeUnix)
+
+		var rxBytes, txBytes int64
+		fmt.Sscanf(fields[5], "%d", &rxBytes)
+		fmt.Sscanf(fields[6], "%d", &txBytes)
+
+		var lastHandshake time.Time
+		if handshakeUnix > 0 {
+			lastHandshake = time.Unix(handshakeUnix, 0)
+		}
+
+		status := classifyHealth(lastHandshake)
+
+		peers = append(peers, peerHealthStatus{
+			PublicKey:     pubKey,
+			Status:        status,
+			LastHandshake: handshakeUnix,
+			RxBytes:       rxBytes,
+			TxBytes:       txBytes,
+			Endpoint:      endpoint,
+		})
+	}
+
+	return peers, nil
 }
 
 func (g *GatewayMode) hostname() string {

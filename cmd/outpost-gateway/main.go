@@ -19,6 +19,8 @@ func main() {
 	logger.Info("starting outpost-gateway",
 		"version", version.Version,
 		"core_addr", cfg.Gateway.CoreAddr,
+		"tls_enabled", cfg.Gateway.TLSEnabled,
+		"tls_mtls", cfg.Gateway.TLSCertFile != "" && cfg.Gateway.TLSKeyFile != "",
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

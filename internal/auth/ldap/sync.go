@@ -17,8 +17,10 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
+	ldaplib "github.com/go-ldap/ldap/v3"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/romashqua/outpost/internal/auth"
@@ -137,6 +139,147 @@ type Connector interface {
 	Close() error
 }
 
+// defaultPageSize is the number of entries per LDAP paged search request.
+const defaultPageSize = 500
+
+// LDAPConnector implements the Connector interface using github.com/go-ldap/ldap/v3.
+// It supports both ldap:// and ldaps:// connections, STARTTLS, and paged search
+// for large directories.
+type LDAPConnector struct {
+	conn     *ldaplib.Conn
+	pageSize uint32
+}
+
+// NewLDAPConnector creates a new LDAPConnector with the given configuration.
+// The returned connector is ready to be passed to Syncer.SetConnector or used
+// directly as the default connector in NewSyncer.
+func NewLDAPConnector() *LDAPConnector {
+	return &LDAPConnector{
+		pageSize: defaultPageSize,
+	}
+}
+
+// SetPageSize overrides the default LDAP paged search size.
+// A value of 0 disables paging.
+func (c *LDAPConnector) SetPageSize(size uint32) {
+	c.pageSize = size
+}
+
+// Connect establishes a connection to the LDAP server at the given URL.
+// It supports ldap:// (plain or with optional STARTTLS) and ldaps:// (TLS from start).
+// If tlsCfg is non-nil and the scheme is ldap://, STARTTLS is performed after connecting.
+func (c *LDAPConnector) Connect(url string, tlsCfg *tls.Config) error {
+	if c.conn != nil {
+		_ = c.conn.Close()
+		c.conn = nil
+	}
+
+	isLDAPS := strings.HasPrefix(strings.ToLower(url), "ldaps://")
+
+	var conn *ldaplib.Conn
+	var err error
+
+	if isLDAPS {
+		// Direct TLS connection for ldaps:// scheme.
+		if tlsCfg == nil {
+			tlsCfg = &tls.Config{} //nolint:gosec // server name will be inferred from URL
+		}
+		conn, err = ldaplib.DialURL(url, ldaplib.DialWithTLSConfig(tlsCfg))
+	} else {
+		// Plain connection for ldap:// scheme.
+		conn, err = ldaplib.DialURL(url)
+	}
+	if err != nil {
+		return fmt.Errorf("ldap dial %s: %w", url, err)
+	}
+
+	// Upgrade to TLS via STARTTLS if requested on a plain connection.
+	if !isLDAPS && tlsCfg != nil {
+		if err := conn.StartTLS(tlsCfg); err != nil {
+			conn.Close()
+			return fmt.Errorf("ldap STARTTLS: %w", err)
+		}
+	}
+
+	c.conn = conn
+	return nil
+}
+
+// Bind authenticates with the LDAP server using the given DN and password.
+func (c *LDAPConnector) Bind(dn, password string) error {
+	if c.conn == nil {
+		return fmt.Errorf("ldap: not connected")
+	}
+	if err := c.conn.Bind(dn, password); err != nil {
+		return fmt.Errorf("ldap bind as %s: %w", dn, err)
+	}
+	return nil
+}
+
+// Search performs an LDAP search with the given base DN, filter, and requested
+// attributes. It uses paged search controls to handle large result sets without
+// exceeding server size limits. Results are returned as []*Entry for compatibility
+// with the Connector interface.
+func (c *LDAPConnector) Search(baseDN, filter string, attributes []string) ([]*Entry, error) {
+	if c.conn == nil {
+		return nil, fmt.Errorf("ldap: not connected")
+	}
+
+	searchReq := ldaplib.NewSearchRequest(
+		baseDN,
+		ldaplib.ScopeWholeSubtree,
+		ldaplib.NeverDerefAliases,
+		0,    // no size limit (paging handles this)
+		0,    // no time limit
+		false, // typesOnly
+		filter,
+		attributes,
+		nil, // controls added below if paging
+	)
+
+	var allEntries []*ldaplib.Entry
+
+	if c.pageSize > 0 {
+		// Use paged search for large directories.
+		result, err := c.conn.SearchWithPaging(searchReq, c.pageSize)
+		if err != nil {
+			return nil, fmt.Errorf("ldap paged search: %w", err)
+		}
+		allEntries = result.Entries
+	} else {
+		// Single search without paging.
+		result, err := c.conn.Search(searchReq)
+		if err != nil {
+			return nil, fmt.Errorf("ldap search: %w", err)
+		}
+		allEntries = result.Entries
+	}
+
+	// Convert go-ldap entries to our internal Entry type.
+	entries := make([]*Entry, 0, len(allEntries))
+	for _, le := range allEntries {
+		e := &Entry{
+			DN:         le.DN,
+			Attributes: make(map[string][]string, len(le.Attributes)),
+		}
+		for _, attr := range le.Attributes {
+			e.Attributes[attr.Name] = attr.Values
+		}
+		entries = append(entries, e)
+	}
+
+	return entries, nil
+}
+
+// Close terminates the LDAP connection. It is safe to call multiple times.
+func (c *LDAPConnector) Close() error {
+	if c.conn != nil {
+		c.conn.Close()
+		c.conn = nil
+	}
+	return nil
+}
+
 // Syncer synchronizes users and groups from LDAP/AD into the local database.
 type Syncer struct {
 	cfg       Config
@@ -160,9 +303,10 @@ func NewSyncer(cfg Config, pool *pgxpool.Pool, logger *slog.Logger) *Syncer {
 		cfg.GroupFilter = "(objectClass=group)"
 	}
 	return &Syncer{
-		cfg:    cfg,
-		pool:   pool,
-		logger: logger,
+		cfg:       cfg,
+		pool:      pool,
+		logger:    logger,
+		connector: NewLDAPConnector(),
 	}
 }
 

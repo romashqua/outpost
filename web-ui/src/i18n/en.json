@@ -588,7 +588,7 @@
       "title": "Network Configuration",
       "creatingNetworks": {
         "title": "Creating Networks",
-        "content": "Networks define WireGuard subnets that devices connect to.\n\nGo to **Networks** and click **Create Network**:\n\n- **Name** — descriptive name (e.g. \"Production\", \"Office\")\n- **Address (CIDR)** — network range, e.g. `10.0.0.0/24`. Host bits must not be set.\n- **Port** — WireGuard listen port (default: 51820)\n- **DNS** — DNS servers pushed to clients (e.g. `1.1.1.1, 8.8.8.8`)\n\nEach network can have multiple gateways for redundancy. Devices are assigned IPs from the network's CIDR range automatically."
+        "content": "Networks define WireGuard subnets that devices connect to.\n\nGo to **Networks** and click **Create Network**:\n\n- **Name** — descriptive name (e.g. \"Production\", \"Office\")\n- **Address (CIDR)** — network range, e.g. `10.0.0.0/24`. Host bits must not be set.\n- **Port** — WireGuard listen port (default: 51820)\n- **DNS** — DNS servers pushed to clients (e.g. `1.1.1.1, 8.8.8.8`)\n\nEach network can have multiple gateways for redundancy. Devices are assigned IPs from the network's CIDR range automatically.\n\n### Assignment model\n\nOutpost uses a **User → Devices → Network** model:\n\n- One user can have multiple devices\n- Each device is assigned to one network (`network_id`)\n- The device gets an IP address from its network's CIDR range\n- WireGuard config `AllowedIPs` contains the network CIDR (split tunneling)\n\nThis allows different devices of the same user to connect to different networks."
       },
       "gatewaySetup": {
         "title": "Gateway Setup",
@@ -612,7 +612,7 @@
       },
       "downloadConfig": {
         "title": "Downloading WireGuard Config",
-        "content": "After a device is created (with auto-generated keys), you can download the WireGuard configuration:\n\n1. Go to **Devices** and find the device\n2. Click the **Download Config** button\n3. A `.conf` file is generated with the device's private key, assigned IP, DNS, and gateway endpoint\n\nImport this file into any WireGuard client (official WireGuard app, NetworkManager, etc.).\n\n[code:ini][Interface]\nPrivateKey = <device-private-key>\nAddress = 10.0.0.5/32\nDNS = 1.1.1.1\n\n[Peer]\nPublicKey = <gateway-public-key>\nAllowedIPs = 0.0.0.0/0\nEndpoint = gateway.example.com:51820\nPersistentKeepalive = 25[/code]"
+        "content": "After a device is created (with auto-generated keys), you can download the WireGuard configuration:\n\n1. Go to **Devices** and find the device\n2. Click the **Download Config** button\n3. A `.conf` file is generated with the device's private key, assigned IP, DNS, and gateway endpoint\n\nImport this file into any WireGuard client (official WireGuard app, NetworkManager, etc.).\n\n[code:ini][Interface]\nPrivateKey = <device-private-key>\nAddress = 10.0.0.5/32\nDNS = 1.1.1.1\n\n[Peer]\nPublicKey = <gateway-public-key>\nAllowedIPs = 10.10.0.0/16\nEndpoint = gateway.example.com:51820\nPersistentKeepalive = 25[/code]\n\n**Important:** `AllowedIPs` contains the CIDR of the network the device belongs to (split tunneling). Only traffic destined for this subnet is routed through the VPN tunnel — all other traffic goes directly."
       },
       "keyRotation": {
         "title": "Key Rotation",
@@ -656,15 +656,23 @@
       },
       "creatingTunnels": {
         "title": "Creating Tunnels",
-        "content": "1. Go to **S2S Tunnels** in the sidebar\n2. Click **Create Tunnel**\n3. Enter a **Name** and optional **Description**\n4. Select **Topology**: Full Mesh or Hub & Spoke\n5. For Hub & Spoke, select the **Hub Gateway**\n\nAfter creation, add member gateways and configure routes."
+        "content": "### Step-by-step guide\n\n1. Go to **S2S Tunnels** in the sidebar\n2. Click **Create Tunnel**\n3. Enter a **Name** (e.g. `office-mesh`) and optional **Description**\n4. Select **Topology**: Full Mesh or Hub & Spoke\n5. For Hub & Spoke, select the **Hub Gateway**\n6. Click **Create**\n\n### What happens after creation\n\nThe tunnel is created but not yet active — you need to add gateway members (minimum 2). After adding members:\n\n- Core computes WireGuard configurations for each gateway\n- Configs are pushed to gateways via gRPC in real-time\n- Gateways create S2S WireGuard interfaces and add peers\n- Traffic between sites begins routing\n\n### Via API (curl)\n\n[code:bash]curl -X POST http://localhost:8080/api/v1/s2s-tunnels \\\n  -H \"Authorization: Bearer $TOKEN\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"name\": \"office-mesh\", \"topology\": \"mesh\", \"description\": \"Office interconnect\"}'[/code]"
       },
       "addingMembers": {
         "title": "Adding Members (Gateways)",
-        "content": "After creating a tunnel:\n\n1. Open the tunnel details\n2. Click **Add Member**\n3. Select a gateway from the dropdown\n4. The gateway will automatically establish WireGuard tunnels to other members\n\nFor mesh topology, each new member creates N-1 new WireGuard tunnels. For hub-spoke, each new spoke creates 1 tunnel to the hub."
+        "content": "After creating a tunnel, add gateway members with their local subnets:\n\n1. Open the tunnel details\n2. Click **Add Member**\n3. Select a gateway from the dropdown\n4. Specify **Local Subnets** (`local_subnets`) — CIDR ranges of the local network behind this gateway (e.g. `10.1.0.0/24`)\n5. Click **Add**\n\nRepeat for each gateway. Each gateway must advertise its subnets so other members know which traffic to route through the S2S tunnel.\n\n### Example: three offices\n\n- **gw-moscow**: `local_subnets: [\"10.1.0.0/24\"]`\n- **gw-spb**: `local_subnets: [\"10.2.0.0/24\"]`\n- **gw-nsk**: `local_subnets: [\"10.3.0.0/24\"]`\n\nAfter adding all members, core automatically computes WireGuard configurations and pushes them to gateways via gRPC.\n\nFor mesh topology, each new member creates N-1 new WireGuard peers. For hub-spoke, each new spoke creates 1 peer to the hub."
       },
       "routeManagement": {
         "title": "Route Management",
         "content": "Routes define which subnets are reachable through the S2S tunnel.\n\n1. In tunnel details, go to the **Routes** tab\n2. Click **Add Route**\n3. Enter the **CIDR** (e.g. `192.168.1.0/24`) and optional description\n\nRoutes are exchanged between members using a BGP-lite protocol. When a route is added, all member gateways update their WireGuard `AllowedIPs` and routing tables automatically."
+      },
+      "allowedDomains": {
+        "title": "Allowed Domains",
+        "content": "S2S tunnels support domain-based filtering. This lets you restrict which resources on the remote site can be accessed through the S2S tunnel.\n\n### Configuration\n\n1. Open the tunnel details\n2. Go to the **Allowed Domains** tab\n3. Click **Add Domain**\n4. Enter a domain name (e.g. `erp.office-spb.local`)\n\nDomains work in conjunction with DNS resolution on the gateway. If the domain list is empty, all traffic to the member's subnets is allowed.\n\n### Example use case\n\nRestrict access from the Moscow office to St. Petersburg only for:\n- `erp.spb.company.local`\n- `git.spb.company.local`\n- `wiki.spb.company.local`"
+      },
+      "configGeneration": {
+        "title": "Config Generation",
+        "content": "You can generate a ready-made WireGuard config for each gateway member's S2S interface.\n\n### Via API\n\n[code:bash]GET /api/v1/s2s-tunnels/{tunnelId}/config/{gatewayId}[/code]\n\n### Example response\n\n[code:ini][Interface]\nPrivateKey = <gateway-private-key>\nAddress = 10.255.0.1/24\nListenPort = 51821\n\n[Peer]\n# gw-spb\nPublicKey = <gw-spb-public-key>\nEndpoint = spb.vpn.company.com:51821\nAllowedIPs = 10.2.0.0/24\nPersistentKeepalive = 25[/code]\n\nS2S uses a separate interface (`wg1` / `wg-s2s-*`) and port (51821), isolated from client traffic on `wg0`.\n\n### Automatic delivery\n\nIn production, configs are delivered to gateways automatically via gRPC streaming. Manual generation is useful for debugging or for gateways outside the gRPC connection."
       },
       "s2sClient": {
         "title": "S2S via outpost-client Gateway Mode",
@@ -736,7 +744,7 @@
       "title": "Analytics & Monitoring",
       "bandwidth": {
         "title": "Bandwidth Tracking",
-        "content": "The **Analytics** page shows real-time and historical bandwidth data.\n\n### Bandwidth Over Time chart\n\nDisplays RX (received) and TX (transmitted) data over selectable time ranges. Data is aggregated per minute, hour, or day depending on the range.\n\n### Metrics\n\n- **Total Traffic** — aggregate bytes transferred\n- **Peak Bandwidth** — maximum throughput observed\n- **Unique Users** — number of distinct users with active connections\n- **Unique Devices** — number of distinct connected devices"
+        "content": "The **Analytics** page shows real-time and historical bandwidth data.\n\n### How it works\n\nTraffic data is collected automatically:\n\n1. **Gateway** reads WireGuard peer statistics (`rx_bytes`, `tx_bytes`, `last_handshake`) every 30 seconds\n2. Stats are sent to **core** via the bidirectional gRPC stream\n3. Core records statistics into `peer_stats` and `flow_records` tables\n4. The analytics dashboard reads `flow_records` via the REST API\n\n**Important:** Data appears on the chart only after at least one gateway and device are connected. The gateway must be online with an active gRPC connection to core.\n\n### Bandwidth Over Time chart\n\nDisplays RX (received) and TX (transmitted) data over selectable time ranges. Data is aggregated per minute, hour, or day depending on the range.\n\n### Metrics\n\n- **Total Traffic** — aggregate bytes transferred\n- **Peak Bandwidth** — maximum throughput observed\n- **Unique Users** — number of distinct users with active connections\n- **Unique Devices** — number of distinct connected devices"
       },
       "topUsers": {
         "title": "Top Users",

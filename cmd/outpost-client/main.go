@@ -2,10 +2,12 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -183,8 +185,169 @@ func cmdStatus(_ *client.Client, _ *slog.Logger) {
 	posture := client.CollectPosture()
 	fmt.Printf("OS:         %s %s\n", posture.OSType, posture.OSVersion)
 	fmt.Printf("Hostname:   %s\n", posture.Hostname)
-	// TODO: show tunnel status by checking wg interface.
-	fmt.Println("Tunnel:     run 'outpost-client connect' to establish VPN")
+	fmt.Println()
+
+	// Try common Outpost WireGuard interface names.
+	ifaceNames := []string{"outpost0", "wg0"}
+	if v := os.Getenv("OUTPOST_WG_INTERFACE"); v != "" {
+		ifaceNames = []string{v}
+	}
+
+	found := false
+	for _, ifaceName := range ifaceNames {
+		info, err := getWGInterfaceStatus(ifaceName)
+		if err != nil {
+			continue
+		}
+		found = true
+		fmt.Printf("Interface:  %s\n", ifaceName)
+		fmt.Printf("Status:     connected\n")
+		if info.listenPort != "" {
+			fmt.Printf("Listen Port: %s\n", info.listenPort)
+		}
+		if info.publicKey != "" {
+			fmt.Printf("Public Key: %s\n", info.publicKey)
+		}
+		fmt.Println()
+
+		if len(info.peers) == 0 {
+			fmt.Println("Peers:      (none)")
+		} else {
+			fmt.Printf("Peers:      %d\n", len(info.peers))
+			fmt.Println()
+			for i, p := range info.peers {
+				fmt.Printf("  Peer #%d\n", i+1)
+				fmt.Printf("    Public Key:     %s\n", p.publicKey)
+				if p.endpoint != "" {
+					fmt.Printf("    Endpoint:       %s\n", p.endpoint)
+				}
+				if p.allowedIPs != "" {
+					fmt.Printf("    Allowed IPs:    %s\n", p.allowedIPs)
+				}
+				if p.lastHandshake != "" && p.lastHandshake != "0" {
+					fmt.Printf("    Last Handshake: %s\n", p.lastHandshake)
+				} else {
+					fmt.Printf("    Last Handshake: (never)\n")
+				}
+				fmt.Printf("    Transfer:       %s received, %s sent\n", p.rxBytes, p.txBytes)
+			}
+		}
+		break // Show only the first active interface.
+	}
+
+	if !found {
+		fmt.Println("Tunnel:     Not connected. Run 'outpost-client connect' to establish VPN.")
+	}
+}
+
+type wgInterfaceInfo struct {
+	publicKey  string
+	listenPort string
+	peers      []wgPeerInfo
+}
+
+type wgPeerInfo struct {
+	publicKey     string
+	endpoint      string
+	allowedIPs    string
+	lastHandshake string
+	rxBytes       string
+	txBytes       string
+}
+
+// getWGInterfaceStatus runs "wg show <iface> dump" and parses the output.
+// Returns an error if the interface does not exist or wg is not available.
+func getWGInterfaceStatus(ifaceName string) (*wgInterfaceInfo, error) {
+	cmd := exec.Command("wg", "show", ifaceName, "dump")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("wg show failed: %w", err)
+	}
+
+	output := strings.TrimSpace(stdout.String())
+	if output == "" {
+		return nil, fmt.Errorf("no output from wg show")
+	}
+
+	lines := strings.Split(output, "\n")
+	if len(lines) == 0 {
+		return nil, fmt.Errorf("empty wg show output")
+	}
+
+	info := &wgInterfaceInfo{}
+
+	// First line: interface info
+	// Format: private-key  public-key  listen-port  fwmark
+	ifaceFields := strings.Split(lines[0], "\t")
+	if len(ifaceFields) >= 2 {
+		info.publicKey = ifaceFields[1]
+	}
+	if len(ifaceFields) >= 3 {
+		info.listenPort = ifaceFields[2]
+	}
+
+	// Remaining lines: peers
+	// Format: public-key  preshared-key  endpoint  allowed-ips  latest-handshake  transfer-rx  transfer-tx  persistent-keepalive
+	for _, line := range lines[1:] {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) < 7 {
+			continue
+		}
+
+		peer := wgPeerInfo{
+			publicKey:  fields[0],
+			endpoint:   fields[2],
+			allowedIPs: fields[3],
+		}
+
+		// Parse last handshake unix timestamp into human-readable form.
+		var handshakeUnix int64
+		fmt.Sscanf(fields[4], "%d", &handshakeUnix)
+		if handshakeUnix > 0 {
+			t := time.Unix(handshakeUnix, 0)
+			ago := time.Since(t).Truncate(time.Second)
+			peer.lastHandshake = fmt.Sprintf("%s ago", ago)
+		} else {
+			peer.lastHandshake = ""
+		}
+
+		// Format transfer bytes in human-readable form.
+		var rx, tx int64
+		fmt.Sscanf(fields[5], "%d", &rx)
+		fmt.Sscanf(fields[6], "%d", &tx)
+		peer.rxBytes = formatBytes(rx)
+		peer.txBytes = formatBytes(tx)
+
+		info.peers = append(info.peers, peer)
+	}
+
+	return info, nil
+}
+
+// formatBytes converts a byte count into a human-readable string.
+func formatBytes(b int64) string {
+	const (
+		kB = 1024
+		mB = 1024 * kB
+		gB = 1024 * mB
+	)
+	switch {
+	case b >= gB:
+		return fmt.Sprintf("%.2f GiB", float64(b)/float64(gB))
+	case b >= mB:
+		return fmt.Sprintf("%.2f MiB", float64(b)/float64(mB))
+	case b >= kB:
+		return fmt.Sprintf("%.2f KiB", float64(b)/float64(kB))
+	default:
+		return fmt.Sprintf("%d B", b)
+	}
 }
 
 func cmdPosture() {

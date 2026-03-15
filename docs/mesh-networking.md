@@ -153,6 +153,46 @@ Core → Gateway: PushRoutes(computed_route_table)
 3. Для hub-spoke: если hub упал, трафик переключается на резервный hub (если настроен)
 4. Core отправляет обновлённые маршруты всем оставшимся шлюзам
 
+## Разрешённые домены (Allowed Domains)
+
+S2S-туннели поддерживают фильтрацию по доменам. Это позволяет ограничить, к каким ресурсам на удалённой площадке могут обращаться клиенты через S2S-туннель.
+
+Конфигурация осуществляется на уровне участника туннеля и работает совместно с DNS-резолвингом на шлюзе.
+
+## Генерация конфигурации
+
+Для каждого шлюза-участника можно сгенерировать готовый WireGuard-конфиг:
+
+```bash
+GET /api/v1/s2s-tunnels/{tunnelId}/config/{gatewayId}
+```
+
+Ответ содержит полный WireGuard-конфиг для интерфейса `wg1`:
+
+```ini
+[Interface]
+PrivateKey = <приватный-ключ-шлюза>
+Address = 10.255.0.1/24
+ListenPort = 51821
+
+[Peer]
+# gw-spb
+PublicKey = <публичный-ключ-gw-spb>
+Endpoint = spb.vpn.company.com:51821
+AllowedIPs = 10.2.0.0/24
+PersistentKeepalive = 25
+
+[Peer]
+# gw-nsk
+PublicKey = <публичный-ключ-gw-nsk>
+Endpoint = nsk.vpn.company.com:51821
+AllowedIPs = 10.3.0.0/24
+PersistentKeepalive = 25
+```
+
+Для mesh-топологии `AllowedIPs` каждого пира содержит `local_subnets` удалённого шлюза.
+Для hub-spoke `AllowedIPs` spoke-пира на hub содержит его подсети, а `AllowedIPs` hub-пира на spoke -- объединение подсетей всех участников.
+
 ## Пример конфигурации
 
 ### Создание Full Mesh туннеля через API
@@ -168,10 +208,21 @@ curl -X POST http://localhost:8080/api/v1/s2s-tunnels \
     "topology": "mesh"
   }'
 
-# 2. Добавление участников-шлюзов (через панель администратора или будущий эндпоинт /members)
-# Каждый участник указывает, какие локальные подсети он объявляет
+# 2. Добавление участников-шлюзов
+curl -X POST http://localhost:8080/api/v1/s2s-tunnels/$TUNNEL_ID/members \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"gateway_id": "<gw-moscow-id>", "local_subnets": ["10.1.0.0/24"]}'
 
-# 3. Шлюзы получают конфигурацию через gRPC и создают интерфейсы wg1
+curl -X POST http://localhost:8080/api/v1/s2s-tunnels/$TUNNEL_ID/members \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"gateway_id": "<gw-spb-id>", "local_subnets": ["10.2.0.0/24"]}'
+
+# 3. Маршруты вычисляются автоматически
+# 4. Скачивание конфига для шлюза
+curl http://localhost:8080/api/v1/s2s-tunnels/$TUNNEL_ID/config/<gw-moscow-id> \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 ### Создание Hub & Spoke через панель администратора
