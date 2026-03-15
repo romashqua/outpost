@@ -13,6 +13,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/romashqua/outpost/internal/auth"
 )
 
 type S2SHandler struct {
@@ -31,16 +33,16 @@ func NewS2SHandler(pool *pgxpool.Pool, logger ...*slog.Logger) *S2SHandler {
 func (h *S2SHandler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Get("/", h.list)
-	r.Post("/", h.create)
+	r.With(auth.RequireAdmin).Post("/", h.create)
 	r.Route("/{id}", func(r chi.Router) {
 		r.Get("/", h.get)
-		r.Delete("/", h.delete)
+		r.With(auth.RequireAdmin).Delete("/", h.delete)
 		r.Get("/members", h.listMembers)
-		r.Post("/members", h.addMember)
-		r.Delete("/members/{gatewayId}", h.removeMember)
+		r.With(auth.RequireAdmin).Post("/members", h.addMember)
+		r.With(auth.RequireAdmin).Delete("/members/{gatewayId}", h.removeMember)
 		r.Get("/routes", h.listRoutes)
-		r.Post("/routes", h.addRoute)
-		r.Delete("/routes/{routeId}", h.removeRoute)
+		r.With(auth.RequireAdmin).Post("/routes", h.addRoute)
+		r.With(auth.RequireAdmin).Delete("/routes/{routeId}", h.removeRoute)
 		r.Get("/config/{gatewayId}", h.generateConfig)
 	})
 	return r

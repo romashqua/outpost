@@ -73,7 +73,7 @@ func (h *AuditHandler) listAuditLogs(w http.ResponseWriter, r *http.Request) {
 	countQuery := "SELECT COUNT(*) FROM audit_log" + where
 	var total int64
 	if err := h.pool.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
-		http.Error(w, "failed to count audit logs", http.StatusInternalServerError)
+		respondAuditError(w, http.StatusInternalServerError, "failed to count audit logs")
 		return
 	}
 
@@ -86,7 +86,7 @@ func (h *AuditHandler) listAuditLogs(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.pool.Query(ctx, dataQuery, args...)
 	if err != nil {
-		http.Error(w, "failed to query audit logs", http.StatusInternalServerError)
+		respondAuditError(w, http.StatusInternalServerError, "failed to query audit logs")
 		return
 	}
 	defer rows.Close()
@@ -96,7 +96,7 @@ func (h *AuditHandler) listAuditLogs(w http.ResponseWriter, r *http.Request) {
 		var e AuditEntry
 		var detailsRaw []byte
 		if err := rows.Scan(&e.ID, &e.Timestamp, &e.UserID, &e.Action, &e.Resource, &detailsRaw, &e.IPAddress, &e.UserAgent); err != nil {
-			http.Error(w, "failed to scan audit log row", http.StatusInternalServerError)
+			respondAuditError(w, http.StatusInternalServerError, "failed to scan audit log row")
 			return
 		}
 		if len(detailsRaw) > 0 {
@@ -108,7 +108,7 @@ func (h *AuditHandler) listAuditLogs(w http.ResponseWriter, r *http.Request) {
 		entries = append(entries, e)
 	}
 	if err := rows.Err(); err != nil {
-		http.Error(w, "failed to iterate audit log rows", http.StatusInternalServerError)
+		respondAuditError(w, http.StatusInternalServerError, "failed to iterate audit log rows")
 		return
 	}
 
@@ -133,7 +133,7 @@ func (h *AuditHandler) exportAuditLogs(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.pool.Query(ctx, query, args...)
 	if err != nil {
-		http.Error(w, "failed to query audit logs", http.StatusInternalServerError)
+		respondAuditError(w, http.StatusInternalServerError, "failed to query audit logs")
 		return
 	}
 	defer rows.Close()
@@ -143,7 +143,7 @@ func (h *AuditHandler) exportAuditLogs(w http.ResponseWriter, r *http.Request) {
 		var e AuditEntry
 		var detailsRaw []byte
 		if err := rows.Scan(&e.ID, &e.Timestamp, &e.UserID, &e.Action, &e.Resource, &detailsRaw, &e.IPAddress, &e.UserAgent); err != nil {
-			http.Error(w, "failed to scan audit log row", http.StatusInternalServerError)
+			respondAuditError(w, http.StatusInternalServerError, "failed to scan audit log row")
 			return
 		}
 		if len(detailsRaw) > 0 {
@@ -155,7 +155,7 @@ func (h *AuditHandler) exportAuditLogs(w http.ResponseWriter, r *http.Request) {
 		entries = append(entries, e)
 	}
 	if err := rows.Err(); err != nil {
-		http.Error(w, "failed to iterate audit log rows", http.StatusInternalServerError)
+		respondAuditError(w, http.StatusInternalServerError, "failed to iterate audit log rows")
 		return
 	}
 
@@ -218,7 +218,7 @@ func (h *AuditHandler) auditStats(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.pool.Query(ctx, query, args...)
 	if err != nil {
-		http.Error(w, "failed to query audit stats", http.StatusInternalServerError)
+		respondAuditError(w, http.StatusInternalServerError, "failed to query audit stats")
 		return
 	}
 	defer rows.Close()
@@ -228,14 +228,14 @@ func (h *AuditHandler) auditStats(w http.ResponseWriter, r *http.Request) {
 		var s AuditStat
 		var bucket time.Time
 		if err := rows.Scan(&s.Action, &bucket, &s.Count); err != nil {
-			http.Error(w, "failed to scan audit stat row", http.StatusInternalServerError)
+			respondAuditError(w, http.StatusInternalServerError, "failed to scan audit stat row")
 			return
 		}
 		s.Bucket = bucket.Format(time.RFC3339)
 		stats = append(stats, s)
 	}
 	if err := rows.Err(); err != nil {
-		http.Error(w, "failed to iterate audit stat rows", http.StatusInternalServerError)
+		respondAuditError(w, http.StatusInternalServerError, "failed to iterate audit stat rows")
 		return
 	}
 
@@ -301,6 +301,11 @@ func parsePagination(r *http.Request) (int, int) {
 		}
 	}
 	return page, perPage
+}
+
+// respondAuditError writes a JSON error response matching the API error contract.
+func respondAuditError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{"error": message, "message": message})
 }
 
 // writeJSON encodes v as JSON and writes it to w with the given status code.

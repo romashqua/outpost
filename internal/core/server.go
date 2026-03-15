@@ -68,6 +68,12 @@ func (rl *ipRateLimiter) allow(ip string) bool {
 		}
 	}
 
+	// Remove IP from map entirely if no recent attempts (prevent memory leak).
+	if len(valid) == 0 && len(attempts) > 0 {
+		delete(rl.attempts, ip)
+		valid = nil
+	}
+
 	if len(valid) >= rl.limit {
 		rl.attempts[ip] = valid
 		return false
@@ -180,7 +186,19 @@ func (s *Server) Shutdown() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	s.grpcServer.GracefulStop()
+	// gRPC GracefulStop with timeout — falls back to hard Stop if it hangs.
+	grpcDone := make(chan struct{})
+	go func() {
+		s.grpcServer.GracefulStop()
+		close(grpcDone)
+	}()
+	select {
+	case <-grpcDone:
+		s.logger.Info("gRPC server stopped gracefully")
+	case <-ctx.Done():
+		s.logger.Warn("gRPC graceful stop timed out, forcing stop")
+		s.grpcServer.Stop()
+	}
 
 	if err := s.httpServer.Shutdown(ctx); err != nil {
 		return fmt.Errorf("http shutdown: %w", err)
@@ -240,8 +258,7 @@ func (s *Server) setupHTTPRouter() chi.Router {
 		authHandler := handler.NewAuthHandler(s.pool, s.cfg.Auth.JWTSecret)
 		r.With(rateLimitMiddleware(authRateLimiter)).Mount("/auth", authHandler.Routes())
 
-		// Dashboard stats (no JWT for now — protected by API prefix).
-		r.Mount("/dashboard", handler.NewDashboardHandler(s.pool).Routes())
+		// Dashboard stats — moved inside protected group below.
 
 		// SCIM 2.0 provisioning (bearer token auth handled internally).
 		r.Mount("/scim/v2", scim.NewHandler(s.pool, s.logger).Routes())
@@ -293,6 +310,9 @@ func (s *Server) setupHTTPRouter() chi.Router {
 
 			// NAT traversal (STUN/TURN relay management).
 			r.Mount("/nat", nat.NewHandler(s.pool, s.logger).Routes())
+
+			// Dashboard stats.
+			r.Mount("/dashboard", handler.NewDashboardHandler(s.pool).Routes())
 
 			// Killer feature routes.
 			r.Mount("/analytics", analytics.NewHandler(s.pool).Routes())

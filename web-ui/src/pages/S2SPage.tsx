@@ -355,8 +355,13 @@ function TunnelDetailPanel({
               className="mt-2 flex flex-col gap-2"
               onSubmit={(e) => {
                 e.preventDefault()
+                const cidr = routeForm.cidr.trim()
+                if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\/\d{1,2}$/.test(cidr)) {
+                  addToast(t('s2s.invalidCidr', 'Invalid CIDR format (e.g. 10.0.0.0/24)'), 'error')
+                  return
+                }
                 addRouteMutation.mutate({
-                  cidr: routeForm.cidr,
+                  cidr,
                   description: routeForm.description || undefined,
                 })
               }}

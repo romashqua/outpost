@@ -44,13 +44,13 @@ func (h *Handler) Routes() chi.Router {
 func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 
 	status, err := h.mgr.GetUserMFAStatus(r.Context(), claims.UserID)
 	if err != nil {
-		http.Error(w, "failed to get MFA status", http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, "failed to get MFA status")
 		return
 	}
 
@@ -73,13 +73,13 @@ type setupTOTPResponse struct {
 func (h *Handler) setupTOTP(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 
 	var req setupTOTPRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if req.Issuer == "" {
@@ -88,7 +88,7 @@ func (h *Handler) setupTOTP(w http.ResponseWriter, r *http.Request) {
 
 	secret, qrURL, qrImage, err := h.mgr.EnableTOTP(r.Context(), claims.UserID, req.Issuer)
 	if err != nil {
-		http.Error(w, "failed to setup TOTP", http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, "failed to setup TOTP")
 		return
 	}
 
@@ -104,23 +104,23 @@ type codeRequest struct {
 func (h *Handler) verifyTOTP(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 
 	var req codeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if req.Code == "" {
-		http.Error(w, "code is required", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "code is required")
 		return
 	}
 
 	valid, err := h.mgr.VerifyTOTP(r.Context(), claims.UserID, req.Code)
 	if err != nil {
-		http.Error(w, "TOTP verification failed", http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, "TOTP verification failed")
 		return
 	}
 	if !valid {
@@ -129,7 +129,10 @@ func (h *Handler) verifyTOTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Ensure MFA is enabled on the user record once TOTP is verified.
-	_ = h.mgr.SetMFAEnabled(r.Context(), claims.UserID, true)
+	if err := h.mgr.SetMFAEnabled(r.Context(), claims.UserID, true); err != nil {
+		respondError(w, http.StatusInternalServerError, "TOTP verified but failed to enable MFA flag")
+		return
+	}
 
 	writeJSON(w, http.StatusOK, map[string]bool{"valid": true})
 }
@@ -138,12 +141,12 @@ func (h *Handler) verifyTOTP(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) disableTOTP(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 
 	if err := h.mgr.DisableTOTP(r.Context(), claims.UserID); err != nil {
-		http.Error(w, "failed to disable TOTP", http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, "failed to disable TOTP")
 		return
 	}
 
@@ -154,13 +157,13 @@ func (h *Handler) disableTOTP(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) generateBackupCodes(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 
 	codes, err := h.mgr.GenerateBackupCodes(r.Context(), claims.UserID)
 	if err != nil {
-		http.Error(w, "failed to generate backup codes", http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, "failed to generate backup codes")
 		return
 	}
 
@@ -171,23 +174,23 @@ func (h *Handler) generateBackupCodes(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) verifyBackupCode(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 
 	var req codeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if req.Code == "" {
-		http.Error(w, "code is required", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "code is required")
 		return
 	}
 
 	valid, err := h.mgr.ValidateBackupCode(r.Context(), claims.UserID, req.Code)
 	if err != nil {
-		http.Error(w, "backup code verification failed", http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, "backup code verification failed")
 		return
 	}
 
@@ -198,13 +201,13 @@ func (h *Handler) verifyBackupCode(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) listWebAuthnCredentials(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 
 	creds, err := h.webauthn.GetCredentials(r.Context(), claims.UserID)
 	if err != nil {
-		http.Error(w, "failed to list credentials", http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, "failed to list credentials")
 		return
 	}
 
@@ -222,17 +225,17 @@ type registerWebAuthnRequest struct {
 func (h *Handler) registerWebAuthnCredential(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 
 	var req registerWebAuthnRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	if len(req.CredentialID) == 0 || len(req.PublicKey) == 0 {
-		http.Error(w, "credential_id and public_key are required", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "credential_id and public_key are required")
 		return
 	}
 
@@ -244,7 +247,7 @@ func (h *Handler) registerWebAuthnCredential(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := h.webauthn.RegisterCredential(r.Context(), cred); err != nil {
-		http.Error(w, "failed to register credential", http.StatusInternalServerError)
+		respondError(w, http.StatusInternalServerError, "failed to register credential")
 		return
 	}
 
@@ -253,20 +256,20 @@ func (h *Handler) registerWebAuthnCredential(w http.ResponseWriter, r *http.Requ
 
 // deleteWebAuthnCredential removes a WebAuthn credential by ID.
 func (h *Handler) deleteWebAuthnCredential(w http.ResponseWriter, r *http.Request) {
-	_, ok := auth.GetUserFromContext(r.Context())
+	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
-		http.Error(w, "unauthenticated", http.StatusUnauthorized)
+		respondError(w, http.StatusUnauthorized, "unauthenticated")
 		return
 	}
 
 	credID := chi.URLParam(r, "id")
 	if credID == "" {
-		http.Error(w, "credential id is required", http.StatusBadRequest)
+		respondError(w, http.StatusBadRequest, "credential id is required")
 		return
 	}
 
-	if err := h.webauthn.DeleteCredential(r.Context(), credID); err != nil {
-		http.Error(w, "failed to delete credential", http.StatusInternalServerError)
+	if err := h.webauthn.DeleteCredentialForUser(r.Context(), credID, claims.UserID); err != nil {
+		respondError(w, http.StatusNotFound, "credential not found")
 		return
 	}
 
@@ -278,4 +281,9 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
+}
+
+// respondError writes a JSON error response matching the standard API format.
+func respondError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{"error": message, "message": message})
 }

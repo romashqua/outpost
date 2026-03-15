@@ -11,6 +11,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/romashqua/outpost/internal/auth"
 )
 
 // validHostnameRe matches a valid hostname label sequence (RFC 952 / RFC 1123).
@@ -27,20 +29,20 @@ func NewSmartRouteHandler(pool *pgxpool.Pool) *SmartRouteHandler {
 func (h *SmartRouteHandler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Get("/", h.listRoutes)
-	r.Post("/", h.createRoute)
+	r.With(auth.RequireAdmin).Post("/", h.createRoute)
 	r.Get("/{id}", h.getRoute)
-	r.Put("/{id}", h.updateRoute)
-	r.Delete("/{id}", h.deleteRoute)
-	r.Post("/{id}/entries", h.addEntry)
-	r.Delete("/{id}/entries/{entryId}", h.deleteEntry)
+	r.With(auth.RequireAdmin).Put("/{id}", h.updateRoute)
+	r.With(auth.RequireAdmin).Delete("/{id}", h.deleteRoute)
+	r.With(auth.RequireAdmin).Post("/{id}/entries", h.addEntry)
+	r.With(auth.RequireAdmin).Delete("/{id}/entries/{entryId}", h.deleteEntry)
 	r.Get("/proxy-servers", h.listProxyServers)
-	r.Post("/proxy-servers", h.createProxyServer)
+	r.With(auth.RequireAdmin).Post("/proxy-servers", h.createProxyServer)
 	r.Get("/proxy-servers/{id}", h.getProxyServer)
-	r.Put("/proxy-servers/{id}", h.updateProxyServer)
-	r.Delete("/proxy-servers/{id}", h.deleteProxyServer)
+	r.With(auth.RequireAdmin).Put("/proxy-servers/{id}", h.updateProxyServer)
+	r.With(auth.RequireAdmin).Delete("/proxy-servers/{id}", h.deleteProxyServer)
 	r.Get("/{id}/networks", h.listRouteNetworks)
-	r.Post("/{id}/networks", h.addRouteNetwork)
-	r.Delete("/{id}/networks/{networkId}", h.removeRouteNetwork)
+	r.With(auth.RequireAdmin).Post("/{id}/networks", h.addRouteNetwork)
+	r.With(auth.RequireAdmin).Delete("/{id}/networks/{networkId}", h.removeRouteNetwork)
 	return r
 }
 

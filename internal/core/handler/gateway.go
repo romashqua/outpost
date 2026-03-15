@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/romashqua/outpost/internal/auth"
 	"github.com/romashqua/outpost/internal/wireguard"
 )
 
@@ -38,10 +39,11 @@ func NewGatewayHandler(pool *pgxpool.Pool, logger ...*slog.Logger) *GatewayHandl
 func (h *GatewayHandler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Get("/", h.list)
-	r.Post("/", h.create)
+	r.With(auth.RequireAdmin).Post("/", h.create)
 	r.Route("/{id}", func(r chi.Router) {
 		r.Get("/", h.get)
-		r.Delete("/", h.delete)
+		r.With(auth.RequireAdmin).Put("/", h.update)
+		r.With(auth.RequireAdmin).Delete("/", h.delete)
 	})
 	return r
 }
@@ -216,6 +218,59 @@ func (h *GatewayHandler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	respondJSON(w, http.StatusOK, g)
+}
+
+type updateGatewayRequest struct {
+	Name     *string `json:"name,omitempty"`
+	Endpoint *string `json:"endpoint,omitempty"`
+	PublicIP *string `json:"public_ip,omitempty"`
+	Priority *int    `json:"priority,omitempty"`
+	IsActive *bool   `json:"is_active,omitempty"`
+}
+
+func (h *GatewayHandler) update(w http.ResponseWriter, r *http.Request) {
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var req updateGatewayRequest
+	if err := parseBody(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var g gatewayResponse
+	err = h.pool.QueryRow(r.Context(),
+		`UPDATE gateways
+		 SET name = COALESCE($2, name),
+		     endpoint = COALESCE($3, endpoint),
+		     public_ip = COALESCE($4::inet, public_ip),
+		     priority = COALESCE($5, priority),
+		     is_active = COALESCE($6, is_active),
+		     updated_at = now()
+		 WHERE id = $1
+		 RETURNING id, network_id, name, public_ip::text, wireguard_pubkey, endpoint, is_active, priority, last_seen, created_at, updated_at`,
+		id, req.Name, req.Endpoint, req.PublicIP, req.Priority, req.IsActive,
+	).Scan(&g.ID, &g.NetworkID, &g.Name, &g.PublicIP, &g.WireguardPubkey,
+		&g.Endpoint, &g.IsActive, &g.Priority, &g.LastSeen, &g.CreatedAt, &g.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "gateway not found")
+		} else {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+				respondError(w, http.StatusConflict, "gateway with this name or endpoint already exists")
+			} else {
+				respondError(w, http.StatusInternalServerError, "failed to update gateway")
+			}
+		}
+		return
+	}
+
+	h.log.Info("gateway updated", "id", g.ID, "name", g.Name)
 	respondJSON(w, http.StatusOK, g)
 }
 

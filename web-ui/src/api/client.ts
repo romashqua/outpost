@@ -24,10 +24,16 @@ async function request<T>(
   })
 
   if (response.status === 401) {
-    localStorage.removeItem('outpost-token')
-    localStorage.removeItem('outpost-user')
-    window.location.href = '/login'
-    throw new Error('Unauthorized')
+    // Don't nuke auth state on the login page — a 401 there just means
+    // invalid credentials, and the caller displays the error itself.
+    if (!window.location.pathname.startsWith('/login')) {
+      localStorage.removeItem('outpost-token')
+      localStorage.removeItem('outpost-user')
+      // Dispatch event so the React auth store can update without circular imports.
+      window.dispatchEvent(new Event('auth:logout'))
+    }
+    const body = await response.json().catch(() => ({ message: 'Not authorized' }))
+    throw new Error(body.message || body.error || 'Not authorized')
   }
 
   if (!response.ok) {

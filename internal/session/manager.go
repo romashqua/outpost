@@ -66,7 +66,11 @@ func (ms *MemoryStore) Get(_ context.Context, id string) (*Session, error) {
 	if !ok {
 		return nil, fmt.Errorf("session %s not found", id)
 	}
-	s := v.(*Session)
+	s, ok := v.(*Session)
+	if !ok {
+		ms.m.Delete(id)
+		return nil, fmt.Errorf("session %s: invalid type in store", id)
+	}
 	if s.isExpired() {
 		ms.m.Delete(id)
 		return nil, fmt.Errorf("session %s expired", id)
@@ -81,7 +85,7 @@ func (ms *MemoryStore) Delete(_ context.Context, id string) error {
 
 func (ms *MemoryStore) DeleteByUser(_ context.Context, userID string) error {
 	ms.m.Range(func(key, value any) bool {
-		if s := value.(*Session); s.UserID == userID {
+		if s, ok := value.(*Session); ok && s.UserID == userID {
 			ms.m.Delete(key)
 		}
 		return true
@@ -93,8 +97,7 @@ func (ms *MemoryStore) List(_ context.Context, userID string) ([]*Session, error
 	var sessions []*Session
 	now := time.Now()
 	ms.m.Range(func(key, value any) bool {
-		s := value.(*Session)
-		if s.UserID == userID && now.Before(s.ExpiresAt) {
+		if s, ok := value.(*Session); ok && s.UserID == userID && now.Before(s.ExpiresAt) {
 			sessions = append(sessions, s)
 		}
 		return true
@@ -107,9 +110,14 @@ func (ms *MemoryStore) Touch(_ context.Context, id string, ttl time.Duration) er
 	if !ok {
 		return fmt.Errorf("session %s not found", id)
 	}
-	s := v.(*Session)
-	s.ExpiresAt = time.Now().Add(ttl)
-	ms.m.Store(id, s)
+	old, ok := v.(*Session)
+	if !ok {
+		return fmt.Errorf("session %s: invalid type in store", id)
+	}
+	// Copy to avoid race with concurrent Get() calls.
+	updated := *old
+	updated.ExpiresAt = time.Now().Add(ttl)
+	ms.m.Store(id, &updated)
 	return nil
 }
 

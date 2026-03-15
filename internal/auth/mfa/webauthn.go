@@ -73,6 +73,9 @@ func (s *WebAuthnStore) GetCredentials(ctx context.Context, userID string) ([]We
 		}
 		creds = append(creds, c)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating WebAuthn credentials: %w", err)
+	}
 	return creds, nil
 }
 
@@ -96,6 +99,21 @@ func (s *WebAuthnStore) DeleteCredential(ctx context.Context, credentialID strin
 	)
 	if err != nil {
 		return fmt.Errorf("deleting WebAuthn credential: %w", err)
+	}
+	return nil
+}
+
+// DeleteCredentialForUser removes a WebAuthn credential only if it belongs
+// to the specified user, preventing cross-user deletion.
+func (s *WebAuthnStore) DeleteCredentialForUser(ctx context.Context, credentialID, userID string) error {
+	tag, err := s.pool.Exec(ctx,
+		`DELETE FROM mfa_webauthn WHERE id = $1 AND user_id = $2`, credentialID, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("deleting WebAuthn credential: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("credential not found or not owned by user")
 	}
 	return nil
 }

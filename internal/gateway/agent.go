@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -17,6 +18,8 @@ import (
 type Agent struct {
 	cfg    *config.Config
 	logger *slog.Logger
+
+	mu     sync.Mutex
 	conn   *grpc.ClientConn
 	client gatewayv1.GatewayServiceClient
 }
@@ -41,7 +44,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			if err != nil {
 				a.logger.Warn("failed to fetch config, retrying",
 					"error", err, "attempt", attempt)
-				a.conn.Close()
+				a.closeConn()
 			} else {
 				break
 			}
@@ -54,7 +57,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		case <-time.After(delay):
 		}
 	}
-	defer a.conn.Close()
+	defer a.closeConn()
 
 	a.logger.Info("received gateway configuration",
 		"gateway_id", cfg.GatewayId,
@@ -69,7 +72,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		errCh <- a.syncLoop(ctx)
 	}()
 
-	// Start heartbeat loop.
+	// Start heartbeat loop — stops when ctx is cancelled.
 	go a.heartbeatLoop(ctx)
 
 	select {
@@ -81,7 +84,21 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 }
 
+// closeConn safely closes the current gRPC connection.
+func (a *Agent) closeConn() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.conn != nil {
+		a.conn.Close()
+		a.conn = nil
+		a.client = nil
+	}
+}
+
 func (a *Agent) connect(ctx context.Context) error {
+	// Close previous connection if any (prevents leak on reconnect).
+	a.closeConn()
+
 	// TODO: Add TLS credentials for production.
 	conn, err := grpc.NewClient(
 		a.cfg.Gateway.CoreAddr,
@@ -91,8 +108,11 @@ func (a *Agent) connect(ctx context.Context) error {
 		return fmt.Errorf("dial core: %w", err)
 	}
 
+	a.mu.Lock()
 	a.conn = conn
 	a.client = gatewayv1.NewGatewayServiceClient(conn)
+	a.mu.Unlock()
+
 	a.logger.Info("connected to core", "addr", a.cfg.Gateway.CoreAddr)
 	return nil
 }
@@ -101,8 +121,22 @@ func (a *Agent) authContext(ctx context.Context) context.Context {
 	return metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+a.cfg.Gateway.Token)
 }
 
+func (a *Agent) getClient() gatewayv1.GatewayServiceClient {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.client
+}
+
 func (a *Agent) fetchConfig(ctx context.Context) (*gatewayv1.GatewayConfig, error) {
-	resp, err := a.client.GetConfig(a.authContext(ctx), &gatewayv1.ConfigRequest{
+	fetchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	client := a.getClient()
+	if client == nil {
+		return nil, fmt.Errorf("no gRPC client available")
+	}
+
+	resp, err := client.GetConfig(a.authContext(fetchCtx), &gatewayv1.ConfigRequest{
 		GatewayToken: a.cfg.Gateway.Token,
 	})
 	if err != nil {
@@ -127,10 +161,16 @@ func (a *Agent) syncLoop(ctx context.Context) error {
 }
 
 func (a *Agent) runSync(ctx context.Context) error {
-	stream, err := a.client.Sync(a.authContext(ctx))
+	client := a.getClient()
+	if client == nil {
+		return fmt.Errorf("no gRPC client available")
+	}
+
+	stream, err := client.Sync(a.authContext(ctx))
 	if err != nil {
 		return fmt.Errorf("open sync stream: %w", err)
 	}
+	defer stream.CloseSend()
 
 	for {
 		event, err := stream.Recv()
@@ -186,7 +226,12 @@ func (a *Agent) heartbeatLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if _, err := a.client.Heartbeat(a.authContext(ctx), &gatewayv1.HeartbeatRequest{}); err != nil {
+			client := a.getClient()
+			if client == nil {
+				a.logger.Warn("heartbeat skipped: no client")
+				continue
+			}
+			if _, err := client.Heartbeat(a.authContext(ctx), &gatewayv1.HeartbeatRequest{}); err != nil {
 				a.logger.Warn("heartbeat failed", "error", err)
 			}
 		}

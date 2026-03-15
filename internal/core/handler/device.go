@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/romashqua/outpost/internal/auth"
 	"github.com/romashqua/outpost/internal/wireguard"
 )
 
@@ -42,8 +43,8 @@ func (h *DeviceHandler) Routes() chi.Router {
 		r.Get("/", h.get)
 		r.Get("/config", h.downloadConfig)
 		r.Delete("/", h.delete)
-		r.Post("/approve", h.approve)
-		r.Post("/revoke", h.revoke)
+		r.With(auth.RequireAdmin).Post("/approve", h.approve)
+		r.With(auth.RequireAdmin).Post("/revoke", h.revoke)
 	})
 	return r
 }

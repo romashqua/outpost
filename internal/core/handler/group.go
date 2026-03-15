@@ -11,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/romashqua/outpost/internal/auth"
 )
 
 // GroupHandler provides CRUD endpoints for group management and ACL assignment.
@@ -32,17 +34,17 @@ func NewGroupHandler(pool *pgxpool.Pool, logger ...*slog.Logger) *GroupHandler {
 func (h *GroupHandler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Get("/", h.list)
-	r.Post("/", h.create)
+	r.With(auth.RequireAdmin).Post("/", h.create)
 	r.Route("/{id}", func(r chi.Router) {
 		r.Get("/", h.get)
-		r.Put("/", h.update)
-		r.Delete("/", h.delete)
+		r.With(auth.RequireAdmin).Put("/", h.update)
+		r.With(auth.RequireAdmin).Delete("/", h.delete)
 		r.Get("/members", h.listMembers)
-		r.Post("/members", h.addMember)
-		r.Delete("/members/{userId}", h.removeMember)
+		r.With(auth.RequireAdmin).Post("/members", h.addMember)
+		r.With(auth.RequireAdmin).Delete("/members/{userId}", h.removeMember)
 		r.Get("/acls", h.listACLs)
-		r.Post("/acls", h.addACL)
-		r.Delete("/acls/{aclId}", h.removeACL)
+		r.With(auth.RequireAdmin).Post("/acls", h.addACL)
+		r.With(auth.RequireAdmin).Delete("/acls/{aclId}", h.removeACL)
 	})
 	return r
 }

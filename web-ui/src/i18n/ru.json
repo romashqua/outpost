@@ -106,7 +106,8 @@
     "custom": "Другое",
     "descriptionPlaceholder": "Описание группы",
     "allowedIpsHint": "CIDR через запятую, например 10.0.0.0/24",
-    "network": "Сеть"
+    "network": "Сеть",
+    "type": "Тип"
   },
   "devices": {
     "title": "Управление устройствами",
@@ -491,7 +492,9 @@
     "copy": "Копировать",
     "status": "Статус",
     "created": "Создано",
-    "test": "Тест"
+    "test": "Тест",
+    "add": "Добавить",
+    "close": "Закрыть"
   },
   "status": {
     "active": "Активен",
@@ -516,7 +519,20 @@
     "error": "Неверные учётные данные",
     "mfaPrompt": "Введите код MFA",
     "mfaCode": "Код MFA",
-    "verify": "Подтвердить"
+    "verify": "Подтвердить",
+    "forgotPrompt": "Введите email для получения ссылки на сброс пароля",
+    "emailPlaceholder": "Email адрес",
+    "sendReset": "Отправить ссылку",
+    "resetSent": "Если email существует, ссылка для сброса была отправлена. Проверьте почту.",
+    "backToLogin": "Назад к входу",
+    "changePasswordPrompt": "Необходимо сменить пароль перед продолжением",
+    "currentPassword": "Текущий пароль",
+    "newPassword": "Новый пароль",
+    "confirmPassword": "Подтвердите новый пароль",
+    "changePassword": "Сменить пароль",
+    "passwordChanged": "Пароль успешно изменён",
+    "passwordMismatch": "Пароли не совпадают",
+    "passwordTooShort": "Пароль должен быть не менее 8 символов"
   },
   "docs": {
     "title": "Документация",
@@ -813,5 +829,37 @@
         "content": "### Шлюз показывает \"offline\" в UI\n\ngRPC-поток шлюза к core разорван. Проверьте:\n\n- **Core URL** — доступен ли gRPC-адрес (`grpc://core:50051`) с хоста шлюза?\n- **Токен** — валиден ли токен шлюза? Токены одноразовые для регистрации.\n- **Файрвол** — открыт ли порт 50051?\n- **TLS** — при использовании TLS убедитесь что сертификаты валидны.\n\n### Отладка\n\n[code:bash]# Логи шлюза\njournalctl -u outpost-gateway -f\n\n# Проверка gRPC-подключения\ngrpcurl -plaintext core-host:50051 list\n\n# Проверка процесса шлюза\nps aux | grep outpost-gateway[/code]"
       }
     }
+  },
+  "tenants": {
+    "title": "Управление арендаторами",
+    "createTenant": "Создать арендатора",
+    "editTenant": "Редактировать арендатора",
+    "deactivateTenant": "Деактивировать арендатора",
+    "confirmDeactivate": "Вы уверены, что хотите деактивировать этого арендатора? Все пользователи потеряют доступ.",
+    "name": "Название",
+    "slug": "Slug",
+    "plan": "Тариф",
+    "plan_free": "Бесплатный",
+    "plan_pro": "Про",
+    "plan_enterprise": "Корпоративный",
+    "status": "Статус",
+    "maxUsers": "Макс. пользователей",
+    "maxDevices": "Макс. устройств",
+    "maxNetworks": "Макс. сетей",
+    "createdAt": "Создано",
+    "userCount": "Пользователи",
+    "deviceCount": "Устройства",
+    "networkCount": "Сети",
+    "gatewayCount": "Шлюзы",
+    "stats": "Статистика",
+    "search": "Поиск арендаторов...",
+    "creating": "Создание...",
+    "saving": "Сохранение...",
+    "deactivate": "Деактивировать",
+    "deactivating": "Деактивация...",
+    "tenantCreated": "Арендатор создан",
+    "tenantUpdated": "Арендатор обновлён",
+    "tenantDeactivated": "Арендатор деактивирован",
+    "failedToLoad": "Не удалось загрузить арендаторов"
   }
 }

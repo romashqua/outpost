@@ -14,6 +14,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/romashqua/outpost/internal/auth"
 )
 
 // NetworkHandler provides CRUD endpoints for network management.
@@ -35,11 +37,11 @@ func NewNetworkHandler(pool *pgxpool.Pool, logger ...*slog.Logger) *NetworkHandl
 func (h *NetworkHandler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Get("/", h.list)
-	r.Post("/", h.create)
+	r.With(auth.RequireAdmin).Post("/", h.create)
 	r.Route("/{id}", func(r chi.Router) {
 		r.Get("/", h.get)
-		r.Put("/", h.update)
-		r.Delete("/", h.delete)
+		r.With(auth.RequireAdmin).Put("/", h.update)
+		r.With(auth.RequireAdmin).Delete("/", h.delete)
 	})
 	return r
 }
@@ -215,6 +217,21 @@ func (h *NetworkHandler) update(w http.ResponseWriter, r *http.Request) {
 	if err := parseBody(r, &req); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	// Validate CIDR format if address is being updated.
+	if req.Address != nil && *req.Address != "" {
+		ip, ipNet, err := net.ParseCIDR(*req.Address)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, fmt.Sprintf("invalid CIDR format: %s", *req.Address))
+			return
+		}
+		if !ip.Equal(ipNet.IP) {
+			respondError(w, http.StatusBadRequest, fmt.Sprintf(
+				"invalid network address: %s has host bits set — did you mean %s?",
+				*req.Address, ipNet.String()))
+			return
+		}
 	}
 
 	// Validate port and keepalive if provided.

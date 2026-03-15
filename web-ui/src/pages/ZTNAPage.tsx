@@ -418,7 +418,7 @@ export default function ZTNAPage() {
             <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-2 font-mono">
               {t('ztna.noPolicies')}
             </h2>
-            <Button className="mt-4" onClick={() => setShowCreatePolicy(true)}>
+            <Button className="mt-4" onClick={() => { createPolicyMutation.reset(); setShowCreatePolicy(true) }}>
               <Plus size={16} className="mr-1" /> {t('ztna.createPolicy')}
             </Button>
           </Card>
@@ -436,7 +436,7 @@ export default function ZTNAPage() {
             <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-2 font-mono">
               {t('ztna.noDNSRules')}
             </h2>
-            <Button className="mt-4" onClick={() => setShowCreateDNS(true)}>
+            <Button className="mt-4" onClick={() => { createDNSMutation.reset(); setShowCreateDNS(true) }}>
               <Plus size={16} className="mr-1" /> {t('ztna.addDNSRule')}
             </Button>
           </Card>

@@ -145,7 +145,6 @@ export default function DevicesPage() {
   const downloadConfigMutation = useMutation({
     mutationFn: (id: string) => api.get<ConfigResponse>(`/devices/${id}/config`),
     onSuccess: (resp) => {
-      queryClient.invalidateQueries({ queryKey: ['devices'] })
       setConfigText(resp.config)
       setShowConfigModal(true)
     },

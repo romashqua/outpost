@@ -26,6 +26,7 @@ type GatewayMode struct {
 	mu        sync.RWMutex
 	running   bool
 	stopCh    chan struct{}
+	stopOnce  sync.Once
 	configDir string
 }
 
@@ -136,7 +137,7 @@ func (g *GatewayMode) Stop() error {
 		return nil
 	}
 
-	close(g.stopCh)
+	g.stopOnce.Do(func() { close(g.stopCh) })
 	g.running = false
 
 	confPath := filepath.Join(g.configDir, "outpost-s2s.conf")

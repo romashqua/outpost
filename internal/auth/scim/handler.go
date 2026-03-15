@@ -5,6 +5,7 @@ package scim
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -46,9 +47,51 @@ func NewHandler(pool *pgxpool.Pool, logger *slog.Logger) *Handler {
 	return &Handler{pool: pool, logger: logger}
 }
 
+// bearerTokenAuth is a middleware that validates SCIM bearer tokens.
+// The token is stored in the settings table under key "scim_token".
+func (h *Handler) bearerTokenAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" || len(authHeader) < 8 || authHeader[:7] != "Bearer " {
+			respondSCIMError(w, http.StatusUnauthorized, "Bearer token required")
+			return
+		}
+		token := authHeader[7:]
+
+		var storedToken string
+		err := h.pool.QueryRow(r.Context(),
+			`SELECT value::text FROM settings WHERE key = 'scim_token'`,
+		).Scan(&storedToken)
+		if err != nil {
+			respondSCIMError(w, http.StatusForbidden, "SCIM provisioning is not configured")
+			return
+		}
+		// Remove surrounding quotes from JSONB text cast.
+		storedToken = trimJSONString(storedToken)
+
+		if subtle.ConstantTimeCompare([]byte(token), []byte(storedToken)) != 1 {
+			respondSCIMError(w, http.StatusUnauthorized, "Invalid bearer token")
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// trimJSONString removes surrounding double-quotes from a JSONB string value.
+func trimJSONString(s string) string {
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		return s[1 : len(s)-1]
+	}
+	return s
+}
+
 // Routes returns a chi.Router with all SCIM 2.0 endpoints mounted.
 func (h *Handler) Routes() chi.Router {
 	r := chi.NewRouter()
+
+	// Bearer token authentication for all SCIM endpoints.
+	r.Use(h.bearerTokenAuth)
 
 	// User endpoints.
 	r.Get("/Users", h.listUsers)
@@ -206,6 +249,9 @@ func parseSCIMPagination(r *http.Request) (startIndex, count int) {
 	}
 	if count < 1 {
 		count = defaultCount
+	}
+	if count > 1000 {
+		count = 1000
 	}
 	return startIndex, count
 }

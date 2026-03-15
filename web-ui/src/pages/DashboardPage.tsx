@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import { Users, Laptop2, AlertCircle, Loader2, Network, Shield, Clock } from 'lucide-react'
@@ -86,9 +87,13 @@ function ErrorState({ message }: { message: string }) {
 export default function DashboardPage() {
   const { t } = useTranslation()
 
-  const now = new Date()
-  const from = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString()
-  const to = now.toISOString()
+  const { from, to } = useMemo(() => {
+    const n = new Date()
+    return {
+      from: new Date(n.getTime() - 24 * 60 * 60 * 1000).toISOString(),
+      to: n.toISOString(),
+    }
+  }, [])
 
   const statsQuery = useQuery<DashboardStats>({
     queryKey: ['dashboard', 'stats'],

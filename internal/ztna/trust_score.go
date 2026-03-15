@@ -3,6 +3,7 @@ package ztna
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -234,10 +235,12 @@ func (c *TrustScoreCalculator) Calculate(ctx context.Context, deviceID uuid.UUID
 	}
 
 	// Store score in DB.
-	_, _ = c.pool.Exec(ctx, `
+	if _, err := c.pool.Exec(ctx, `
 		INSERT INTO device_trust_scores (device_id, score, level, violations, evaluated_at)
 		VALUES ($1, $2, $3, $4, $5)
-	`, deviceID, totalScore, string(level), violations, result.EvaluatedAt)
+	`, deviceID, totalScore, string(level), violations, result.EvaluatedAt); err != nil {
+		slog.Error("failed to store trust score", "device_id", deviceID, "error", err)
+	}
 
 	return result, nil
 }

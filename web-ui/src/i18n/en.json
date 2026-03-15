@@ -106,7 +106,8 @@
     "custom": "Custom",
     "descriptionPlaceholder": "Group description",
     "allowedIpsHint": "Comma-separated CIDR notation, e.g. 10.0.0.0/24",
-    "network": "Network"
+    "network": "Network",
+    "type": "Type"
   },
   "devices": {
     "title": "Device Management",
@@ -491,7 +492,9 @@
     "copy": "Copy",
     "status": "Status",
     "created": "Created",
-    "test": "Test"
+    "test": "Test",
+    "add": "Add",
+    "close": "Close"
   },
   "status": {
     "active": "Active",
@@ -516,7 +519,20 @@
     "error": "Invalid credentials",
     "mfaPrompt": "Enter your MFA code",
     "mfaCode": "MFA Code",
-    "verify": "Verify"
+    "verify": "Verify",
+    "forgotPrompt": "Enter your email to receive a reset link",
+    "emailPlaceholder": "Email address",
+    "sendReset": "Send Reset Link",
+    "resetSent": "If the email exists, a reset link has been sent. Check your inbox.",
+    "backToLogin": "Back to login",
+    "changePasswordPrompt": "You must change your password before continuing",
+    "currentPassword": "Current password",
+    "newPassword": "New password",
+    "confirmPassword": "Confirm new password",
+    "changePassword": "Change Password",
+    "passwordChanged": "Password changed successfully",
+    "passwordMismatch": "Passwords do not match",
+    "passwordTooShort": "Password must be at least 8 characters"
   },
   "docs": {
     "title": "Documentation",
@@ -813,5 +829,37 @@
         "content": "### Gateway shows \"offline\" in UI\n\nThe gateway's gRPC stream to core has disconnected. Check:\n\n- **Core URL** — is the gRPC address (`grpc://core:50051`) reachable from the gateway host?\n- **Token** — is the gateway token valid? Tokens are one-time use for enrollment.\n- **Firewall** — is port 50051 (or your configured gRPC port) open?\n- **TLS** — if using TLS, ensure certificates are valid and trusted.\n\n### Debug\n\n[code:bash]# Check gateway logs\njournalctl -u outpost-gateway -f\n\n# Test gRPC connectivity\ngrpcurl -plaintext core-host:50051 list\n\n# Check gateway process\nps aux | grep outpost-gateway[/code]"
       }
     }
+  },
+  "tenants": {
+    "title": "Tenant Management",
+    "createTenant": "Create Tenant",
+    "editTenant": "Edit Tenant",
+    "deactivateTenant": "Deactivate Tenant",
+    "confirmDeactivate": "Are you sure you want to deactivate this tenant? All users will lose access.",
+    "name": "Name",
+    "slug": "Slug",
+    "plan": "Plan",
+    "plan_free": "Free",
+    "plan_pro": "Pro",
+    "plan_enterprise": "Enterprise",
+    "status": "Status",
+    "maxUsers": "Max Users",
+    "maxDevices": "Max Devices",
+    "maxNetworks": "Max Networks",
+    "createdAt": "Created At",
+    "userCount": "Users",
+    "deviceCount": "Devices",
+    "networkCount": "Networks",
+    "gatewayCount": "Gateways",
+    "stats": "Statistics",
+    "search": "Search tenants...",
+    "creating": "Creating...",
+    "saving": "Saving...",
+    "deactivate": "Deactivate",
+    "deactivating": "Deactivating...",
+    "tenantCreated": "Tenant created",
+    "tenantUpdated": "Tenant updated",
+    "tenantDeactivated": "Tenant deactivated",
+    "failedToLoad": "Failed to load tenants"
   }
 }

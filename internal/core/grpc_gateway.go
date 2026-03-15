@@ -25,7 +25,12 @@ func registerGatewayService(srv *grpc.Server, pool *pgxpool.Pool, logger *slog.L
 }
 
 func (s *gatewayService) GetConfig(ctx context.Context, req *gatewayv1.ConfigRequest) (*gatewayv1.GatewayConfig, error) {
-	s.logger.Info("gateway requesting config", "token", req.GetGatewayToken()[:8]+"...")
+	token := req.GetGatewayToken()
+	tokenPreview := token
+	if len(tokenPreview) > 8 {
+		tokenPreview = tokenPreview[:8] + "..."
+	}
+	s.logger.Info("gateway requesting config", "token", tokenPreview)
 
 	// Return a minimal config so the gateway can start.
 	return &gatewayv1.GatewayConfig{

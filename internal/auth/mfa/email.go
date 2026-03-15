@@ -34,7 +34,7 @@ func NewEmailTokenManager(pool *pgxpool.Pool) *EmailTokenManager {
 // minute TTL. The code is returned so the caller can deliver it (email
 // sending will be wired in later). The email parameter is accepted for
 // future use when the mailer is integrated.
-func (m *EmailTokenManager) SendToken(_ string, email string) (string, error) {
+func (m *EmailTokenManager) SendToken(userID string, email string) (string, error) {
 	_ = email // will be used by mailer integration
 
 	code, err := generateDigitCode(6)
@@ -42,7 +42,8 @@ func (m *EmailTokenManager) SendToken(_ string, email string) (string, error) {
 		return "", fmt.Errorf("generating email token: %w", err)
 	}
 
-	m.tokens.Store(email, emailToken{
+	// Store by userID (not email) so ValidateToken can find it.
+	m.tokens.Store(userID, emailToken{
 		Code:      code,
 		ExpiresAt: time.Now().Add(emailTokenTTL),
 	})
@@ -58,7 +59,11 @@ func (m *EmailTokenManager) ValidateToken(userID, code string) bool {
 		return false
 	}
 
-	tok := val.(emailToken)
+	tok, ok := val.(emailToken)
+	if !ok {
+		m.tokens.Delete(userID)
+		return false
+	}
 	if time.Now().After(tok.ExpiresAt) {
 		m.tokens.Delete(userID)
 		return false

@@ -326,6 +326,10 @@ func (c *Client) tokenPath() string {
 }
 
 func defaultConfigDir() string {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		// Fallback to /tmp to avoid writing to filesystem root.
+		return filepath.Join(os.TempDir(), ".outpost")
+	}
 	return filepath.Join(home, ".outpost")
 }

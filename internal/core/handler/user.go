@@ -45,15 +45,16 @@ func NewUserHandler(pool *pgxpool.Pool, logger *slog.Logger, mailer ...Mailer) *
 }
 
 // Routes returns a chi.Router with user CRUD endpoints mounted.
+// Write operations (create, update, delete, activate) require admin privileges.
 func (h *UserHandler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Get("/", h.list)
-	r.Post("/", h.create)
+	r.With(auth.RequireAdmin).Post("/", h.create)
 	r.Route("/{id}", func(r chi.Router) {
 		r.Get("/", h.get)
-		r.Put("/", h.update)
-		r.Delete("/", h.delete)
-		r.Patch("/activate", h.activate)
+		r.With(auth.RequireAdmin).Put("/", h.update)
+		r.With(auth.RequireAdmin).Delete("/", h.delete)
+		r.With(auth.RequireAdmin).Patch("/activate", h.activate)
 	})
 	return r
 }
@@ -182,10 +183,12 @@ func (h *UserHandler) create(w http.ResponseWriter, r *http.Request) {
 	if req.IsAdmin {
 		roleName = "admin"
 	}
-	_, _ = h.pool.Exec(r.Context(),
+	if _, err := h.pool.Exec(r.Context(),
 		`INSERT INTO user_roles (user_id, role_id)
 		 SELECT $1, id FROM roles WHERE name = $2
-		 ON CONFLICT DO NOTHING`, u.ID, roleName)
+		 ON CONFLICT DO NOTHING`, u.ID, roleName); err != nil {
+		h.log.Error("failed to assign role to user", "user_id", u.ID, "role", roleName, "error", err)
+	}
 
 	// Send welcome email asynchronously (best-effort).
 	if h.mailer != nil {

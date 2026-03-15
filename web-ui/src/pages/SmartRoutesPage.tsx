@@ -320,7 +320,7 @@ export default function SmartRoutesPage() {
             </Button>
           )}
           {activeTab === 'proxies' && (
-            <Button onClick={() => setShowCreateProxy(true)}>
+            <Button onClick={() => { createProxyMutation.reset(); setShowCreateProxy(true) }}>
               <Plus size={16} className="mr-1" /> {t('smartRoutes.addProxy')}
             </Button>
           )}
@@ -364,7 +364,7 @@ export default function SmartRoutesPage() {
               <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-2 font-mono">
                 {t('smartRoutes.noRoutes')}
               </h2>
-              <Button className="mt-4" onClick={() => setShowCreateRoute(true)}>
+              <Button className="mt-4" onClick={() => { createRouteMutation.reset(); setShowCreateRoute(true) }}>
                 <Plus size={16} className="mr-1" /> {t('smartRoutes.createGroup')}
               </Button>
             </Card>
@@ -423,7 +423,7 @@ export default function SmartRoutesPage() {
               <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-2 font-mono">
                 {t('smartRoutes.noProxies')}
               </h2>
-              <Button className="mt-4" onClick={() => setShowCreateProxy(true)}>
+              <Button className="mt-4" onClick={() => { createProxyMutation.reset(); setShowCreateProxy(true) }}>
                 <Plus size={16} className="mr-1" /> {t('smartRoutes.addProxy')}
               </Button>
             </Card>
@@ -578,11 +578,16 @@ export default function SmartRoutesPage() {
         <form
           onSubmit={(e) => {
             e.preventDefault()
+            const port = parseInt(proxyForm.port)
+            if (!port || port < 1 || port > 65535) {
+              addToast(t('smartRoutes.invalidPort', 'Port must be between 1 and 65535'), 'error')
+              return
+            }
             createProxyMutation.mutate({
               name: proxyForm.name,
               type: proxyForm.type,
               address: proxyForm.address,
-              port: parseInt(proxyForm.port) || 0,
+              port,
             })
           }}
           className="flex flex-col gap-4"
@@ -619,6 +624,8 @@ export default function SmartRoutesPage() {
           <Input
             label={t('smartRoutes.port')}
             type="number"
+            min={1}
+            max={65535}
             value={proxyForm.port}
             onChange={(e) => setProxyForm({ ...proxyForm, port: e.target.value })}
             placeholder="e.g. 1080"

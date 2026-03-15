@@ -328,26 +328,52 @@ func (h *Handler) stats(w http.ResponseWriter, r *http.Request) {
 	var s tenantStats
 	s.TenantID = id
 
+	ctx := r.Context()
+
 	// Count users.
-	_ = h.pool.QueryRow(r.Context(),
+	if err := h.pool.QueryRow(ctx,
 		`SELECT COALESCE(COUNT(*), 0) FROM users WHERE tenant_id = $1`, id,
-	).Scan(&s.UserCount)
+	).Scan(&s.UserCount); err != nil {
+		h.log.Error("failed to count tenant users", "tenant_id", id, "error", err)
+		respondJSON(w, http.StatusInternalServerError, map[string]string{
+			"error": "failed to load stats", "message": "failed to load stats",
+		})
+		return
+	}
 
 	// Count devices (through users since devices table has no tenant_id).
-	_ = h.pool.QueryRow(r.Context(),
+	if err := h.pool.QueryRow(ctx,
 		`SELECT COALESCE(COUNT(*), 0) FROM devices d
 		 WHERE d.user_id IN (SELECT id FROM users WHERE tenant_id = $1)`, id,
-	).Scan(&s.DeviceCount)
+	).Scan(&s.DeviceCount); err != nil {
+		h.log.Error("failed to count tenant devices", "tenant_id", id, "error", err)
+		respondJSON(w, http.StatusInternalServerError, map[string]string{
+			"error": "failed to load stats", "message": "failed to load stats",
+		})
+		return
+	}
 
 	// Count networks.
-	_ = h.pool.QueryRow(r.Context(),
+	if err := h.pool.QueryRow(ctx,
 		`SELECT COALESCE(COUNT(*), 0) FROM networks WHERE tenant_id = $1`, id,
-	).Scan(&s.NetworkCount)
+	).Scan(&s.NetworkCount); err != nil {
+		h.log.Error("failed to count tenant networks", "tenant_id", id, "error", err)
+		respondJSON(w, http.StatusInternalServerError, map[string]string{
+			"error": "failed to load stats", "message": "failed to load stats",
+		})
+		return
+	}
 
 	// Count gateways.
-	_ = h.pool.QueryRow(r.Context(),
+	if err := h.pool.QueryRow(ctx,
 		`SELECT COALESCE(COUNT(*), 0) FROM gateways WHERE tenant_id = $1`, id,
-	).Scan(&s.GatewayCount)
+	).Scan(&s.GatewayCount); err != nil {
+		h.log.Error("failed to count tenant gateways", "tenant_id", id, "error", err)
+		respondJSON(w, http.StatusInternalServerError, map[string]string{
+			"error": "failed to load stats", "message": "failed to load stats",
+		})
+		return
+	}
 
 	respondJSON(w, http.StatusOK, s)
 }

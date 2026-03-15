@@ -177,6 +177,9 @@ func (m *Manager) ValidateBackupCode(ctx context.Context, userID, code string) (
 			return true, nil
 		}
 	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("iterating backup codes: %w", err)
+	}
 
 	return false, nil
 }

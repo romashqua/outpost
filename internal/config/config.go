@@ -1,6 +1,9 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"log/slog"
 	"os"
 	"strconv"
 	"time"
@@ -163,7 +166,7 @@ func Load() *Config {
 			MTU:           envInt("OUTPOST_WG_MTU", 1420),
 		},
 		Auth: Auth{
-			JWTSecret:  env("OUTPOST_JWT_SECRET", ""),
+			JWTSecret:  envJWTSecret(),
 			TokenTTL:   envDuration("OUTPOST_TOKEN_TTL", 15*time.Minute),
 			SessionTTL: envDuration("OUTPOST_SESSION_TTL", 24*time.Hour),
 		},
@@ -251,4 +254,20 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 		return fallback
 	}
 	return d
+}
+
+// envJWTSecret reads OUTPOST_JWT_SECRET from the environment. If empty, it
+// generates a random 32-byte hex secret and logs a warning. An empty JWT
+// secret is a critical security vulnerability — anyone can forge tokens.
+func envJWTSecret() string {
+	if v := os.Getenv("OUTPOST_JWT_SECRET"); v != "" {
+		return v
+	}
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic("failed to generate random JWT secret: " + err.Error())
+	}
+	secret := hex.EncodeToString(b)
+	slog.Warn("OUTPOST_JWT_SECRET not set — generated random secret (tokens will not survive restart)")
+	return secret
 }

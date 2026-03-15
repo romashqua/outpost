@@ -66,7 +66,7 @@ func (p *Provider) authorize(w http.ResponseWriter, r *http.Request) {
 	// it from context (set by auth middleware).
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
-		http.Error(w, "authentication required", http.StatusUnauthorized)
+		oidcError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
 	userID := claims.UserID
@@ -78,12 +78,12 @@ func (p *Provider) authorize(w http.ResponseWriter, r *http.Request) {
 
 	client, err := p.store.GetClient(r.Context(), clientID)
 	if err != nil {
-		http.Error(w, "invalid client_id", http.StatusBadRequest)
+		oidcError(w, http.StatusBadRequest, "invalid client_id")
 		return
 	}
 
 	if !ValidateRedirectURI(client, redirectURI) {
-		http.Error(w, "invalid redirect_uri", http.StatusBadRequest)
+		oidcError(w, http.StatusBadRequest, "invalid redirect_uri")
 		return
 	}
 
@@ -100,7 +100,7 @@ func (p *Provider) authorize(w http.ResponseWriter, r *http.Request) {
 
 	code, err := generateRandomCode(32)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		oidcError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
@@ -119,7 +119,7 @@ func (p *Provider) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := p.store.CreateAuthCode(r.Context(), ac); err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		oidcError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
@@ -262,7 +262,7 @@ func (p *Provider) token(w http.ResponseWriter, r *http.Request) {
 func (p *Provider) userinfo(w http.ResponseWriter, r *http.Request) {
 	tokenStr := extractBearerToken(r)
 	if tokenStr == "" {
-		http.Error(w, "missing bearer token", http.StatusUnauthorized)
+		oidcError(w, http.StatusUnauthorized, "missing bearer token")
 		return
 	}
 
@@ -274,19 +274,19 @@ func (p *Provider) userinfo(w http.ResponseWriter, r *http.Request) {
 		return &p.signingKey.PublicKey, nil
 	})
 	if err != nil {
-		http.Error(w, "invalid token", http.StatusUnauthorized)
+		oidcError(w, http.StatusUnauthorized, "invalid token")
 		return
 	}
 
 	claims, ok := token.Claims.(*AccessTokenClaims)
 	if !ok || !token.Valid {
-		http.Error(w, "invalid token", http.StatusUnauthorized)
+		oidcError(w, http.StatusUnauthorized, "invalid token")
 		return
 	}
 
 	userInfo, err := p.store.GetUserInfo(r.Context(), claims.Subject)
 	if err != nil {
-		http.Error(w, "user not found", http.StatusNotFound)
+		oidcError(w, http.StatusNotFound, "user not found")
 		return
 	}
 
@@ -367,15 +367,20 @@ func tokenError(w http.ResponseWriter, errCode, description string, status int) 
 	})
 }
 
+// oidcError writes a JSON error response matching the API error contract.
+func oidcError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{"error": message, "message": message})
+}
+
 // errorRedirect sends an OAuth2 error via redirect.
 func errorRedirect(w http.ResponseWriter, r *http.Request, redirectURI, state, errCode, description string) {
 	if redirectURI == "" {
-		http.Error(w, description, http.StatusBadRequest)
+		oidcError(w, http.StatusBadRequest, description)
 		return
 	}
 	u, err := url.Parse(redirectURI)
 	if err != nil {
-		http.Error(w, description, http.StatusBadRequest)
+		oidcError(w, http.StatusBadRequest, description)
 		return
 	}
 	params := u.Query()

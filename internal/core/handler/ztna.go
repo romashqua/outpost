@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/romashqua/outpost/internal/auth"
 	"github.com/romashqua/outpost/internal/ztna"
 )
 
@@ -36,20 +37,20 @@ func (h *ZTNAHandler) Routes() chi.Router {
 	r.Get("/trust-scores/{deviceId}", h.getDeviceTrustScore)
 	r.Get("/trust-scores", h.listTrustScores)
 	r.Get("/trust-config", h.getTrustConfig)
-	r.Put("/trust-config", h.updateTrustConfig)
+	r.With(auth.RequireAdmin).Put("/trust-config", h.updateTrustConfig)
 	r.Get("/trust-history/{deviceId}", h.getTrustHistory)
 
 	// ZTNA policies.
 	r.Get("/policies", h.listPolicies)
-	r.Post("/policies", h.createPolicy)
+	r.With(auth.RequireAdmin).Post("/policies", h.createPolicy)
 	r.Get("/policies/{id}", h.getPolicy)
-	r.Put("/policies/{id}", h.updatePolicy)
-	r.Delete("/policies/{id}", h.deletePolicy)
+	r.With(auth.RequireAdmin).Put("/policies/{id}", h.updatePolicy)
+	r.With(auth.RequireAdmin).Delete("/policies/{id}", h.deletePolicy)
 
 	// DNS rules.
 	r.Get("/dns-rules", h.listDNSRules)
-	r.Post("/dns-rules", h.createDNSRule)
-	r.Delete("/dns-rules/{id}", h.deleteDNSRule)
+	r.With(auth.RequireAdmin).Post("/dns-rules", h.createDNSRule)
+	r.With(auth.RequireAdmin).Delete("/dns-rules/{id}", h.deleteDNSRule)
 
 	return r
 }

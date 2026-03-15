@@ -1,8 +1,10 @@
 package observability
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/romashqua/outpost/internal/auth"
@@ -37,28 +39,33 @@ func AuditMiddleware(logger *AuditLogger) func(http.Handler) http.Handler {
 			sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(sw, r)
 
-			// Fire-and-forget audit logging after the request completes.
-			go func() {
-				ctx := r.Context()
+			// Extract values from request before spawning goroutine
+			// (request context may be cancelled after handler returns).
+			var userIDStr string
+			if claims, ok := auth.GetUserFromContext(r.Context()); ok {
+				userIDStr = claims.UserID
+			}
+			method := r.Method
+			path := r.URL.Path
+			query := r.URL.RawQuery
+			ipAddress := r.RemoteAddr
+			userAgent := r.UserAgent()
+			statusCode := sw.status
 
-				var userIDStr string
-				claims, ok := auth.GetUserFromContext(ctx)
-				if ok {
-					userIDStr = claims.UserID
-				}
+			// Fire-and-forget audit logging with independent context.
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
 
 				details := map[string]any{
-					"method":      r.Method,
-					"status_code": sw.status,
+					"method":      method,
+					"status_code": statusCode,
 				}
-				if r.URL.RawQuery != "" {
-					details["query"] = r.URL.RawQuery
+				if query != "" {
+					details["query"] = query
 				}
 
-				action := fmt.Sprintf("%s %s", r.Method, r.URL.Path)
-				resource := r.URL.Path
-				ipAddress := r.RemoteAddr
-				userAgent := r.UserAgent()
+				action := fmt.Sprintf("%s %s", method, path)
 
 				// Use a zero UUID when no authenticated user is present.
 				uid := uuid.Nil
@@ -70,7 +77,7 @@ func AuditMiddleware(logger *AuditLogger) func(http.Handler) http.Handler {
 					uid = parsed
 				}
 
-				_ = logger.Log(ctx, uid, action, resource, details, ipAddress, userAgent)
+				_ = logger.Log(ctx, uid, action, path, details, ipAddress, userAgent)
 			}()
 		})
 	}

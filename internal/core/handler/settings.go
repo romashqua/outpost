@@ -3,11 +3,14 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/romashqua/outpost/internal/auth"
 	"github.com/romashqua/outpost/internal/mail"
 )
 
@@ -23,11 +26,11 @@ func NewSettingsHandler(pool *pgxpool.Pool, mailer *mail.Mailer) *SettingsHandle
 func (h *SettingsHandler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Get("/", h.getAll)
-	r.Put("/", h.batchSet)
+	r.With(auth.RequireAdmin).Put("/", h.batchSet)
 	r.Get("/{key}", h.get)
-	r.Put("/{key}", h.set)
-	r.Delete("/{key}", h.delete)
-	r.Post("/smtp/test", h.testSMTP)
+	r.With(auth.RequireAdmin).Put("/{key}", h.set)
+	r.With(auth.RequireAdmin).Delete("/{key}", h.delete)
+	r.With(auth.RequireAdmin).Post("/smtp/test", h.testSMTP)
 	return r
 }
 
@@ -72,7 +75,11 @@ func (h *SettingsHandler) get(w http.ResponseWriter, r *http.Request) {
 		`SELECT value FROM settings WHERE key = $1`, key,
 	).Scan(&value)
 	if err != nil {
-		respondError(w, http.StatusNotFound, "setting not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "setting not found")
+		} else {
+			respondError(w, http.StatusInternalServerError, "failed to fetch setting")
+		}
 		return
 	}
 

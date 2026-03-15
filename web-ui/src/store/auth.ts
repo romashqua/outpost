@@ -13,6 +13,7 @@ interface LoginResponse {
   expires_at?: string
   mfa_required?: boolean
   mfa_token?: string
+  password_must_change?: boolean
 }
 
 interface AuthState {
@@ -21,8 +22,11 @@ interface AuthState {
   isAuthenticated: boolean
   needsMFA: boolean
   mfaToken: string | null
+  passwordMustChange: boolean
   login: (username: string, password: string) => Promise<void>
   verifyMFA: (code: string) => Promise<void>
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>
+  clearPasswordMustChange: () => void
   logout: () => void
   setAuth: (token: string, user: User) => void
 }
@@ -63,6 +67,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   isAuthenticated: !!localStorage.getItem('outpost-token'),
   needsMFA: false,
   mfaToken: null,
+  passwordMustChange: false,
 
   login: async (username: string, password: string) => {
     const res = await api.post<LoginResponse>('/auth/login', { username, password })
@@ -83,6 +88,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       isAuthenticated: true,
       needsMFA: false,
       mfaToken: null,
+      passwordMustChange: !!res.password_must_change,
     })
   },
 
@@ -106,7 +112,20 @@ export const useAuthStore = create<AuthState>((set) => ({
       isAuthenticated: true,
       needsMFA: false,
       mfaToken: null,
+      passwordMustChange: !!res.password_must_change,
     })
+  },
+
+  changePassword: async (currentPassword: string, newPassword: string) => {
+    await api.post('/auth/change-password', {
+      current_password: currentPassword,
+      new_password: newPassword,
+    })
+    set({ passwordMustChange: false })
+  },
+
+  clearPasswordMustChange: () => {
+    set({ passwordMustChange: false })
   },
 
   logout: () => {
@@ -118,6 +137,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       isAuthenticated: false,
       needsMFA: false,
       mfaToken: null,
+      passwordMustChange: false,
     })
   },
 
@@ -127,3 +147,8 @@ export const useAuthStore = create<AuthState>((set) => ({
     set({ token, user, isAuthenticated: true })
   },
 }))
+
+// Listen for 401 events dispatched by the API client (avoids circular imports).
+window.addEventListener('auth:logout', () => {
+  useAuthStore.getState().logout()
+})

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 )
@@ -24,19 +25,19 @@ func JWTMiddleware(secret string) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			header := r.Header.Get("Authorization")
 			if header == "" {
-				http.Error(w, "missing authorization header", http.StatusUnauthorized)
+				respondAuthError(w, http.StatusUnauthorized, "missing authorization header")
 				return
 			}
 
 			tokenStr, ok := strings.CutPrefix(header, "Bearer ")
 			if !ok {
-				http.Error(w, "invalid authorization header format", http.StatusUnauthorized)
+				respondAuthError(w, http.StatusUnauthorized, "invalid authorization header format")
 				return
 			}
 
 			claims, err := ValidateToken(secret, tokenStr)
 			if err != nil {
-				http.Error(w, "invalid token", http.StatusUnauthorized)
+				respondAuthError(w, http.StatusUnauthorized, "invalid token")
 				return
 			}
 
@@ -53,13 +54,20 @@ func RequireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims, ok := GetUserFromContext(r.Context())
 		if !ok {
-			http.Error(w, "unauthenticated", http.StatusUnauthorized)
+			respondAuthError(w, http.StatusUnauthorized, "unauthenticated")
 			return
 		}
 		if !claims.IsAdmin {
-			http.Error(w, "admin access required", http.StatusForbidden)
+			respondAuthError(w, http.StatusForbidden, "admin access required")
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// respondAuthError writes a JSON error response matching the API error contract.
+func respondAuthError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": message, "message": message})
 }
