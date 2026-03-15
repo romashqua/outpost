@@ -51,7 +51,13 @@ async function request<T>(
     return undefined as T
   }
 
-  return response.json()
+  // Some endpoints (e.g. addMember) return 201 with no body.
+  // Use .text() first to avoid "Unexpected end of JSON input".
+  const text = await response.text()
+  if (!text) {
+    return undefined as T
+  }
+  return JSON.parse(text)
 }
 
 export const api = {

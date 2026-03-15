@@ -481,7 +481,7 @@ func (h *GroupHandler) addMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.log.Info("member added to group", "group_id", groupID, "user_id", userID)
-	w.WriteHeader(http.StatusCreated)
+	respondJSON(w, http.StatusCreated, map[string]string{"status": "added", "user_id": userID.String(), "group_id": groupID.String()})
 }
 
 // @Summary Remove group member
