@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -70,6 +71,25 @@ func parsePagination(r *http.Request) (page, perPage int) {
 		perPage = maxPerPage
 	}
 	return page, perPage
+}
+
+// ptrOrNil returns a pointer to s if non-empty, or nil. Useful for passing
+// optional TEXT columns to pgx query args.
+func ptrOrNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// validWireGuardKey returns true if s is a valid WireGuard public key
+// (32 bytes, base64-encoded, 44 characters ending with '=').
+func validWireGuardKey(s string) bool {
+	if len(s) != 44 || s[43] != '=' {
+		return false
+	}
+	b, err := base64.StdEncoding.DecodeString(s)
+	return err == nil && len(b) == 32
 }
 
 // queryInt reads an integer query parameter, returning fallback on missing or

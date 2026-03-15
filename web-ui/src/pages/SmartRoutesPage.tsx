@@ -78,7 +78,7 @@ export default function SmartRoutesPage() {
     queryFn: () => api.get('/smart-routes/proxy-servers'),
   })
 
-  const { data: expandedRouteData } = useQuery<SmartRoute>({
+  const { data: expandedRouteData, isLoading: expandedLoading } = useQuery<SmartRoute>({
     queryKey: ['smart-routes', expandedRoute],
     queryFn: () => api.get(`/smart-routes/${expandedRoute}`),
     enabled: !!expandedRoute,
@@ -239,7 +239,7 @@ export default function SmartRoutesPage() {
             <Plus size={16} />
           </button>
           <button
-            onClick={(e) => { e.stopPropagation(); setDeleteRouteId(row.id) }}
+            onClick={(e) => { e.stopPropagation(); deleteRouteMutation.reset(); setDeleteRouteId(row.id) }}
             className="text-[var(--text-muted)] hover:text-[var(--danger)] transition-colors"
           >
             <Trash2 size={16} />
@@ -295,7 +295,7 @@ export default function SmartRoutesPage() {
       header: '',
       render: (row: ProxyServer) => (
         <button
-          onClick={(e) => { e.stopPropagation(); setDeleteProxyId(row.id) }}
+          onClick={(e) => { e.stopPropagation(); deleteProxyMutation.reset(); setDeleteProxyId(row.id) }}
           className="text-[var(--text-muted)] hover:text-[var(--danger)] transition-colors"
         >
           <Trash2 size={16} />
@@ -400,7 +400,11 @@ export default function SmartRoutesPage() {
                 </Card>
               )}
 
-              {expandedRoute && entries.length === 0 && expandedRouteData && (
+              {expandedRoute && expandedLoading && (
+                <Card className="mt-2 p-4 text-center text-[var(--text-muted)] text-sm">{t('common.loading')}</Card>
+              )}
+
+              {expandedRoute && entries.length === 0 && expandedRouteData && !expandedLoading && (
                 <Card className="mt-2 p-4 text-center text-[var(--text-muted)] text-sm">
                   {t('smartRoutes.noEntriesClickAdd')}
                 </Card>

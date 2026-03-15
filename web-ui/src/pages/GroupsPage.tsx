@@ -85,11 +85,12 @@ export default function GroupsPage() {
     enabled: !!detailTarget,
   })
 
-  const { data: networks = [] } = useQuery<NetworkOption[]>({
+  const { data: networksData } = useQuery<{ networks: NetworkOption[] }>({
     queryKey: ['networks'],
     queryFn: () => api.get('/networks'),
     enabled: !!detailTarget,
   })
+  const networks = networksData?.networks ?? []
 
   const createMutation = useMutation({
     mutationFn: (payload: { name: string; description: string }) =>

@@ -48,7 +48,7 @@ func NewUserHandler(pool *pgxpool.Pool, logger *slog.Logger, mailer ...Mailer) *
 // Write operations (create, update, delete, activate) require admin privileges.
 func (h *UserHandler) Routes() chi.Router {
 	r := chi.NewRouter()
-	r.Get("/", h.list)
+	r.With(auth.RequireAdmin).Get("/", h.list)
 	r.With(auth.RequireAdmin).Post("/", h.create)
 	r.Route("/{id}", func(r chi.Router) {
 		r.Get("/", h.get)
@@ -60,16 +60,18 @@ func (h *UserHandler) Routes() chi.Router {
 }
 
 type userResponse struct {
-	ID        uuid.UUID  `json:"id"`
-	Username  string     `json:"username"`
-	Email     string     `json:"email"`
-	FirstName string     `json:"first_name"`
-	LastName  string     `json:"last_name"`
-	Phone     *string    `json:"phone,omitempty"`
-	IsActive  bool       `json:"is_active"`
-	IsAdmin   bool       `json:"is_admin"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	ID         uuid.UUID  `json:"id"`
+	Username   string     `json:"username"`
+	Email      string     `json:"email"`
+	FirstName  string     `json:"first_name"`
+	LastName   string     `json:"last_name"`
+	Phone      *string    `json:"phone,omitempty"`
+	IsActive   bool       `json:"is_active"`
+	IsAdmin    bool       `json:"is_admin"`
+	MFAEnabled bool       `json:"mfa_enabled"`
+	LastLogin  *time.Time `json:"last_login"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
 }
 
 type createUserRequest struct {
@@ -90,14 +92,26 @@ type updateUserRequest struct {
 	IsAdmin   *bool   `json:"is_admin,omitempty"`
 }
 
+// @Summary List users
+// @Description Returns a paginated list of all users.
+// @Tags Users
+// @Produce json
+// @Param page query int false "Page number" default(1)
+// @Param per_page query int false "Items per page" default(50)
+// @Success 200 {object} map[string]any
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /users [get]
 func (h *UserHandler) list(w http.ResponseWriter, r *http.Request) {
 	page, perPage := parsePagination(r)
 	offset := (page - 1) * perPage
 
 	rows, err := h.pool.Query(r.Context(),
-		`SELECT id, username, email, first_name, last_name, phone, is_active, is_admin, created_at, updated_at
-		 FROM users
-		 ORDER BY created_at DESC
+		`SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.phone, u.is_active, u.is_admin, u.mfa_enabled,
+		        (SELECT MAX(s.created_at) FROM sessions s WHERE s.user_id = u.id),
+		        u.created_at, u.updated_at
+		 FROM users u
+		 ORDER BY u.created_at DESC
 		 LIMIT $1 OFFSET $2`, perPage, offset)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to query users")
@@ -109,7 +123,7 @@ func (h *UserHandler) list(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var u userResponse
 		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.FirstName, &u.LastName,
-			&u.Phone, &u.IsActive, &u.IsAdmin, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			&u.Phone, &u.IsActive, &u.IsAdmin, &u.MFAEnabled, &u.LastLogin, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			respondError(w, http.StatusInternalServerError, "failed to scan user")
 			return
 		}
@@ -121,13 +135,29 @@ func (h *UserHandler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var total int
+	_ = h.pool.QueryRow(r.Context(), `SELECT COUNT(*) FROM users`).Scan(&total)
+
 	respondJSON(w, http.StatusOK, map[string]any{
 		"users":    users,
+		"total":    total,
 		"page":     page,
 		"per_page": perPage,
 	})
 }
 
+// @Summary Create user
+// @Description Create a new user account. Requires admin privileges.
+// @Tags Users
+// @Accept json
+// @Produce json
+// @Param body body createUserRequest true "User data"
+// @Success 201 {object} userResponse
+// @Failure 400 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /users [post]
 func (h *UserHandler) create(w http.ResponseWriter, r *http.Request) {
 	var req createUserRequest
 	if err := parseBody(r, &req); err != nil {
@@ -147,6 +177,10 @@ func (h *UserHandler) create(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "password is required")
 		return
 	}
+	if err := auth.ValidatePasswordPolicy(req.Password); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
@@ -158,10 +192,10 @@ func (h *UserHandler) create(w http.ResponseWriter, r *http.Request) {
 	err = h.pool.QueryRow(r.Context(),
 		`INSERT INTO users (username, email, password_hash, first_name, last_name, is_admin)
 		 VALUES ($1, $2, $3, $4, $5, $6)
-		 RETURNING id, username, email, first_name, last_name, phone, is_active, is_admin, created_at, updated_at`,
+		 RETURNING id, username, email, first_name, last_name, phone, is_active, is_admin, mfa_enabled, created_at, updated_at`,
 		req.Username, req.Email, hash, req.FirstName, req.LastName, req.IsAdmin,
 	).Scan(&u.ID, &u.Username, &u.Email, &u.FirstName, &u.LastName,
-		&u.Phone, &u.IsActive, &u.IsAdmin, &u.CreatedAt, &u.UpdatedAt)
+		&u.Phone, &u.IsActive, &u.IsAdmin, &u.MFAEnabled, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -203,6 +237,17 @@ func (h *UserHandler) create(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusCreated, u)
 }
 
+// @Summary Get user
+// @Description Retrieve a user by ID.
+// @Tags Users
+// @Produce json
+// @Param id path string true "User ID (UUID)"
+// @Success 200 {object} userResponse
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /users/{id} [get]
 func (h *UserHandler) get(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -210,12 +255,25 @@ func (h *UserHandler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// IDOR check: non-admins can only view their own profile.
+	claims, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	if !claims.IsAdmin && claims.UserID != id.String() {
+		respondError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
 	var u userResponse
 	err = h.pool.QueryRow(r.Context(),
-		`SELECT id, username, email, first_name, last_name, phone, is_active, is_admin, created_at, updated_at
-		 FROM users WHERE id = $1`, id,
+		`SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.phone, u.is_active, u.is_admin, u.mfa_enabled,
+		        (SELECT MAX(s.created_at) FROM sessions s WHERE s.user_id = u.id),
+		        u.created_at, u.updated_at
+		 FROM users u WHERE u.id = $1`, id,
 	).Scan(&u.ID, &u.Username, &u.Email, &u.FirstName, &u.LastName,
-		&u.Phone, &u.IsActive, &u.IsAdmin, &u.CreatedAt, &u.UpdatedAt)
+		&u.Phone, &u.IsActive, &u.IsAdmin, &u.MFAEnabled, &u.LastLogin, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			respondError(w, http.StatusNotFound, "user not found")
@@ -228,6 +286,20 @@ func (h *UserHandler) get(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, u)
 }
 
+// @Summary Update user
+// @Description Update an existing user. Requires admin privileges.
+// @Tags Users
+// @Accept json
+// @Produce json
+// @Param id path string true "User ID (UUID)"
+// @Param body body updateUserRequest true "Fields to update"
+// @Success 200 {object} userResponse
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /users/{id} [put]
 func (h *UserHandler) update(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -252,10 +324,12 @@ func (h *UserHandler) update(w http.ResponseWriter, r *http.Request) {
 			is_admin   = COALESCE($7, is_admin),
 			updated_at = now()
 		 WHERE id = $1
-		 RETURNING id, username, email, first_name, last_name, phone, is_active, is_admin, created_at, updated_at`,
+		 RETURNING id, username, email, first_name, last_name, phone, is_active, is_admin, mfa_enabled,
+		           (SELECT MAX(s.created_at) FROM sessions s WHERE s.user_id = id),
+		           created_at, updated_at`,
 		id, req.Email, req.FirstName, req.LastName, req.Phone, req.IsActive, req.IsAdmin,
 	).Scan(&u.ID, &u.Username, &u.Email, &u.FirstName, &u.LastName,
-		&u.Phone, &u.IsActive, &u.IsAdmin, &u.CreatedAt, &u.UpdatedAt)
+		&u.Phone, &u.IsActive, &u.IsAdmin, &u.MFAEnabled, &u.LastLogin, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			respondError(w, http.StatusNotFound, "user not found")
@@ -279,6 +353,18 @@ func (h *UserHandler) update(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, u)
 }
 
+// @Summary Delete user
+// @Description Delete a user by ID. Cannot delete the last active admin. Requires admin privileges.
+// @Tags Users
+// @Produce json
+// @Param id path string true "User ID (UUID)"
+// @Success 204 "No Content"
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /users/{id} [delete]
 func (h *UserHandler) delete(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -334,6 +420,17 @@ func (h *UserHandler) delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// @Summary Activate user
+// @Description Activate a deactivated user account. Requires admin privileges.
+// @Tags Users
+// @Produce json
+// @Param id path string true "User ID (UUID)"
+// @Success 200 {object} userResponse
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /users/{id}/activate [patch]
 func (h *UserHandler) activate(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -345,10 +442,12 @@ func (h *UserHandler) activate(w http.ResponseWriter, r *http.Request) {
 	err = h.pool.QueryRow(r.Context(),
 		`UPDATE users SET is_active = true, updated_at = now()
 		 WHERE id = $1
-		 RETURNING id, username, email, first_name, last_name, phone, is_active, is_admin, created_at, updated_at`,
+		 RETURNING id, username, email, first_name, last_name, phone, is_active, is_admin, mfa_enabled,
+		           (SELECT MAX(s.created_at) FROM sessions s WHERE s.user_id = id),
+		           created_at, updated_at`,
 		id,
 	).Scan(&u.ID, &u.Username, &u.Email, &u.FirstName, &u.LastName,
-		&u.Phone, &u.IsActive, &u.IsAdmin, &u.CreatedAt, &u.UpdatedAt)
+		&u.Phone, &u.IsActive, &u.IsAdmin, &u.MFAEnabled, &u.LastLogin, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			respondError(w, http.StatusNotFound, "user not found")

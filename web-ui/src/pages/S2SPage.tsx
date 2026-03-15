@@ -38,8 +38,12 @@ interface TunnelMember {
 
 interface TunnelRoute {
   id: string
-  cidr: string
-  description?: string
+  destination: string
+  via_gateway: string
+  gateway_name: string
+  metric: number
+  is_active: boolean
+  created_at: string
 }
 
 interface AllowedDomain {
@@ -61,7 +65,7 @@ function TunnelDetailPanel({
   const [showAddMember, setShowAddMember] = useState(false)
   const [selectedGatewayId, setSelectedGatewayId] = useState('')
   const [showAddRoute, setShowAddRoute] = useState(false)
-  const [routeForm, setRouteForm] = useState({ cidr: '', description: '' })
+  const [routeForm, setRouteForm] = useState({ destination: '', via_gateway: '', metric: '100' })
   const [showAddDomain, setShowAddDomain] = useState(false)
   const [domainName, setDomainName] = useState('')
   const [domains, setDomains] = useState<AllowedDomain[]>([])
@@ -80,10 +84,11 @@ function TunnelDetailPanel({
   })
 
   // Fetch available gateways
-  const { data: gateways = [] } = useQuery<Gateway[]>({
+  const { data: gatewaysData } = useQuery<{ gateways: Gateway[] }>({
     queryKey: ['gateways'],
     queryFn: () => api.get('/gateways'),
   })
+  const gateways = gatewaysData?.gateways ?? []
 
   // Add member mutation
   const addMemberMutation = useMutation({
@@ -115,12 +120,12 @@ function TunnelDetailPanel({
 
   // Add route mutation
   const addRouteMutation = useMutation({
-    mutationFn: (data: { cidr: string; description?: string }) =>
+    mutationFn: (data: { destination: string; via_gateway: string; metric?: number }) =>
       api.post(`/s2s-tunnels/${tunnel.id}/routes`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['s2s-tunnels', tunnel.id, 'routes'] })
       setShowAddRoute(false)
-      setRouteForm({ cidr: '', description: '' })
+      setRouteForm({ destination: '', via_gateway: '', metric: '100' })
       addToast(t('s2s.addRoute'), 'success')
     },
     onError: (err) => {
@@ -254,14 +259,28 @@ function TunnelDetailPanel({
                   <span className="text-sm font-mono text-[var(--text-primary)] flex-1">
                     {member.gateway_name || member.name || member.gateway_id}
                   </span>
-                  <a
-                    href={`/api/v1/s2s-tunnels/${tunnel.id}/config/${member.gateway_id}`}
-                    download={`${tunnel.name}-${member.gateway_name || member.gateway_id}.conf`}
+                  <button
+                    onClick={async () => {
+                      try {
+                        const config = await api.get<string>(`/s2s-tunnels/${tunnel.id}/config/${member.gateway_id}`)
+                        const blob = new Blob([typeof config === 'string' ? config : JSON.stringify(config)], { type: 'text/plain' })
+                        const url = URL.createObjectURL(blob)
+                        const a = document.createElement('a')
+                        a.href = url
+                        a.download = `${tunnel.name}-${member.gateway_name || member.gateway_id}.conf`
+                        document.body.appendChild(a)
+                        a.click()
+                        document.body.removeChild(a)
+                        URL.revokeObjectURL(url)
+                      } catch (err) {
+                        addToast((err as Error).message, 'error')
+                      }
+                    }}
                     className="text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors"
                     title={t('s2s.downloadConfig')}
                   >
                     <Download size={14} />
-                  </a>
+                  </button>
                   <button
                     onClick={() => removeMemberMutation.mutate(member.gateway_id)}
                     disabled={removeMemberMutation.isPending}
@@ -331,13 +350,11 @@ function TunnelDetailPanel({
                 <div key={route.id} className={listItem}>
                   <div className="flex flex-col">
                     <span className="text-sm font-mono text-[var(--text-primary)]">
-                      {route.cidr}
+                      {route.destination}
                     </span>
-                    {route.description && (
-                      <span className="text-xs text-[var(--text-muted)]">
-                        {route.description}
-                      </span>
-                    )}
+                    <span className="text-xs text-[var(--text-muted)]">
+                      via {route.gateway_name || route.via_gateway} (metric {route.metric})
+                    </span>
                   </div>
                   <button
                     onClick={() => removeRouteMutation.mutate(route.id)}
@@ -355,30 +372,49 @@ function TunnelDetailPanel({
               className="mt-2 flex flex-col gap-2"
               onSubmit={(e) => {
                 e.preventDefault()
-                const cidr = routeForm.cidr.trim()
-                if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\/\d{1,2}$/.test(cidr)) {
+                const destination = routeForm.destination.trim()
+                if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\/\d{1,2}$/.test(destination)) {
                   addToast(t('s2s.invalidCidr', 'Invalid CIDR format (e.g. 10.0.0.0/24)'), 'error')
                   return
                 }
+                if (!routeForm.via_gateway) {
+                  addToast(t('s2s.gatewayRequired', 'Gateway is required'), 'error')
+                  return
+                }
                 addRouteMutation.mutate({
-                  cidr,
-                  description: routeForm.description || undefined,
+                  destination,
+                  via_gateway: routeForm.via_gateway,
+                  metric: parseInt(routeForm.metric, 10) || 100,
                 })
               }}
             >
               <div className="flex items-center gap-2">
                 <Input
-                  placeholder={t('s2s.routeCidr')}
-                  value={routeForm.cidr}
-                  onChange={(e) => setRouteForm({ ...routeForm, cidr: e.target.value })}
+                  placeholder={t('s2s.routeDestination', 'Destination CIDR')}
+                  value={routeForm.destination}
+                  onChange={(e) => setRouteForm({ ...routeForm, destination: e.target.value })}
                   required
                   className="flex-1"
                 />
+                <select
+                  value={routeForm.via_gateway}
+                  onChange={(e) => setRouteForm({ ...routeForm, via_gateway: e.target.value })}
+                  className="flex-1 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-sm text-[var(--text-primary)] font-mono"
+                  required
+                >
+                  <option value="">{t('s2s.selectGateway')}</option>
+                  {members.map((m) => (
+                    <option key={m.gateway_id} value={m.gateway_id}>
+                      {m.gateway_name || m.gateway_id}
+                    </option>
+                  ))}
+                </select>
                 <Input
-                  placeholder={t('s2s.routeDescription')}
-                  value={routeForm.description}
-                  onChange={(e) => setRouteForm({ ...routeForm, description: e.target.value })}
-                  className="flex-1"
+                  placeholder={t('s2s.metric', 'Metric')}
+                  value={routeForm.metric}
+                  onChange={(e) => setRouteForm({ ...routeForm, metric: e.target.value })}
+                  type="number"
+                  className="w-20"
                 />
               </div>
               <div className="flex gap-2">

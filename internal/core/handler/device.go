@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,10 +18,23 @@ import (
 	"github.com/romashqua/outpost/internal/wireguard"
 )
 
+// PeerNotifier is called when a device peer changes so gateways can be updated.
+type PeerNotifier interface {
+	NotifyPeerAdd(pubkey string, allowedIPs []string)
+	NotifyPeerRemove(pubkey string)
+}
+
+// DeviceMailer sends device-related emails (satisfied by mail.Mailer).
+type DeviceMailer interface {
+	SendDeviceConfig(ctx context.Context, to, deviceName, configText string) error
+}
+
 // DeviceHandler provides endpoints for managing WireGuard devices (peers).
 type DeviceHandler struct {
-	pool *pgxpool.Pool
-	log  *slog.Logger
+	pool     *pgxpool.Pool
+	log      *slog.Logger
+	notifier PeerNotifier
+	mailer   DeviceMailer
 }
 
 // NewDeviceHandler creates a DeviceHandler backed by the given connection pool.
@@ -32,16 +46,29 @@ func NewDeviceHandler(pool *pgxpool.Pool, logger ...*slog.Logger) *DeviceHandler
 	return &DeviceHandler{pool: pool, log: l.With("handler", "device")}
 }
 
+// WithNotifier sets the peer notifier for broadcasting changes to gateways.
+func (h *DeviceHandler) WithNotifier(n PeerNotifier) *DeviceHandler {
+	h.notifier = n
+	return h
+}
+
+// WithMailer sets the mailer for sending config emails.
+func (h *DeviceHandler) WithMailer(m DeviceMailer) *DeviceHandler {
+	h.mailer = m
+	return h
+}
+
 // Routes returns a chi.Router with device management endpoints mounted.
 func (h *DeviceHandler) Routes() chi.Router {
 	r := chi.NewRouter()
-	r.Get("/", h.list)
+	r.With(auth.RequireAdmin).Get("/", h.list)
 	r.Get("/my", h.listMy)
 	r.Post("/", h.create)
 	r.Post("/enroll", h.enroll)
 	r.Route("/{id}", func(r chi.Router) {
 		r.Get("/", h.get)
 		r.Get("/config", h.downloadConfig)
+		r.Post("/send-config", h.sendConfig)
 		r.Delete("/", h.delete)
 		r.With(auth.RequireAdmin).Post("/approve", h.approve)
 		r.With(auth.RequireAdmin).Post("/revoke", h.revoke)
@@ -88,11 +115,31 @@ type configResponse struct {
 	PublicKey  string `json:"public_key"`
 }
 
+// @Summary List all devices
+// @Description Returns a paginated list of all devices. Requires admin privileges.
+// @Tags Devices
+// @Produce json
+// @Param page query int false "Page number" default(1)
+// @Param per_page query int false "Items per page" default(50)
+// @Success 200 {object} map[string]any
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /devices [get]
 func (h *DeviceHandler) list(w http.ResponseWriter, r *http.Request) {
+	page, perPage := parsePagination(r)
+	offset := (page - 1) * perPage
+
+	var total int
+	if err := h.pool.QueryRow(r.Context(), `SELECT COUNT(*) FROM devices`).Scan(&total); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to count devices")
+		return
+	}
+
 	rows, err := h.pool.Query(r.Context(),
 		`SELECT id, user_id, name, wireguard_pubkey, host(assigned_ip), is_approved, last_handshake, created_at, updated_at
 		 FROM devices
-		 ORDER BY created_at DESC`)
+		 ORDER BY created_at DESC
+		 LIMIT $1 OFFSET $2`, perPage, offset)
 	if err != nil {
 		h.log.Error("failed to query devices", "error", err)
 		respondError(w, http.StatusInternalServerError, "failed to query devices")
@@ -116,20 +163,43 @@ func (h *DeviceHandler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, devices)
+	respondJSON(w, http.StatusOK, map[string]any{
+		"devices":  devices,
+		"total":    total,
+		"page":     page,
+		"per_page": perPage,
+	})
 }
 
+// @Summary List my devices
+// @Description Returns a paginated list of devices belonging to the authenticated user.
+// @Tags Devices
+// @Produce json
+// @Param page query int false "Page number" default(1)
+// @Param per_page query int false "Items per page" default(50)
+// @Success 200 {object} map[string]any
+// @Failure 401 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /devices/my [get]
 func (h *DeviceHandler) listMy(w http.ResponseWriter, r *http.Request) {
-	// In production, the user ID comes from the authenticated session/JWT.
-	// For now, require it as a query parameter.
-	rawUserID := r.URL.Query().Get("user_id")
-	if rawUserID == "" {
-		respondError(w, http.StatusBadRequest, "user_id query parameter is required")
+	claims, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "authentication required")
 		return
 	}
-	userID, err := uuid.Parse(rawUserID)
+	userID, err := uuid.Parse(claims.UserID)
 	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid user_id")
+		respondError(w, http.StatusInternalServerError, "invalid user ID in token")
+		return
+	}
+
+	page, perPage := parsePagination(r)
+	offset := (page - 1) * perPage
+
+	var total int
+	if err := h.pool.QueryRow(r.Context(), `SELECT COUNT(*) FROM devices WHERE user_id = $1`, userID).Scan(&total); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to count devices")
 		return
 	}
 
@@ -137,7 +207,8 @@ func (h *DeviceHandler) listMy(w http.ResponseWriter, r *http.Request) {
 		`SELECT id, user_id, name, wireguard_pubkey, host(assigned_ip), is_approved, last_handshake, created_at, updated_at
 		 FROM devices
 		 WHERE user_id = $1
-		 ORDER BY created_at DESC`, userID)
+		 ORDER BY created_at DESC
+		 LIMIT $2 OFFSET $3`, userID, perPage, offset)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to query devices")
 		return
@@ -160,9 +231,26 @@ func (h *DeviceHandler) listMy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, devices)
+	respondJSON(w, http.StatusOK, map[string]any{
+		"devices":  devices,
+		"total":    total,
+		"page":     page,
+		"per_page": perPage,
+	})
 }
 
+// @Summary Create device
+// @Description Create a new WireGuard device (peer). Auto-generates keys if not provided.
+// @Tags Devices
+// @Accept json
+// @Produce json
+// @Param body body createDeviceRequest true "Device data"
+// @Success 201 {object} deviceResponse
+// @Failure 400 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /devices [post]
 func (h *DeviceHandler) create(w http.ResponseWriter, r *http.Request) {
 	var req createDeviceRequest
 	if err := parseBody(r, &req); err != nil {
@@ -175,6 +263,7 @@ func (h *DeviceHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var generatedPrivKey string
 	if req.WireguardPubkey == "" || req.WireguardPubkey == "auto-generated" {
 		privKey, err := wireguard.GeneratePrivateKey()
 		if err != nil {
@@ -187,16 +276,30 @@ func (h *DeviceHandler) create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		req.WireguardPubkey = pubKey
+		generatedPrivKey = privKey
+	} else if !validWireGuardKey(req.WireguardPubkey) {
+		respondError(w, http.StatusBadRequest, "invalid WireGuard public key: must be 44-character base64 (32 bytes)")
+		return
 	}
 
-	// Accept user_id from the JSON body. Fall back to query parameter for
-	// backward compatibility.
+	// Non-admins can only create devices for themselves.
+	claims, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
 	rawUserID := req.UserID
 	if rawUserID == "" {
 		rawUserID = r.URL.Query().Get("user_id")
 	}
 	if rawUserID == "" {
-		respondError(w, http.StatusBadRequest, "user_id is required")
+		// Default to authenticated user.
+		rawUserID = claims.UserID
+	}
+
+	if !claims.IsAdmin && rawUserID != claims.UserID {
+		respondError(w, http.StatusForbidden, "you can only create devices for yourself")
 		return
 	}
 	userID, err := uuid.Parse(rawUserID)
@@ -205,55 +308,60 @@ func (h *DeviceHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Assign the next available IP from the first active network using a
-	// transaction with row locking to prevent race conditions.
-	tx, err := h.pool.Begin(r.Context())
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to begin transaction")
-		return
-	}
-	defer tx.Rollback(r.Context())
-
-	var assignedIP string
-	err = tx.QueryRow(r.Context(),
-		`SELECT host(network(address) + (SELECT COUNT(*) + 2 FROM devices))
-		 FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1
-		 FOR UPDATE`,
-	).Scan(&assignedIP)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to allocate IP address")
-		return
-	}
-
+	// Atomically allocate the next available IP and insert the device.
+	// Uses a CTE that finds the first unused IP in the network range,
+	// with a retry loop to handle concurrent inserts racing for the same IP.
+	const maxRetries = 5
 	var d deviceResponse
-	err = tx.QueryRow(r.Context(),
-		`INSERT INTO devices (user_id, name, wireguard_pubkey, assigned_ip)
-		 VALUES ($1, $2, $3, $4)
-		 RETURNING id, user_id, name, wireguard_pubkey, host(assigned_ip), is_approved, last_handshake, created_at, updated_at`,
-		userID, req.Name, req.WireguardPubkey, assignedIP,
-	).Scan(&d.ID, &d.UserID, &d.Name, &d.WireguardPubkey,
-		&d.AssignedIP, &d.IsApproved, &d.LastHandshake, &d.CreatedAt, &d.UpdatedAt)
-	if err != nil {
-		h.log.Error("failed to create device", "error", err, "name", req.Name, "user_id", userID)
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		err = h.pool.QueryRow(r.Context(),
+			`WITH net AS (
+				SELECT address FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1
+			),
+			candidate AS (
+				SELECT host(network(net.address) + s.off) AS ip
+				FROM net, generate_series(2, (1 << (32 - masklen(net.address))) - 2) AS s(off)
+				WHERE NOT EXISTS (
+					SELECT 1 FROM devices WHERE assigned_ip = (network(net.address) + s.off)::inet
+				)
+				LIMIT 1
+			)
+			INSERT INTO devices (user_id, name, wireguard_pubkey, wireguard_privkey, assigned_ip)
+			SELECT $1, $2, $3, $4, candidate.ip
+			FROM candidate
+			RETURNING id, user_id, name, wireguard_pubkey, host(assigned_ip), is_approved, last_handshake, created_at, updated_at`,
+			userID, req.Name, req.WireguardPubkey, ptrOrNil(generatedPrivKey),
+		).Scan(&d.ID, &d.UserID, &d.Name, &d.WireguardPubkey,
+			&d.AssignedIP, &d.IsApproved, &d.LastHandshake, &d.CreatedAt, &d.UpdatedAt)
+		if err == nil {
+			break
+		}
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			if strings.Contains(pgErr.ConstraintName, "assigned_ip") {
+				// IP collision from concurrent insert — retry with next available.
+				h.log.Warn("IP allocation collision, retrying", "attempt", attempt+1)
+				continue
+			}
 			msg := "device already exists"
 			if strings.Contains(pgErr.ConstraintName, "pubkey") {
 				msg = "device with this public key already exists"
 			} else if strings.Contains(pgErr.ConstraintName, "name") {
 				msg = "device with this name already exists"
-			} else if strings.Contains(pgErr.ConstraintName, "assigned_ip") {
-				msg = "IP address already in use"
 			}
 			respondError(w, http.StatusConflict, msg)
 			return
 		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusInternalServerError, "no available IP addresses in the network")
+			return
+		}
+		h.log.Error("failed to create device", "error", err, "name", req.Name, "user_id", userID)
 		respondError(w, http.StatusInternalServerError, "failed to create device")
 		return
 	}
-
-	if err := tx.Commit(r.Context()); err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to commit device creation")
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to allocate IP address after retries")
 		return
 	}
 
@@ -261,6 +369,18 @@ func (h *DeviceHandler) create(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusCreated, d)
 }
 
+// @Summary Get device
+// @Description Retrieve a device by ID. Non-admins can only view their own devices.
+// @Tags Devices
+// @Produce json
+// @Param id path string true "Device ID (UUID)"
+// @Success 200 {object} deviceResponse
+// @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /devices/{id} [get]
 func (h *DeviceHandler) get(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -284,13 +404,62 @@ func (h *DeviceHandler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Non-admins can only view their own devices.
+	claims, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	if !claims.IsAdmin && claims.UserID != d.UserID.String() {
+		respondError(w, http.StatusForbidden, "you can only view your own devices")
+		return
+	}
+
 	respondJSON(w, http.StatusOK, d)
 }
 
+// @Summary Delete device
+// @Description Delete a device by ID. Non-admins can only delete their own devices.
+// @Tags Devices
+// @Produce json
+// @Param id path string true "Device ID (UUID)"
+// @Success 204 "No Content"
+// @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /devices/{id} [delete]
 func (h *DeviceHandler) delete(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Verify ownership: non-admins can only delete their own devices.
+	claims, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	// Fetch device owner and pubkey before deleting.
+	var ownerID, pubkey string
+	err = h.pool.QueryRow(r.Context(),
+		`SELECT user_id::text, wireguard_pubkey FROM devices WHERE id = $1`, id,
+	).Scan(&ownerID, &pubkey)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "device not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "failed to fetch device")
+		return
+	}
+
+	if !claims.IsAdmin && claims.UserID != ownerID {
+		respondError(w, http.StatusForbidden, "you can only delete your own devices")
 		return
 	}
 
@@ -307,10 +476,25 @@ func (h *DeviceHandler) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.notifier != nil && pubkey != "" {
+		h.notifier.NotifyPeerRemove(pubkey)
+	}
+
 	h.log.Info("device deleted", "id", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// @Summary Approve device
+// @Description Approve a pending device and notify gateways. Requires admin privileges.
+// @Tags Devices
+// @Produce json
+// @Param id path string true "Device ID (UUID)"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /devices/{id}/approve [post]
 func (h *DeviceHandler) approve(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -318,21 +502,40 @@ func (h *DeviceHandler) approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tag, err := h.pool.Exec(r.Context(),
-		`UPDATE devices SET is_approved = true, updated_at = now() WHERE id = $1`, id)
+	var pubkey, assignedIP string
+	err = h.pool.QueryRow(r.Context(),
+		`UPDATE devices SET is_approved = true, updated_at = now()
+		 WHERE id = $1
+		 RETURNING wireguard_pubkey, host(assigned_ip) || '/32'`,
+		id,
+	).Scan(&pubkey, &assignedIP)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "device not found")
+			return
+		}
 		respondError(w, http.StatusInternalServerError, "failed to approve device")
 		return
 	}
 
-	if tag.RowsAffected() == 0 {
-		respondError(w, http.StatusNotFound, "device not found")
-		return
+	if h.notifier != nil && pubkey != "" {
+		h.notifier.NotifyPeerAdd(pubkey, []string{assignedIP})
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "approved"})
 }
 
+// @Summary Revoke device
+// @Description Revoke an approved device and remove its peer from gateways. Requires admin privileges.
+// @Tags Devices
+// @Produce json
+// @Param id path string true "Device ID (UUID)"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /devices/{id}/revoke [post]
 func (h *DeviceHandler) revoke(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -340,21 +543,43 @@ func (h *DeviceHandler) revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tag, err := h.pool.Exec(r.Context(),
-		`UPDATE devices SET is_approved = false, updated_at = now() WHERE id = $1`, id)
+	var pubkey string
+	err = h.pool.QueryRow(r.Context(),
+		`UPDATE devices SET is_approved = false, updated_at = now()
+		 WHERE id = $1
+		 RETURNING wireguard_pubkey`,
+		id,
+	).Scan(&pubkey)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "device not found")
+			return
+		}
 		respondError(w, http.StatusInternalServerError, "failed to revoke device")
 		return
 	}
 
-	if tag.RowsAffected() == 0 {
-		respondError(w, http.StatusNotFound, "device not found")
-		return
+	if h.notifier != nil && pubkey != "" {
+		h.notifier.NotifyPeerRemove(pubkey)
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
 }
 
+// @Summary Enroll device
+// @Description Self-service device enrollment. Auto-approves and returns connection parameters.
+// @Tags Devices
+// @Accept json
+// @Produce json
+// @Param body body enrollRequest true "Enrollment data"
+// @Success 201 {object} enrollResponse
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 422 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /devices/enroll [post]
 func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 	var req enrollRequest
 	if err := parseBody(r, &req); err != nil {
@@ -370,26 +595,19 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "wireguard_pubkey is required")
 		return
 	}
-
-	// Use a transaction with row locking to prevent IP allocation race conditions.
-	tx, err := h.pool.Begin(r.Context())
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to begin transaction")
+	if !validWireGuardKey(req.WireguardPubkey) {
+		respondError(w, http.StatusBadRequest, "invalid WireGuard public key: must be 44-character base64 (32 bytes)")
 		return
 	}
-	defer tx.Rollback(r.Context())
 
-	// Auto-assign IP from the first active network and read its DNS servers.
-	var assignedIP string
+	// Read network configuration (DNS, mask) and gateway info.
+	var err error
 	var maskLen int
 	var networkDNS []string
-	err = tx.QueryRow(r.Context(),
-		`SELECT host(network(address) + (SELECT COUNT(*) + 2 FROM devices)),
-		        masklen(address),
-		        dns
-		 FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1
-		 FOR UPDATE`,
-	).Scan(&assignedIP, &maskLen, &networkDNS)
+	err = h.pool.QueryRow(r.Context(),
+		`SELECT masklen(address), dns
+		 FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1`,
+	).Scan(&maskLen, &networkDNS)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to allocate IP address: no active network found")
 		return
@@ -400,7 +618,7 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 
 	// Get the gateway endpoint and public key from the first active gateway.
 	var gatewayEndpoint, gatewayPubkey string
-	err = tx.QueryRow(r.Context(),
+	err = h.pool.QueryRow(r.Context(),
 		`SELECT g.endpoint, g.wireguard_pubkey
 		 FROM gateways g
 		 JOIN networks n ON n.id = g.network_id
@@ -416,45 +634,71 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use a default user for enrollment (the first admin user). In production
-	// this would come from the authenticated session.
-	var userID uuid.UUID
-	err = tx.QueryRow(r.Context(),
-		`SELECT id FROM users WHERE is_admin = true ORDER BY created_at LIMIT 1`,
-	).Scan(&userID)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to find admin user for enrollment")
+	// Use the authenticated user for enrollment.
+	claims, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+	userID, parseErr := uuid.Parse(claims.UserID)
+	if parseErr != nil {
+		respondError(w, http.StatusInternalServerError, "invalid user ID in token")
 		return
 	}
 
-	// Create the device.
+	// Atomically allocate the next available IP and insert the device.
+	// Uses a CTE that finds the first unused IP in the network range,
+	// with a retry loop to handle concurrent inserts racing for the same IP.
+	const maxEnrollRetries = 5
 	var deviceID uuid.UUID
-	err = tx.QueryRow(r.Context(),
-		`INSERT INTO devices (user_id, name, wireguard_pubkey, assigned_ip, is_approved)
-		 VALUES ($1, $2, $3, $4, true)
-		 RETURNING id`,
-		userID, req.Name, req.WireguardPubkey, assignedIP,
-	).Scan(&deviceID)
-	if err != nil {
+	var assignedIP string
+	for attempt := 0; attempt < maxEnrollRetries; attempt++ {
+		err = h.pool.QueryRow(r.Context(),
+			`WITH net AS (
+				SELECT address FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1
+			),
+			candidate AS (
+				SELECT host(network(net.address) + s.off) AS ip
+				FROM net, generate_series(2, (1 << (32 - masklen(net.address))) - 2) AS s(off)
+				WHERE NOT EXISTS (
+					SELECT 1 FROM devices WHERE assigned_ip = (network(net.address) + s.off)::inet
+				)
+				LIMIT 1
+			)
+			INSERT INTO devices (user_id, name, wireguard_pubkey, assigned_ip, is_approved)
+			SELECT $1, $2, $3, candidate.ip, true
+			FROM candidate
+			RETURNING id, host(assigned_ip)`,
+			userID, req.Name, req.WireguardPubkey,
+		).Scan(&deviceID, &assignedIP)
+		if err == nil {
+			break
+		}
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			if strings.Contains(pgErr.ConstraintName, "assigned_ip") {
+				// IP collision from concurrent insert — retry with next available.
+				h.log.Warn("IP allocation collision during enrollment, retrying", "attempt", attempt+1)
+				continue
+			}
 			msg := "device already exists"
 			if strings.Contains(pgErr.ConstraintName, "pubkey") {
 				msg = "device with this public key already exists"
 			} else if strings.Contains(pgErr.ConstraintName, "name") {
 				msg = "device with this name already exists"
-			} else if strings.Contains(pgErr.ConstraintName, "assigned_ip") {
-				msg = "IP address already in use"
 			}
 			respondError(w, http.StatusConflict, msg)
+			return
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusInternalServerError, "no available IP addresses in the network")
 			return
 		}
 		respondError(w, http.StatusInternalServerError, "failed to create device")
 		return
 	}
-
-	if err := tx.Commit(r.Context()); err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to commit enrollment")
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to allocate IP address after retries")
 		return
 	}
 
@@ -470,10 +714,28 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 		PersistentKeepalive: 25,
 	}
 
+	// Notify gateways about the new peer (enroll auto-approves).
+	if h.notifier != nil && req.WireguardPubkey != "" {
+		h.notifier.NotifyPeerAdd(req.WireguardPubkey, []string{assignedIP + "/32"})
+	}
+
 	h.log.Info("device enrolled", "device_id", deviceID, "name", req.Name, "address", clientAddress, "gateway", gatewayEndpoint)
 	respondJSON(w, http.StatusCreated, resp)
 }
 
+// @Summary Download device config
+// @Description Generate and return a WireGuard configuration file for the device.
+// @Tags Devices
+// @Produce json
+// @Param id path string true "Device ID (UUID)"
+// @Success 200 {object} configResponse
+// @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 422 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /devices/{id}/config [get]
 func (h *DeviceHandler) downloadConfig(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -481,18 +743,31 @@ func (h *DeviceHandler) downloadConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch device info.
+	// Verify ownership: non-admins can only download config for their own devices.
+	claims, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	// Fetch device info including owner.
 	var assignedIP string
 	var deviceName string
+	var ownerID string
 	err = h.pool.QueryRow(r.Context(),
-		`SELECT name, host(assigned_ip) FROM devices WHERE id = $1`, id,
-	).Scan(&deviceName, &assignedIP)
+		`SELECT name, host(assigned_ip), user_id::text FROM devices WHERE id = $1`, id,
+	).Scan(&deviceName, &assignedIP, &ownerID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			respondError(w, http.StatusNotFound, "device not found")
 		} else {
 			respondError(w, http.StatusInternalServerError, "failed to fetch device")
 		}
+		return
+	}
+
+	if !claims.IsAdmin && claims.UserID != ownerID {
+		respondError(w, http.StatusForbidden, "you can only download config for your own devices")
 		return
 	}
 
@@ -528,26 +803,40 @@ func (h *DeviceHandler) downloadConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate a new key pair for the client. Since we only store the public
-	// key, we generate a fresh pair and return the private key in the config.
-	privateKey, err := wireguard.GeneratePrivateKey()
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to generate WireGuard key pair")
-		return
-	}
-	publicKey, err := wireguard.PublicKey(privateKey)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to derive public key")
-		return
-	}
+	// Look up the device's stored private key (set at creation time).
+	// If the private key was not stored (legacy device), generate a new pair.
+	var storedPrivKey *string
+	_ = h.pool.QueryRow(r.Context(),
+		`SELECT wireguard_privkey FROM devices WHERE id = $1`, id,
+	).Scan(&storedPrivKey)
 
-	// Update the device's stored public key to match the newly generated pair.
-	_, err = h.pool.Exec(r.Context(),
-		`UPDATE devices SET wireguard_pubkey = $1, updated_at = now() WHERE id = $2`,
-		publicKey, id)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to update device public key")
-		return
+	var privateKey, publicKey string
+	if storedPrivKey != nil && *storedPrivKey != "" {
+		privateKey = *storedPrivKey
+		publicKey, err = wireguard.PublicKey(privateKey)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to derive public key")
+			return
+		}
+	} else {
+		// Fallback: generate a new key pair and update the device record.
+		privateKey, err = wireguard.GeneratePrivateKey()
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to generate WireGuard key pair")
+			return
+		}
+		publicKey, err = wireguard.PublicKey(privateKey)
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to derive public key")
+			return
+		}
+		if _, err := h.pool.Exec(r.Context(),
+			`UPDATE devices SET wireguard_pubkey = $1, wireguard_privkey = $2, updated_at = now() WHERE id = $3`,
+			publicKey, privateKey, id); err != nil {
+			h.log.Error("failed to update device keys", "error", err, "device_id", id)
+			respondError(w, http.StatusInternalServerError, "failed to update device keys")
+			return
+		}
 	}
 
 	clientAddress := fmt.Sprintf("%s/%d", assignedIP, maskLen)
@@ -575,4 +864,142 @@ func (h *DeviceHandler) downloadConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, resp)
+}
+
+// @Summary Send device config via email
+// @Description Email the WireGuard configuration to the device owner.
+// @Tags Devices
+// @Produce json
+// @Param id path string true "Device ID (UUID)"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 422 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /devices/{id}/send-config [post]
+func (h *DeviceHandler) sendConfig(w http.ResponseWriter, r *http.Request) {
+	if h.mailer == nil {
+		respondError(w, http.StatusUnprocessableEntity, "email is not configured on this instance")
+		return
+	}
+
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Verify ownership.
+	claims, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	// Fetch device owner, name, and email.
+	var ownerID, deviceName, userEmail string
+	err = h.pool.QueryRow(r.Context(),
+		`SELECT d.user_id::text, d.name, u.email
+		 FROM devices d JOIN users u ON u.id = d.user_id
+		 WHERE d.id = $1`, id,
+	).Scan(&ownerID, &deviceName, &userEmail)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "device not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "failed to fetch device")
+		return
+	}
+
+	if !claims.IsAdmin && claims.UserID != ownerID {
+		respondError(w, http.StatusForbidden, "you can only send config for your own devices")
+		return
+	}
+
+	// Build the config (same logic as downloadConfig).
+	var assignedIP string
+	_ = h.pool.QueryRow(r.Context(),
+		`SELECT host(assigned_ip) FROM devices WHERE id = $1`, id,
+	).Scan(&assignedIP)
+
+	var maskLen int
+	var networkDNS []string
+	err = h.pool.QueryRow(r.Context(),
+		`SELECT masklen(address), dns FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1`,
+	).Scan(&maskLen, &networkDNS)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to read network configuration")
+		return
+	}
+	if len(networkDNS) == 0 {
+		networkDNS = []string{"1.1.1.1", "8.8.8.8"}
+	}
+
+	var gatewayEndpoint, gatewayPubkey string
+	err = h.pool.QueryRow(r.Context(),
+		`SELECT g.endpoint, g.wireguard_pubkey
+		 FROM gateways g JOIN networks n ON n.id = g.network_id
+		 WHERE n.is_active = true AND g.is_active = true
+		 ORDER BY g.priority DESC, g.created_at LIMIT 1`,
+	).Scan(&gatewayEndpoint, &gatewayPubkey)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to read gateway configuration")
+		return
+	}
+
+	var storedPrivKey *string
+	_ = h.pool.QueryRow(r.Context(),
+		`SELECT wireguard_privkey FROM devices WHERE id = $1`, id,
+	).Scan(&storedPrivKey)
+
+	var privateKey string
+	if storedPrivKey != nil && *storedPrivKey != "" {
+		privateKey = *storedPrivKey
+	} else {
+		privateKey, err = wireguard.GeneratePrivateKey()
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to generate key pair")
+			return
+		}
+		pubKey, pubErr := wireguard.PublicKey(privateKey)
+		if pubErr != nil {
+			respondError(w, http.StatusInternalServerError, "failed to derive public key")
+			return
+		}
+		if _, err := h.pool.Exec(r.Context(),
+			`UPDATE devices SET wireguard_pubkey = $1, wireguard_privkey = $2, updated_at = now() WHERE id = $3`,
+			pubKey, privateKey, id); err != nil {
+			h.log.Error("failed to update device keys", "error", err, "device_id", id)
+			respondError(w, http.StatusInternalServerError, "failed to update device keys")
+			return
+		}
+	}
+
+	clientAddress := fmt.Sprintf("%s/%d", assignedIP, maskLen)
+	cfg := wireguard.InterfaceConfig{
+		PrivateKey: privateKey,
+		Address:    clientAddress,
+		DNS:        networkDNS,
+		Peers: []wireguard.PeerConfig{
+			{
+				PublicKey:           gatewayPubkey,
+				AllowedIPs:          []string{"0.0.0.0/0"},
+				Endpoint:            gatewayEndpoint,
+				PersistentKeepalive: 25,
+			},
+		},
+	}
+	configText := wireguard.RenderConfig(cfg)
+
+	if err := h.mailer.SendDeviceConfig(r.Context(), userEmail, deviceName, configText); err != nil {
+		h.log.Error("failed to send config email", "error", err, "device_id", id, "email", userEmail)
+		respondError(w, http.StatusInternalServerError, "failed to send configuration email")
+		return
+	}
+
+	h.log.Info("config email sent", "device_id", id, "email", userEmail)
+	respondJSON(w, http.StatusOK, map[string]string{"status": "sent", "email": userEmail})
 }

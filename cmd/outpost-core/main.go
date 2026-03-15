@@ -15,6 +15,14 @@ import (
 	"github.com/romashqua/outpost/pkg/version"
 )
 
+// @title Outpost VPN API
+// @version 1.0
+// @description Open-source WireGuard VPN & Zero-Trust Network Access platform API.
+// @host localhost:8080
+// @BasePath /api/v1
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
 func main() {
 	cfg := config.Load()
 

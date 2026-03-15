@@ -81,10 +81,11 @@ export default function NetworksPage() {
     keepalive: 25,
   })
 
-  const { data: networks = [], isLoading, error } = useQuery<Network[]>({
+  const { data: networksData, isLoading, error } = useQuery<{ networks: Network[]; total: number }>({
     queryKey: ['networks'],
     queryFn: () => api.get('/networks'),
   })
+  const networks = networksData?.networks ?? []
 
   const createMutation = useMutation({
     mutationFn: (payload: CreateNetworkPayload) => {

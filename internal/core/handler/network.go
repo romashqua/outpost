@@ -75,11 +75,31 @@ type updateNetworkRequest struct {
 	IsActive  *bool    `json:"is_active,omitempty"`
 }
 
+// @Summary List networks
+// @Description Returns a paginated list of all networks.
+// @Tags Networks
+// @Produce json
+// @Param page query int false "Page number" default(1)
+// @Param per_page query int false "Items per page" default(50)
+// @Success 200 {object} map[string]any
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /networks [get]
 func (h *NetworkHandler) list(w http.ResponseWriter, r *http.Request) {
+	page, perPage := parsePagination(r)
+	offset := (page - 1) * perPage
+
+	var total int
+	if err := h.pool.QueryRow(r.Context(), `SELECT COUNT(*) FROM networks`).Scan(&total); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to count networks")
+		return
+	}
+
 	rows, err := h.pool.Query(r.Context(),
 		`SELECT id, name, address::text, dns, port, keepalive, is_active, created_at, updated_at
 		 FROM networks
-		 ORDER BY created_at DESC`)
+		 ORDER BY created_at DESC
+		 LIMIT $1 OFFSET $2`, perPage, offset)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to query networks")
 		return
@@ -102,9 +122,26 @@ func (h *NetworkHandler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, networks)
+	respondJSON(w, http.StatusOK, map[string]any{
+		"networks": networks,
+		"total":    total,
+		"page":     page,
+		"per_page": perPage,
+	})
 }
 
+// @Summary Create network
+// @Description Create a new WireGuard network. Requires admin privileges.
+// @Tags Networks
+// @Accept json
+// @Produce json
+// @Param body body createNetworkRequest true "Network data"
+// @Success 201 {object} networkResponse
+// @Failure 400 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /networks [post]
 func (h *NetworkHandler) create(w http.ResponseWriter, r *http.Request) {
 	var req createNetworkRequest
 	if err := parseBody(r, &req); err != nil {
@@ -181,6 +218,17 @@ func (h *NetworkHandler) create(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusCreated, n)
 }
 
+// @Summary Get network
+// @Description Retrieve a network by ID.
+// @Tags Networks
+// @Produce json
+// @Param id path string true "Network ID (UUID)"
+// @Success 200 {object} networkResponse
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /networks/{id} [get]
 func (h *NetworkHandler) get(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -206,6 +254,20 @@ func (h *NetworkHandler) get(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, n)
 }
 
+// @Summary Update network
+// @Description Update an existing network. Requires admin privileges.
+// @Tags Networks
+// @Accept json
+// @Produce json
+// @Param id path string true "Network ID (UUID)"
+// @Param body body updateNetworkRequest true "Fields to update"
+// @Success 200 {object} networkResponse
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /networks/{id} [put]
 func (h *NetworkHandler) update(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -276,6 +338,17 @@ func (h *NetworkHandler) update(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, n)
 }
 
+// @Summary Delete network
+// @Description Delete a network by ID. Requires admin privileges.
+// @Tags Networks
+// @Produce json
+// @Param id path string true "Network ID (UUID)"
+// @Success 204 "No Content"
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /networks/{id} [delete]
 func (h *NetworkHandler) delete(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {

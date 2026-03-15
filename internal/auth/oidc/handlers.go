@@ -71,11 +71,7 @@ func (p *Provider) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 	userID := claims.UserID
 
-	if responseType != "code" {
-		errorRedirect(w, r, redirectURI, state, "unsupported_response_type", "only response_type=code is supported")
-		return
-	}
-
+	// Validate client and redirect URI BEFORE using redirectURI in any response.
 	client, err := p.store.GetClient(r.Context(), clientID)
 	if err != nil {
 		oidcError(w, http.StatusBadRequest, "invalid client_id")
@@ -84,6 +80,11 @@ func (p *Provider) authorize(w http.ResponseWriter, r *http.Request) {
 
 	if !ValidateRedirectURI(client, redirectURI) {
 		oidcError(w, http.StatusBadRequest, "invalid redirect_uri")
+		return
+	}
+
+	if responseType != "code" {
+		errorRedirect(w, r, redirectURI, state, "unsupported_response_type", "only response_type=code is supported")
 		return
 	}
 
@@ -124,7 +125,11 @@ func (p *Provider) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Redirect back with authorization code.
-	redirectURL, _ := url.Parse(redirectURI)
+	redirectURL, err := url.Parse(redirectURI)
+	if err != nil {
+		oidcError(w, http.StatusBadRequest, "malformed redirect_uri")
+		return
+	}
 	params := redirectURL.Query()
 	params.Set("code", code)
 	if state != "" {
@@ -166,8 +171,12 @@ func (p *Provider) token(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate client_id matches.
-	if clientID != "" && clientID != ac.ClientID {
+	// client_id is required per RFC 6749 section 4.1.3.
+	if clientID == "" {
+		tokenError(w, "invalid_request", "client_id is required", http.StatusBadRequest)
+		return
+	}
+	if clientID != ac.ClientID {
 		tokenError(w, "invalid_grant", "client_id mismatch", http.StatusBadRequest)
 		return
 	}
@@ -178,18 +187,20 @@ func (p *Provider) token(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Authenticate confidential clients.
-	if clientSecret != "" {
-		client, err := p.store.GetClient(r.Context(), ac.ClientID)
-		if err != nil {
-			tokenError(w, "invalid_client", "unknown client", http.StatusUnauthorized)
+	// Authenticate confidential clients — require secret if client has one.
+	client, err := p.store.GetClient(r.Context(), ac.ClientID)
+	if err != nil {
+		tokenError(w, "invalid_client", "unknown client", http.StatusUnauthorized)
+		return
+	}
+	if client.SecretHash != "" {
+		if clientSecret == "" {
+			tokenError(w, "invalid_client", "client_secret is required for confidential clients", http.StatusUnauthorized)
 			return
 		}
-		if client.SecretHash != "" {
-			if err := auth.CheckPassword(client.SecretHash, clientSecret); err != nil {
-				tokenError(w, "invalid_client", "invalid client credentials", http.StatusUnauthorized)
-				return
-			}
+		if err := auth.CheckPassword(client.SecretHash, clientSecret); err != nil {
+			tokenError(w, "invalid_client", "invalid client credentials", http.StatusUnauthorized)
+			return
 		}
 	}
 

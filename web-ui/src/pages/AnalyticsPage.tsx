@@ -68,7 +68,7 @@ export default function AnalyticsPage() {
   const fromParam = weekAgo.toISOString()
   const toParam = now.toISOString()
 
-  const { data: summary } = useQuery({
+  const { data: summary, error: summaryError } = useQuery({
     queryKey: ['analytics', 'summary'],
     queryFn: () => api.get<AnalyticsSummary>('/analytics/summary'),
   })
@@ -130,6 +130,12 @@ export default function AnalyticsPage() {
         <span className="font-mono text-[var(--accent)] mr-2">&gt;_</span>
         {t('analytics.title')}
       </h1>
+
+      {summaryError && (
+        <Card className="p-4 mb-4 text-sm text-[var(--danger)] font-mono">
+          {t('common.error', 'Failed to load analytics data')}
+        </Card>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-4 mb-6">

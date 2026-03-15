@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -86,6 +87,14 @@ type proxyServer struct {
 
 // --- Smart Route CRUD ---
 
+// @Summary List smart routes
+// @Description Returns all smart routes.
+// @Tags Smart Routes
+// @Produce json
+// @Success 200 {array} smartRoute
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /smart-routes [get]
 func (h *SmartRouteHandler) listRoutes(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.pool.Query(r.Context(),
 		`SELECT id, name, description, is_active, created_at, updated_at
@@ -113,6 +122,18 @@ func (h *SmartRouteHandler) listRoutes(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, routes)
 }
 
+// @Summary Create smart route
+// @Description Create a new smart route. Requires admin privileges.
+// @Tags Smart Routes
+// @Accept json
+// @Produce json
+// @Param body body object true "Smart route data (name, optional description)"
+// @Success 201 {object} smartRoute
+// @Failure 400 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /smart-routes [post]
 func (h *SmartRouteHandler) createRoute(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name        string  `json:"name"`
@@ -147,6 +168,17 @@ func (h *SmartRouteHandler) createRoute(w http.ResponseWriter, r *http.Request) 
 	respondJSON(w, http.StatusCreated, sr)
 }
 
+// @Summary Get smart route
+// @Description Retrieve a smart route by ID with its entries.
+// @Tags Smart Routes
+// @Produce json
+// @Param id path string true "Smart Route ID (UUID)"
+// @Success 200 {object} smartRoute
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /smart-routes/{id} [get]
 func (h *SmartRouteHandler) getRoute(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -160,7 +192,11 @@ func (h *SmartRouteHandler) getRoute(w http.ResponseWriter, r *http.Request) {
 		 FROM smart_routes WHERE id = $1`, id,
 	).Scan(&sr.ID, &sr.Name, &sr.Description, &sr.IsActive, &sr.CreatedAt, &sr.UpdatedAt)
 	if err != nil {
-		respondError(w, http.StatusNotFound, "smart route not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "smart route not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "failed to get smart route")
 		return
 	}
 
@@ -194,6 +230,20 @@ func (h *SmartRouteHandler) getRoute(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, sr)
 }
 
+// @Summary Update smart route
+// @Description Update an existing smart route. Requires admin privileges.
+// @Tags Smart Routes
+// @Accept json
+// @Produce json
+// @Param id path string true "Smart Route ID (UUID)"
+// @Param body body object true "Fields to update (name, description, is_active)"
+// @Success 200 {object} smartRoute
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /smart-routes/{id} [put]
 func (h *SmartRouteHandler) updateRoute(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -228,13 +278,28 @@ func (h *SmartRouteHandler) updateRoute(w http.ResponseWriter, r *http.Request) 
 			respondError(w, http.StatusConflict, "smart route with this name already exists")
 			return
 		}
-		respondError(w, http.StatusNotFound, "smart route not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "smart route not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "failed to update smart route")
 		return
 	}
 
 	respondJSON(w, http.StatusOK, sr)
 }
 
+// @Summary Delete smart route
+// @Description Delete a smart route by ID. Requires admin privileges.
+// @Tags Smart Routes
+// @Produce json
+// @Param id path string true "Smart Route ID (UUID)"
+// @Success 204 "No Content"
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /smart-routes/{id} [delete]
 func (h *SmartRouteHandler) deleteRoute(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -258,6 +323,19 @@ func (h *SmartRouteHandler) deleteRoute(w http.ResponseWriter, r *http.Request) 
 
 // --- Smart Route Entries ---
 
+// @Summary Add smart route entry
+// @Description Add a routing entry (domain, CIDR, or domain_suffix) to a smart route. Requires admin privileges.
+// @Tags Smart Routes
+// @Accept json
+// @Produce json
+// @Param id path string true "Smart Route ID (UUID)"
+// @Param body body object true "Entry data (entry_type, value, action, optional proxy_id, priority)"
+// @Success 201 {object} smartRouteEntry
+// @Failure 400 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /smart-routes/{id}/entries [post]
 func (h *SmartRouteHandler) addEntry(w http.ResponseWriter, r *http.Request) {
 	routeID, err := parseUUID(r, "id")
 	if err != nil {
@@ -361,6 +439,18 @@ func (h *SmartRouteHandler) addEntry(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusCreated, e)
 }
 
+// @Summary Delete smart route entry
+// @Description Remove an entry from a smart route. Requires admin privileges.
+// @Tags Smart Routes
+// @Produce json
+// @Param id path string true "Smart Route ID (UUID)"
+// @Param entryId path string true "Entry ID (UUID)"
+// @Success 204 "No Content"
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /smart-routes/{id}/entries/{entryId} [delete]
 func (h *SmartRouteHandler) deleteEntry(w http.ResponseWriter, r *http.Request) {
 	routeID, err := parseUUID(r, "id")
 	if err != nil {
@@ -389,6 +479,14 @@ func (h *SmartRouteHandler) deleteEntry(w http.ResponseWriter, r *http.Request) 
 
 // --- Proxy Servers ---
 
+// @Summary List proxy servers
+// @Description Returns all proxy servers for smart routing.
+// @Tags Smart Routes
+// @Produce json
+// @Success 200 {array} proxyServer
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /smart-routes/proxy-servers [get]
 func (h *SmartRouteHandler) listProxyServers(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.pool.Query(r.Context(),
 		`SELECT id, name, type, address, port, username, password, extra_config::text, is_active, created_at, updated_at
@@ -406,6 +504,7 @@ func (h *SmartRouteHandler) listProxyServers(w http.ResponseWriter, r *http.Requ
 			respondError(w, http.StatusInternalServerError, "failed to scan proxy server")
 			return
 		}
+		ps.Password = nil
 		servers = append(servers, ps)
 	}
 	if err := rows.Err(); err != nil {
@@ -416,6 +515,18 @@ func (h *SmartRouteHandler) listProxyServers(w http.ResponseWriter, r *http.Requ
 	respondJSON(w, http.StatusOK, servers)
 }
 
+// @Summary Create proxy server
+// @Description Create a new proxy server (SOCKS5, HTTP, Shadowsocks, or VLESS). Requires admin privileges.
+// @Tags Smart Routes
+// @Accept json
+// @Produce json
+// @Param body body object true "Proxy server data (name, type, address, port, optional credentials)"
+// @Success 201 {object} proxyServer
+// @Failure 400 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /smart-routes/proxy-servers [post]
 func (h *SmartRouteHandler) createProxyServer(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name        string  `json:"name"`
@@ -460,9 +571,21 @@ func (h *SmartRouteHandler) createProxyServer(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	ps.Password = nil
 	respondJSON(w, http.StatusCreated, ps)
 }
 
+// @Summary Get proxy server
+// @Description Retrieve a proxy server by ID.
+// @Tags Smart Routes
+// @Produce json
+// @Param id path string true "Proxy Server ID (UUID)"
+// @Success 200 {object} proxyServer
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /smart-routes/proxy-servers/{id} [get]
 func (h *SmartRouteHandler) getProxyServer(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -476,13 +599,32 @@ func (h *SmartRouteHandler) getProxyServer(w http.ResponseWriter, r *http.Reques
 		 FROM proxy_servers WHERE id = $1`, id,
 	).Scan(&ps.ID, &ps.Name, &ps.Type, &ps.Address, &ps.Port, &ps.Username, &ps.Password, &ps.ExtraConfig, &ps.IsActive, &ps.CreatedAt, &ps.UpdatedAt)
 	if err != nil {
-		respondError(w, http.StatusNotFound, "proxy server not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "proxy server not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "failed to get proxy server")
 		return
 	}
 
+	ps.Password = nil
 	respondJSON(w, http.StatusOK, ps)
 }
 
+// @Summary Update proxy server
+// @Description Update an existing proxy server. Requires admin privileges.
+// @Tags Smart Routes
+// @Accept json
+// @Produce json
+// @Param id path string true "Proxy Server ID (UUID)"
+// @Param body body object true "Fields to update"
+// @Success 200 {object} proxyServer
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /smart-routes/proxy-servers/{id} [put]
 func (h *SmartRouteHandler) updateProxyServer(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -535,13 +677,30 @@ func (h *SmartRouteHandler) updateProxyServer(w http.ResponseWriter, r *http.Req
 			respondError(w, http.StatusConflict, "proxy server with this name already exists")
 			return
 		}
-		respondError(w, http.StatusNotFound, "proxy server not found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "proxy server not found")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "failed to update proxy server")
 		return
 	}
 
+	ps.Password = nil
 	respondJSON(w, http.StatusOK, ps)
 }
 
+// @Summary Delete proxy server
+// @Description Delete a proxy server by ID. Fails if referenced by route entries. Requires admin privileges.
+// @Tags Smart Routes
+// @Produce json
+// @Param id path string true "Proxy Server ID (UUID)"
+// @Success 204 "No Content"
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /smart-routes/proxy-servers/{id} [delete]
 func (h *SmartRouteHandler) deleteProxyServer(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -576,6 +735,16 @@ type networkSmartRoute struct {
 	NetworkName  string `json:"network_name"`
 }
 
+// @Summary List smart route networks
+// @Description Returns all networks associated with a smart route.
+// @Tags Smart Routes
+// @Produce json
+// @Param id path string true "Smart Route ID (UUID)"
+// @Success 200 {array} networkSmartRoute
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /smart-routes/{id}/networks [get]
 func (h *SmartRouteHandler) listRouteNetworks(w http.ResponseWriter, r *http.Request) {
 	routeID, err := parseUUID(r, "id")
 	if err != nil {
@@ -612,6 +781,19 @@ func (h *SmartRouteHandler) listRouteNetworks(w http.ResponseWriter, r *http.Req
 	respondJSON(w, http.StatusOK, result)
 }
 
+// @Summary Associate network with smart route
+// @Description Associate a network with a smart route. Requires admin privileges.
+// @Tags Smart Routes
+// @Accept json
+// @Produce json
+// @Param id path string true "Smart Route ID (UUID)"
+// @Param body body object true "Network ID to associate"
+// @Success 201 "Created"
+// @Failure 400 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /smart-routes/{id}/networks [post]
 func (h *SmartRouteHandler) addRouteNetwork(w http.ResponseWriter, r *http.Request) {
 	routeID, err := parseUUID(r, "id")
 	if err != nil {
@@ -659,6 +841,18 @@ func (h *SmartRouteHandler) addRouteNetwork(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusCreated)
 }
 
+// @Summary Remove network from smart route
+// @Description Remove a network association from a smart route. Requires admin privileges.
+// @Tags Smart Routes
+// @Produce json
+// @Param id path string true "Smart Route ID (UUID)"
+// @Param networkId path string true "Network ID (UUID)"
+// @Success 204 "No Content"
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /smart-routes/{id}/networks/{networkId} [delete]
 func (h *SmartRouteHandler) removeRouteNetwork(w http.ResponseWriter, r *http.Request) {
 	routeID, err := parseUUID(r, "id")
 	if err != nil {

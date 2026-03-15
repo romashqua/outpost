@@ -20,7 +20,14 @@ func GetUserFromContext(ctx context.Context) (*TokenClaims, bool) {
 // JWTMiddleware returns middleware that validates a Bearer token in the
 // Authorization header and stores the parsed claims in the request context.
 // Responds with 401 Unauthorized on any failure.
-func JWTMiddleware(secret string) func(http.Handler) http.Handler {
+//
+// If a TokenBlacklist is provided, revoked tokens are rejected with 401.
+// Pass nil to skip blacklist checking (backwards compatible).
+func JWTMiddleware(secret string, blacklist ...TokenBlacklist) func(http.Handler) http.Handler {
+	var bl TokenBlacklist
+	if len(blacklist) > 0 {
+		bl = blacklist[0]
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			header := r.Header.Get("Authorization")
@@ -39,6 +46,25 @@ func JWTMiddleware(secret string) func(http.Handler) http.Handler {
 			if err != nil {
 				respondAuthError(w, http.StatusUnauthorized, "invalid token")
 				return
+			}
+
+			// Reject MFA-pending tokens — they must only be used at /auth/mfa/verify.
+			if claims.TokenType == "mfa" {
+				respondAuthError(w, http.StatusUnauthorized, "mfa verification required")
+				return
+			}
+
+			// Check token blacklist (logout invalidation).
+			if bl != nil {
+				revoked, err := bl.IsBlacklisted(r.Context(), tokenStr)
+				if err != nil {
+					respondAuthError(w, http.StatusInternalServerError, "failed to check token status")
+					return
+				}
+				if revoked {
+					respondAuthError(w, http.StatusUnauthorized, "token has been revoked")
+					return
+				}
 			}
 
 			ctx := context.WithValue(r.Context(), claimsKey, claims)

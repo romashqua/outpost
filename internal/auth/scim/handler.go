@@ -5,7 +5,9 @@ package scim
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -392,7 +394,9 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 	// Generate a random password for SCIM-provisioned users.
 	password := req.Password
 	if password == "" {
-		password = fmt.Sprintf("scim-%s-%d", req.UserName, time.Now().UnixNano())
+		var rb [16]byte
+		_, _ = rand.Read(rb[:])
+		password = "scim-" + hex.EncodeToString(rb[:])
 	}
 	hash, err := auth.HashPassword(password)
 	if err != nil {

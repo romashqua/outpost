@@ -22,6 +22,8 @@ type Agent struct {
 	mu     sync.Mutex
 	conn   *grpc.ClientConn
 	client gatewayv1.GatewayServiceClient
+
+	wg *WGManager // nil if WireGuard interface not available (e.g. dev mode)
 }
 
 func NewAgent(cfg *config.Config, logger *slog.Logger) (*Agent, error) {
@@ -65,6 +67,26 @@ func (a *Agent) Run(ctx context.Context) error {
 		"peers", len(cfg.Peers),
 		"s2s_tunnels", len(cfg.S2STunnels),
 	)
+
+	// Try to initialize WireGuard interface manager.
+	ifaceName := "wg0"
+	if a.cfg.Gateway.InterfaceName != "" {
+		ifaceName = a.cfg.Gateway.InterfaceName
+	}
+	wgMgr, err := NewWGManager(ifaceName, a.logger)
+	if err != nil {
+		a.logger.Warn("WireGuard manager unavailable — peer updates will be logged only", "error", err)
+	} else {
+		a.wg = wgMgr
+		defer wgMgr.Close()
+
+		// Apply initial peers from config.
+		for _, p := range cfg.Peers {
+			if addErr := wgMgr.AddPeer(p.PublicKey, p.AllowedIps, p.Endpoint, int(p.PersistentKeepalive)); addErr != nil {
+				a.logger.Warn("failed to add initial peer", "pubkey", p.PublicKey, "error", addErr)
+			}
+		}
+	}
 
 	// Start sync stream.
 	errCh := make(chan error, 1)
@@ -192,11 +214,27 @@ func (a *Agent) runSync(ctx context.Context) error {
 }
 
 func (a *Agent) handlePeerUpdate(update *gatewayv1.PeerUpdate) {
+	peer := update.GetPeer()
+	pubkey := peer.GetPublicKey()
 	a.logger.Info("peer update",
 		"action", update.Action.String(),
-		"pubkey", update.Peer.GetPublicKey(),
+		"pubkey", pubkey,
 	)
-	// WireGuard interface management will be implemented with wireguard package.
+
+	if a.wg == nil {
+		return
+	}
+
+	switch update.Action {
+	case gatewayv1.PeerUpdate_ACTION_ADD, gatewayv1.PeerUpdate_ACTION_MODIFY:
+		if err := a.wg.AddPeer(pubkey, peer.AllowedIps, peer.Endpoint, int(peer.PersistentKeepalive)); err != nil {
+			a.logger.Error("failed to add/modify peer", "pubkey", pubkey, "error", err)
+		}
+	case gatewayv1.PeerUpdate_ACTION_REMOVE:
+		if err := a.wg.RemovePeer(pubkey); err != nil {
+			a.logger.Error("failed to remove peer", "pubkey", pubkey, "error", err)
+		}
+	}
 }
 
 func (a *Agent) handleS2SUpdate(update *gatewayv1.S2SUpdate) {
@@ -211,10 +249,21 @@ func (a *Agent) handleFirewallUpdate(update *gatewayv1.FirewallUpdate) {
 }
 
 func (a *Agent) handleFullResync(resync *gatewayv1.FullResync) {
+	cfg := resync.GetConfig()
 	a.logger.Info("full resync",
-		"peers", len(resync.Config.GetPeers()),
-		"s2s_tunnels", len(resync.Config.GetS2STunnels()),
+		"peers", len(cfg.GetPeers()),
+		"s2s_tunnels", len(cfg.GetS2STunnels()),
 	)
+
+	if a.wg == nil {
+		return
+	}
+
+	for _, p := range cfg.GetPeers() {
+		if err := a.wg.AddPeer(p.PublicKey, p.AllowedIps, p.Endpoint, int(p.PersistentKeepalive)); err != nil {
+			a.logger.Warn("resync: failed to add peer", "pubkey", p.PublicKey, "error", err)
+		}
+	}
 }
 
 func (a *Agent) heartbeatLoop(ctx context.Context) {

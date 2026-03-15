@@ -75,6 +75,8 @@ func (tm *TunnelManager) State() TunnelState {
 
 // OnStateChange registers a callback for tunnel state changes.
 func (tm *TunnelManager) OnStateChange(fn func(TunnelState)) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
 	tm.onStateChange = fn
 }
 
@@ -82,12 +84,13 @@ func (tm *TunnelManager) setState(s TunnelState) {
 	tm.mu.Lock()
 	old := tm.state
 	tm.state = s
+	cb := tm.onStateChange
 	tm.mu.Unlock()
 
 	if old != s {
 		tm.logger.Info("tunnel state changed", "from", old.String(), "to", s.String())
-		if tm.onStateChange != nil {
-			tm.onStateChange(s)
+		if cb != nil {
+			cb(s)
 		}
 	}
 }
@@ -152,6 +155,7 @@ func (tm *TunnelManager) Connect(ctx context.Context, networkID string) error {
 	}
 
 	if err := tm.wgUp(configPath); err != nil {
+		os.Remove(configPath) // Clean up config file containing private key.
 		tm.setState(TunnelDisconnected)
 		return fmt.Errorf("bring up tunnel: %w", err)
 	}
@@ -170,6 +174,9 @@ func (tm *TunnelManager) Disconnect() error {
 	if err := tm.wgDown(configPath); err != nil {
 		return fmt.Errorf("bring down tunnel: %w", err)
 	}
+
+	// Clean up config file containing private key material.
+	os.Remove(configPath)
 
 	tm.setState(TunnelDisconnected)
 	return nil

@@ -134,6 +134,8 @@
     "user": "User",
     "copy": "Copy",
     "downloadConf": "Download .conf",
+    "sendToEmail": "Send config to email",
+    "configSent": "Configuration sent to {{email}}",
     "creating": "Creating...",
     "deleting": "Deleting...",
     "failedToLoad": "Failed to load devices",

@@ -34,6 +34,14 @@ type dashboardStats struct {
 	S2STunnels     int `json:"s2s_tunnels"`
 }
 
+// @Summary Get dashboard stats
+// @Description Returns aggregate statistics for users, devices, gateways, networks, and S2S tunnels.
+// @Tags Dashboard
+// @Produce json
+// @Success 200 {object} dashboardStats
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /dashboard/stats [get]
 func (h *DashboardHandler) stats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	var s dashboardStats

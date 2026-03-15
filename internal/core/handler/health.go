@@ -27,11 +27,24 @@ func (h *HealthHandler) Routes() chi.Router {
 }
 
 // Healthz is a liveness probe that always returns 200.
+// @Summary Liveness probe
+// @Description Always returns 200 OK to indicate the service is alive.
+// @Tags Health
+// @Produce json
+// @Success 200 {object} map[string]string
+// @Router /healthz [get]
 func (h *HealthHandler) Healthz(w http.ResponseWriter, _ *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // Readyz is a readiness probe that verifies database connectivity.
+// @Summary Readiness probe
+// @Description Verifies the database is reachable. Returns 503 if not.
+// @Tags Health
+// @Produce json
+// @Success 200 {object} map[string]string
+// @Failure 503 {object} map[string]string
+// @Router /readyz [get]
 func (h *HealthHandler) Readyz(w http.ResponseWriter, r *http.Request) {
 	if h.pool == nil {
 		respondError(w, http.StatusServiceUnavailable, "database pool not configured")

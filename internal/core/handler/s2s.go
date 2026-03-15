@@ -59,6 +59,14 @@ type s2sTunnel struct {
 	UpdatedAt    time.Time `json:"updated_at"`
 }
 
+// @Summary List S2S tunnels
+// @Description Returns all site-to-site tunnels.
+// @Tags S2S Tunnels
+// @Produce json
+// @Success 200 {array} s2sTunnel
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /s2s-tunnels [get]
 func (h *S2SHandler) list(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.pool.Query(r.Context(),
 		`SELECT id, name, COALESCE(description, ''), topology, hub_gateway_id, is_active, created_at, updated_at
@@ -87,6 +95,18 @@ func (h *S2SHandler) list(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, tunnels)
 }
 
+// @Summary Create S2S tunnel
+// @Description Create a new site-to-site tunnel (mesh or hub-spoke). Requires admin privileges.
+// @Tags S2S Tunnels
+// @Accept json
+// @Produce json
+// @Param body body object true "Tunnel data (name, topology, optional hub_gateway_id)"
+// @Success 201 {object} s2sTunnel
+// @Failure 400 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /s2s-tunnels [post]
 func (h *S2SHandler) create(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name         string  `json:"name"`
@@ -132,6 +152,17 @@ func (h *S2SHandler) create(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusCreated, t)
 }
 
+// @Summary Get S2S tunnel
+// @Description Retrieve a site-to-site tunnel by ID.
+// @Tags S2S Tunnels
+// @Produce json
+// @Param id path string true "Tunnel ID (UUID)"
+// @Success 200 {object} s2sTunnel
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /s2s-tunnels/{id} [get]
 func (h *S2SHandler) get(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -156,6 +187,17 @@ func (h *S2SHandler) get(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, t)
 }
 
+// @Summary Delete S2S tunnel
+// @Description Delete a site-to-site tunnel by ID. Requires admin privileges.
+// @Tags S2S Tunnels
+// @Produce json
+// @Param id path string true "Tunnel ID (UUID)"
+// @Success 204 "No Content"
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /s2s-tunnels/{id} [delete]
 func (h *S2SHandler) delete(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -186,6 +228,16 @@ type s2sMember struct {
 	LocalSubnets []string `json:"local_subnets"`
 }
 
+// @Summary List S2S tunnel members
+// @Description Returns all gateway members of a tunnel with their local subnets.
+// @Tags S2S Tunnels
+// @Produce json
+// @Param id path string true "Tunnel ID (UUID)"
+// @Success 200 {array} s2sMember
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /s2s-tunnels/{id}/members [get]
 func (h *S2SHandler) listMembers(w http.ResponseWriter, r *http.Request) {
 	tunnelID, err := parseUUID(r, "id")
 	if err != nil {
@@ -222,6 +274,18 @@ func (h *S2SHandler) listMembers(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, members)
 }
 
+// @Summary Add S2S tunnel member
+// @Description Add a gateway as a member of a tunnel. Requires admin privileges.
+// @Tags S2S Tunnels
+// @Accept json
+// @Produce json
+// @Param id path string true "Tunnel ID (UUID)"
+// @Param body body object true "Gateway ID and local subnets"
+// @Success 201 "Created"
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /s2s-tunnels/{id}/members [post]
 func (h *S2SHandler) addMember(w http.ResponseWriter, r *http.Request) {
 	tunnelID, err := parseUUID(r, "id")
 	if err != nil {
@@ -272,6 +336,18 @@ func (h *S2SHandler) addMember(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 }
 
+// @Summary Remove S2S tunnel member
+// @Description Remove a gateway from a tunnel. Requires admin privileges.
+// @Tags S2S Tunnels
+// @Produce json
+// @Param id path string true "Tunnel ID (UUID)"
+// @Param gatewayId path string true "Gateway ID (UUID)"
+// @Success 204 "No Content"
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /s2s-tunnels/{id}/members/{gatewayId} [delete]
 func (h *S2SHandler) removeMember(w http.ResponseWriter, r *http.Request) {
 	tunnelID, err := parseUUID(r, "id")
 	if err != nil {
@@ -312,6 +388,16 @@ type s2sRoute struct {
 	CreatedAt   string `json:"created_at"`
 }
 
+// @Summary List S2S tunnel routes
+// @Description Returns all routes for a tunnel ordered by metric.
+// @Tags S2S Tunnels
+// @Produce json
+// @Param id path string true "Tunnel ID (UUID)"
+// @Success 200 {array} s2sRoute
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /s2s-tunnels/{id}/routes [get]
 func (h *S2SHandler) listRoutes(w http.ResponseWriter, r *http.Request) {
 	tunnelID, err := parseUUID(r, "id")
 	if err != nil {
@@ -348,6 +434,18 @@ func (h *S2SHandler) listRoutes(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, routes)
 }
 
+// @Summary Add S2S tunnel route
+// @Description Add a route to a tunnel. Requires admin privileges.
+// @Tags S2S Tunnels
+// @Accept json
+// @Produce json
+// @Param id path string true "Tunnel ID (UUID)"
+// @Param body body object true "Route data (destination CIDR, via_gateway, optional metric)"
+// @Success 201 {object} s2sRoute
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /s2s-tunnels/{id}/routes [post]
 func (h *S2SHandler) addRoute(w http.ResponseWriter, r *http.Request) {
 	tunnelID, err := parseUUID(r, "id")
 	if err != nil {
@@ -409,6 +507,18 @@ func (h *S2SHandler) addRoute(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusCreated, rt)
 }
 
+// @Summary Remove S2S tunnel route
+// @Description Remove a route from a tunnel. Requires admin privileges.
+// @Tags S2S Tunnels
+// @Produce json
+// @Param id path string true "Tunnel ID (UUID)"
+// @Param routeId path string true "Route ID (UUID)"
+// @Success 204 "No Content"
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /s2s-tunnels/{id}/routes/{routeId} [delete]
 func (h *S2SHandler) removeRoute(w http.ResponseWriter, r *http.Request) {
 	tunnelID, err := parseUUID(r, "id")
 	if err != nil {
@@ -438,6 +548,18 @@ func (h *S2SHandler) removeRoute(w http.ResponseWriter, r *http.Request) {
 
 // --- Config Generation ---
 
+// @Summary Generate S2S tunnel config
+// @Description Generate a WireGuard configuration file for a gateway in a tunnel.
+// @Tags S2S Tunnels
+// @Produce text/plain
+// @Param id path string true "Tunnel ID (UUID)"
+// @Param gatewayId path string true "Gateway ID (UUID)"
+// @Success 200 {string} string "WireGuard config file"
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /s2s-tunnels/{id}/config/{gatewayId} [get]
 func (h *S2SHandler) generateConfig(w http.ResponseWriter, r *http.Request) {
 	tunnelID, err := parseUUID(r, "id")
 	if err != nil {

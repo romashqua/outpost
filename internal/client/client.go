@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 )
 
@@ -211,6 +212,10 @@ func CollectPosture() *DevicePosture {
 
 // ReportPosture sends the current device posture to the server.
 func (c *Client) ReportPosture(ctx context.Context) error {
+	if c.deviceID == "" {
+		return fmt.Errorf("device not enrolled: deviceID is empty")
+	}
+
 	posture := CollectPosture()
 	body, err := json.Marshal(posture)
 	if err != nil {
@@ -261,6 +266,10 @@ func (c *Client) Logout(ctx context.Context) error {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return c.readError(resp)
+	}
+
 	c.token = ""
 	_ = os.Remove(c.tokenPath())
 	return nil
@@ -294,7 +303,7 @@ type apiError struct {
 }
 
 func (c *Client) readError(resp *http.Response) error {
-	data, _ := io.ReadAll(resp.Body)
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // Limit to 1 MB to avoid unbounded memory usage.
 	var apiErr apiError
 	if err := json.Unmarshal(data, &apiErr); err == nil && apiErr.Error != "" {
 		return fmt.Errorf("server error (%d): %s", resp.StatusCode, apiErr.Error)
@@ -317,7 +326,11 @@ func (c *Client) LoadToken() error {
 	if err != nil {
 		return err
 	}
-	c.token = string(data)
+	token := strings.TrimSpace(string(data))
+	if token == "" {
+		return fmt.Errorf("token file is empty")
+	}
+	c.token = token
 	return nil
 }
 

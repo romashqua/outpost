@@ -9,11 +9,12 @@ import (
 
 // TokenClaims holds the custom claims embedded in a JWT.
 type TokenClaims struct {
-	UserID   string   `json:"user_id"`
-	Username string   `json:"username"`
-	Email    string   `json:"email"`
-	IsAdmin  bool     `json:"is_admin"`
-	Roles    []string `json:"roles"`
+	UserID    string   `json:"user_id"`
+	Username  string   `json:"username"`
+	Email     string   `json:"email"`
+	IsAdmin   bool     `json:"is_admin"`
+	Roles     []string `json:"roles"`
+	TokenType string   `json:"token_type,omitempty"` // "mfa" for pre-MFA tokens; empty or "session" for full session tokens.
 	jwt.RegisteredClaims
 }
 

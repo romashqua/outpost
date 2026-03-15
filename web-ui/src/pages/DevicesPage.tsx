@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { CheckCircle, XCircle, Trash2, Plus, Download, Copy, FileDown } from 'lucide-react'
+import { CheckCircle, XCircle, Trash2, Plus, Download, Copy, FileDown, Mail } from 'lucide-react'
 import Table from '@/components/ui/Table'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
@@ -52,6 +52,7 @@ export default function DevicesPage() {
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showConfigModal, setShowConfigModal] = useState(false)
   const [configText, setConfigText] = useState('')
+  const [configDeviceId, setConfigDeviceId] = useState<string | null>(null)
   const [createForm, setCreateForm] = useState({
     name: '',
     user_id: '',
@@ -59,10 +60,19 @@ export default function DevicesPage() {
     wireguard_pubkey: '',
   })
 
-  const { data: devices = [], isLoading, error } = useQuery<Device[]>({
+  interface DevicesResponse {
+    devices: Device[]
+    total: number
+    page: number
+    per_page: number
+  }
+
+  const { data: devicesData, isLoading, error } = useQuery<DevicesResponse>({
     queryKey: ['devices'],
     queryFn: () => api.get('/devices'),
   })
+
+  const devices = devicesData?.devices ?? []
 
   const { data: usersData } = useQuery<UsersResponse>({
     queryKey: ['users'],
@@ -134,6 +144,7 @@ export default function DevicesPage() {
 
       if (result.config) {
         setConfigText(result.config.config)
+        setConfigDeviceId(result.device.id)
         setShowConfigModal(true)
       }
     },
@@ -144,9 +155,20 @@ export default function DevicesPage() {
 
   const downloadConfigMutation = useMutation({
     mutationFn: (id: string) => api.get<ConfigResponse>(`/devices/${id}/config`),
-    onSuccess: (resp) => {
+    onSuccess: (resp, id) => {
       setConfigText(resp.config)
+      setConfigDeviceId(id)
       setShowConfigModal(true)
+    },
+    onError: (err) => {
+      addToast((err as Error).message, 'error')
+    },
+  })
+
+  const sendConfigMutation = useMutation({
+    mutationFn: (id: string) => api.post<{ status: string; email: string }>(`/devices/${id}/send-config`),
+    onSuccess: (resp) => {
+      addToast(t('devices.configSent', { email: resp.email }), 'success')
     },
     onError: (err) => {
       addToast((err as Error).message, 'error')
@@ -249,6 +271,18 @@ export default function DevicesPage() {
             }}
           >
             <Download size={14} className="text-[var(--accent)]" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            title={t('devices.sendToEmail')}
+            disabled={sendConfigMutation.isPending}
+            onClick={(e) => {
+              e.stopPropagation()
+              sendConfigMutation.mutate(row.id)
+            }}
+          >
+            <Mail size={14} className="text-[var(--accent)]" />
           </Button>
           {!row.is_approved ? (
             <Button
@@ -429,10 +463,19 @@ export default function DevicesPage() {
               <Copy size={14} className="mr-1" />
               {t('devices.copy')}
             </Button>
-            <Button onClick={downloadConfigFile}>
+            <Button variant="secondary" onClick={downloadConfigFile}>
               <FileDown size={14} className="mr-1" />
               {t('devices.downloadConf')}
             </Button>
+            {configDeviceId && (
+              <Button
+                disabled={sendConfigMutation.isPending}
+                onClick={() => sendConfigMutation.mutate(configDeviceId)}
+              >
+                <Mail size={14} className="mr-1" />
+                {t('devices.sendToEmail')}
+              </Button>
+            )}
           </div>
         </div>
       </Modal>

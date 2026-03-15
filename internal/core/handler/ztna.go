@@ -57,6 +57,16 @@ func (h *ZTNAHandler) Routes() chi.Router {
 
 // --- Trust Score endpoints ---
 
+// @Summary Get device trust score
+// @Description Calculate and return the current trust score for a device.
+// @Tags ZTNA
+// @Produce json
+// @Param deviceId path string true "Device ID (UUID)"
+// @Success 200 {object} map[string]any
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /ztna/trust-scores/{deviceId} [get]
 func (h *ZTNAHandler) getDeviceTrustScore(w http.ResponseWriter, r *http.Request) {
 	deviceID, err := parseUUID(r, "deviceId")
 	if err != nil {
@@ -86,6 +96,14 @@ type trustScoreSummary struct {
 	EvaluatedAt time.Time       `json:"evaluated_at"`
 }
 
+// @Summary List trust scores
+// @Description Returns the latest trust score for each device.
+// @Tags ZTNA
+// @Produce json
+// @Success 200 {array} trustScoreSummary
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /ztna/trust-scores [get]
 func (h *ZTNAHandler) listTrustScores(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.pool.Query(r.Context(), `
 		SELECT DISTINCT ON (dts.device_id)
@@ -123,6 +141,13 @@ func (h *ZTNAHandler) listTrustScores(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, scores)
 }
 
+// @Summary Get trust score config
+// @Description Returns the current trust score configuration (weights and thresholds).
+// @Tags ZTNA
+// @Produce json
+// @Success 200 {object} ztna.TrustScoreConfig
+// @Security BearerAuth
+// @Router /ztna/trust-config [get]
 func (h *ZTNAHandler) getTrustConfig(w http.ResponseWriter, r *http.Request) {
 	var config ztna.TrustScoreConfig
 	err := h.pool.QueryRow(r.Context(), `
@@ -144,6 +169,17 @@ func (h *ZTNAHandler) getTrustConfig(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, config)
 }
 
+// @Summary Update trust score config
+// @Description Update the trust score configuration. Weights must sum to 100. Requires admin privileges.
+// @Tags ZTNA
+// @Accept json
+// @Produce json
+// @Param body body ztna.TrustScoreConfig true "Trust score configuration"
+// @Success 200 {object} ztna.TrustScoreConfig
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /ztna/trust-config [put]
 func (h *ZTNAHandler) updateTrustConfig(w http.ResponseWriter, r *http.Request) {
 	var config ztna.TrustScoreConfig
 	if err := parseBody(r, &config); err != nil {
@@ -205,6 +241,16 @@ type trustHistoryEntry struct {
 	EvaluatedAt time.Time `json:"evaluated_at"`
 }
 
+// @Summary Get device trust history
+// @Description Returns the trust score history for a device (last 100 entries).
+// @Tags ZTNA
+// @Produce json
+// @Param deviceId path string true "Device ID (UUID)"
+// @Success 200 {array} trustHistoryEntry
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /ztna/trust-history/{deviceId} [get]
 func (h *ZTNAHandler) getTrustHistory(w http.ResponseWriter, r *http.Request) {
 	deviceID, err := parseUUID(r, "deviceId")
 	if err != nil {
@@ -258,6 +304,14 @@ type ztnaPolicy struct {
 	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
+// @Summary List ZTNA policies
+// @Description Returns all ZTNA policies ordered by priority.
+// @Tags ZTNA
+// @Produce json
+// @Success 200 {array} ztnaPolicy
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /ztna/policies [get]
 func (h *ZTNAHandler) listPolicies(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.pool.Query(r.Context(), `
 		SELECT id, name, description, is_active, conditions, action, network_ids, priority, created_at, updated_at
@@ -298,6 +352,17 @@ type createPolicyRequest struct {
 	Priority    int         `json:"priority"`
 }
 
+// @Summary Create ZTNA policy
+// @Description Create a new ZTNA policy. Requires admin privileges.
+// @Tags ZTNA
+// @Accept json
+// @Produce json
+// @Param body body createPolicyRequest true "Policy data"
+// @Success 201 {object} ztnaPolicy
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /ztna/policies [post]
 func (h *ZTNAHandler) createPolicy(w http.ResponseWriter, r *http.Request) {
 	var req createPolicyRequest
 	if err := parseBody(r, &req); err != nil {
@@ -338,6 +403,17 @@ func (h *ZTNAHandler) createPolicy(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusCreated, p)
 }
 
+// @Summary Get ZTNA policy
+// @Description Retrieve a ZTNA policy by ID.
+// @Tags ZTNA
+// @Produce json
+// @Param id path string true "Policy ID (UUID)"
+// @Success 200 {object} ztnaPolicy
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /ztna/policies/{id} [get]
 func (h *ZTNAHandler) getPolicy(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -375,6 +451,19 @@ type updatePolicyRequest struct {
 	Priority    *int        `json:"priority,omitempty"`
 }
 
+// @Summary Update ZTNA policy
+// @Description Update an existing ZTNA policy. Requires admin privileges.
+// @Tags ZTNA
+// @Accept json
+// @Produce json
+// @Param id path string true "Policy ID (UUID)"
+// @Param body body updatePolicyRequest true "Fields to update"
+// @Success 200 {object} ztnaPolicy
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /ztna/policies/{id} [put]
 func (h *ZTNAHandler) updatePolicy(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -423,6 +512,17 @@ func (h *ZTNAHandler) updatePolicy(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, p)
 }
 
+// @Summary Delete ZTNA policy
+// @Description Delete a ZTNA policy by ID. Requires admin privileges.
+// @Tags ZTNA
+// @Produce json
+// @Param id path string true "Policy ID (UUID)"
+// @Success 204 "No Content"
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /ztna/policies/{id} [delete]
 func (h *ZTNAHandler) deletePolicy(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -455,6 +555,16 @@ type dnsRule struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// @Summary List DNS rules
+// @Description Returns DNS rules, optionally filtered by network_id.
+// @Tags ZTNA
+// @Produce json
+// @Param network_id query string false "Filter by network ID (UUID)"
+// @Success 200 {array} dnsRule
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /ztna/dns-rules [get]
 func (h *ZTNAHandler) listDNSRules(w http.ResponseWriter, r *http.Request) {
 	networkID := r.URL.Query().Get("network_id")
 	query := `SELECT id, network_id, domain, dns_server, is_active, created_at FROM dns_rules`
@@ -502,6 +612,17 @@ type createDNSRuleRequest struct {
 	DNSServer string    `json:"dns_server"`
 }
 
+// @Summary Create DNS rule
+// @Description Create a new DNS rule for a network. Requires admin privileges.
+// @Tags ZTNA
+// @Accept json
+// @Produce json
+// @Param body body createDNSRuleRequest true "DNS rule data"
+// @Success 201 {object} dnsRule
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /ztna/dns-rules [post]
 func (h *ZTNAHandler) createDNSRule(w http.ResponseWriter, r *http.Request) {
 	var req createDNSRuleRequest
 	if err := parseBody(r, &req); err != nil {
@@ -538,6 +659,17 @@ func (h *ZTNAHandler) createDNSRule(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusCreated, rule)
 }
 
+// @Summary Delete DNS rule
+// @Description Delete a DNS rule by ID. Requires admin privileges.
+// @Tags ZTNA
+// @Produce json
+// @Param id path string true "DNS Rule ID (UUID)"
+// @Success 204 "No Content"
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /ztna/dns-rules/{id} [delete]
 func (h *ZTNAHandler) deleteDNSRule(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {

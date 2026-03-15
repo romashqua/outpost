@@ -50,15 +50,17 @@ export default function GatewaysPage() {
   const [formPublicIp, setFormPublicIp] = useState('')
   const [formPriority, setFormPriority] = useState('')
 
-  const { data: gateways = [], isLoading, error } = useQuery({
+  const { data: gatewaysData, isLoading, error } = useQuery({
     queryKey: ['gateways'],
-    queryFn: () => api.get<Gateway[]>('/gateways'),
+    queryFn: () => api.get<{ gateways: Gateway[]; total: number }>('/gateways'),
   })
+  const gateways = gatewaysData?.gateways ?? []
 
-  const { data: networks = [] } = useQuery({
+  const { data: networksData } = useQuery({
     queryKey: ['networks'],
-    queryFn: () => api.get<Network[]>('/networks'),
+    queryFn: () => api.get<{ networks: Network[]; total: number }>('/networks'),
   })
+  const networks = networksData?.networks ?? []
 
   const createMutation = useMutation({
     mutationFn: (body: { name: string; network_id: string; endpoint: string; public_ip?: string; priority?: number }) =>
@@ -108,9 +110,12 @@ export default function GatewaysPage() {
 
   function copyToken() {
     if (showToken) {
-      navigator.clipboard.writeText(showToken)
-      setCopiedToken(true)
-      setTimeout(() => setCopiedToken(false), 2000)
+      navigator.clipboard.writeText(showToken).then(() => {
+        setCopiedToken(true)
+        setTimeout(() => setCopiedToken(false), 2000)
+      }).catch(() => {
+        addToast('Failed to copy to clipboard', 'error')
+      })
     }
   }
 

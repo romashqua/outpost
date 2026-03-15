@@ -1,82 +1,60 @@
 <p align="center">
-  <a href="README.md">English</a> | <a href="README.ru.md">Русский</a>
+  <a href="README.md">Русский</a> | <a href="README.en.md">English</a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Go-1.25-00ADD8?style=flat-square&logo=go&logoColor=white" />
-  <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black" />
-  <img src="https://img.shields.io/badge/WireGuard-88171A?style=flat-square&logo=wireguard&logoColor=white" />
-  <img src="https://img.shields.io/badge/PostgreSQL-17-4169E1?style=flat-square&logo=postgresql&logoColor=white" />
-  <img src="https://img.shields.io/badge/License-Apache%202.0-green?style=flat-square" />
-  <img src="https://img.shields.io/github/stars/romashqua/outpost?style=flat-square" />
+  <img src="promo/logo-placeholder.png" alt="Outpost VPN" width="200" />
 </p>
 
 <h1 align="center"><code>&gt;_</code> OUTPOST VPN</h1>
 
 <p align="center">
-  <strong>Open-Source WireGuard VPN & Zero Trust Network Access Platform</strong><br/>
-  Enterprise-grade security without the enterprise price tag.
+  <strong>Открытая платформа WireGuard VPN и Zero Trust Network Access</strong><br/>
+  Безопасность корпоративного уровня. Без платных ограничений. Apache 2.0 навсегда.
 </p>
 
 <p align="center">
-  <a href="#quick-start">Quick Start</a> &middot;
-  <a href="#features">Features</a> &middot;
-  <a href="#architecture">Architecture</a> &middot;
-  <a href="#api">API</a> &middot;
-  <a href="#development">Development</a>
+  <a href="https://github.com/romashqua/outpost/actions"><img src="https://img.shields.io/github/actions/workflow/status/romashqua/outpost/ci.yml?branch=main&style=flat-square&label=CI" alt="CI" /></a>
+  <img src="https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat-square&logo=go&logoColor=white" />
+  <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black" />
+  <img src="https://img.shields.io/badge/WireGuard-88171A?style=flat-square&logo=wireguard&logoColor=white" />
+  <img src="https://img.shields.io/badge/PostgreSQL-17-4169E1?style=flat-square&logo=postgresql&logoColor=white" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-green?style=flat-square" alt="Лицензия" /></a>
+  <a href="https://github.com/romashqua/outpost/stargazers"><img src="https://img.shields.io/github/stars/romashqua/outpost?style=flat-square" alt="Звёзды" /></a>
+  <a href="https://github.com/romashqua/outpost/releases"><img src="https://img.shields.io/github/v/release/romashqua/outpost?style=flat-square&label=Release" alt="Релиз" /></a>
+</p>
+
+<p align="center">
+  <a href="#быстрый-старт">Быстрый старт</a> &middot;
+  <a href="#возможности">Возможности</a> &middot;
+  <a href="#архитектура">Архитектура</a> &middot;
+  <a href="#скриншоты">Скриншоты</a> &middot;
+  <a href="#сравнение">Сравнение</a> &middot;
+  <a href="docs/">Документация</a> &middot;
+  <a href="CONTRIBUTING.md">Участие в проекте</a>
 </p>
 
 ---
 
-## Why Outpost?
+## Почему Outpost?
 
-Every other VPN solution either locks critical features behind an enterprise paywall or doesn't have them at all. Outpost gives you **everything** — ZTNA device posture, compliance dashboards, multi-tenant MSP mode, traffic analytics, built-in OIDC, PKI — fully open-source from day one.
+Каждое другое open-source VPN-решение либо прячет критичные функции за платным enterprise-тарифом, либо попросту их не имеет. Outpost даёт вам **всё** -- Zero Trust проверку устройств, панель соответствия стандартам, мультитенантный режим для MSP, аналитику трафика, встроенный OIDC/SAML/SCIM, PKI с ротацией ключей -- полностью в открытом доступе под лицензией Apache 2.0 с первого дня.
 
-**Built for:**
-- Teams that need corporate VPN without vendor lock-in
-- MSPs/MSSPs delivering VPN-as-a-service
-- DevOps building Zero Trust networks
-- Anyone tired of paying for enterprise features
+**Нет enterprise-тарифа. Нет ограничения функций. Никогда.**
 
-## Features
+### Для кого создан
 
-### VPN & Networking
-- **WireGuard tunnels** — kernel & userspace, automatic key management
-- **Site-to-Site** — full mesh & hub-spoke with BGP-lite route exchange
-- **NAT Traversal** — STUN/TURN relay servers for restrictive networks
-- **Smart Routes** — selective domain/CIDR routing through proxy servers (SOCKS5, HTTP, Shadowsocks)
-- **Real-time sync** — gRPC bidirectional streaming between core and gateways
+- **Команды**, которым нужен корпоративный VPN без привязки к вендору
+- **MSP/MSSP**, предоставляющие VPN-as-a-service множеству клиентов
+- **DevOps/Platform-инженеры**, строящие Zero Trust инфраструктуру
+- **Регулируемые отрасли**, которым нужны аудиторские журналы и автоматические проверки соответствия
+- **Все**, кому надоело платить за функции, которые должны быть стандартом
 
-### Zero Trust (ZTNA)
-- **Device posture checks** — disk encryption, antivirus, firewall, OS version, screen lock
-- **Continuous verification** — periodic re-evaluation of device trust score
-- **Configurable weights & thresholds** — tune what matters for your security model
-- **Protocol-level MFA** — WireGuard peer removed from gateway on session expiry
+---
 
-### Identity & Access
-- **Built-in OIDC provider** — "Sign in with Outpost" (Authorization Code + PKCE, RS256)
-- **MFA/2FA** — TOTP, WebAuthn/FIDO2, email tokens, backup codes
-- **External SSO** — Google, Azure AD, Okta, Keycloak
-- **LDAP/Active Directory** sync
-- **SAML 2.0** Service Provider
-- **SCIM 2.0** auto-provisioning (Okta, Azure AD)
-- **RBAC** with granular network ACLs
+## Быстрый старт
 
-### Analytics & Compliance
-- **Traffic analytics** — bandwidth charts, top users, connection heatmaps
-- **Compliance dashboard** — automated SOC2, ISO 27001, GDPR readiness scoring
-- **Audit log** — every admin action recorded with full context
-- **SIEM integration** — webhook + syslog export with HMAC signing
-
-### Platform
-- **Multi-tenant** — MSP/reseller mode with org isolation
-- **Built-in PKI** — automatic WireGuard key rotation with zero downtime
-- **Interactive network map** — SVG topology visualization
-- **Email notifications** — SMTP for MFA, enrollment, alerts
-- **Prometheus metrics** — full observability out of the box
-- **Docker & Kubernetes** — compose + Helm ready
-
-## Quick Start
+Получите полностью рабочий Outpost менее чем за 60 секунд:
 
 ```bash
 git clone https://github.com/romashqua/outpost.git
@@ -84,152 +62,300 @@ cd outpost
 docker compose -f deploy/docker/docker-compose.yml up -d
 ```
 
-Open **http://localhost:8080** — login: `admin` / `admin`
+Откройте **http://localhost:8080** и войдите с логином `admin` / паролем `admin`.
 
-That's it. Migrations run automatically, all services start in order.
+Вот и всё. Миграции базы данных выполняются автоматически, все сервисы запускаются в правильном порядке, React UI встроен в бинарный файл.
 
-## Architecture
+> **Продуктивный деплой?** Смотрите [Руководство по развёртыванию](docs/deployment.md) для Helm-чартов, настройки TLS и рекомендаций по усилению безопасности.
 
-```
-                    ┌─────────────────────┐
-                    │   outpost-core      │
-                    │   :8080 HTTP/API    │
-                    │   :50051 gRPC       │
-                    │   React UI (embed)  │
-                    └────────┬────────────┘
-                             │ gRPC streaming
-              ┌──────────────┼──────────────┐
-              │              │              │
-    ┌─────────▼──┐  ┌───────▼────┐  ┌──────▼──────┐
-    │  gateway   │  │  gateway   │  │   proxy     │
-    │  :51820/udp│  │  :51821/udp│  │   :8081     │
-    │  WireGuard │  │  WireGuard │  │   DMZ-safe  │
-    └────────────┘  └────────────┘  └─────────────┘
-```
+---
 
-| Component | Role | Ports |
-|---|---|---|
-| `outpost-core` | API, OIDC provider, admin panel, gRPC control plane | 8080, 50051 |
-| `outpost-gateway` | WireGuard data plane (client VPN + S2S tunnels) | 51820/udp |
-| `outpost-proxy` | Public enrollment/auth proxy for DMZ deployment | 8081 |
-| `outpost-client` | VPN client with MFA, posture reporting | — |
-| `outpostctl` | CLI management tool | — |
+## Возможности
 
-## Tech Stack
+### VPN и сеть
 
-| Layer | Technology |
+| Возможность | Описание |
 |---|---|
-| Backend | Go 1.25, Chi (HTTP), gRPC, pgx + sqlc |
-| Frontend | React 19, TypeScript, Vite, Tailwind CSS 4, Zustand, TanStack Query |
-| Database | PostgreSQL 17 |
-| Cache | Redis 7 (sessions, pub/sub, rate limiting) |
-| VPN | WireGuard (kernel + userspace via wireguard-go) |
-| Auth | Built-in OIDC, SAML 2.0, LDAP, SCIM 2.0, WebAuthn, TOTP |
-| Observability | Prometheus, slog, audit log, SIEM webhooks |
-| Deploy | Docker, docker-compose, Helm |
+| **WireGuard-туннели** | Поддержка ядра и userspace с автоматическим управлением ключами |
+| **Site-to-Site** | Полная mesh- и hub-spoke-топологии с BGP-lite обменом маршрутами |
+| **NAT Traversal** | Встроенные STUN/TURN relay-серверы для ограниченных сетей |
+| **Smart Routes** | Селективная маршрутизация доменов/CIDR через прокси-серверы (SOCKS5, HTTP, Shadowsocks, VLESS) |
+| **Синхронизация в реальном времени** | gRPC двунаправленный стриминг между core и шлюзами |
+
+### Zero Trust Network Access (ZTNA)
+
+| Возможность | Описание |
+|---|---|
+| **Проверка состояния устройств** | Шифрование диска, антивирус, файрвол, версия ОС, блокировка экрана |
+| **Непрерывная верификация** | Периодическая переоценка уровня доверия устройства |
+| **Настраиваемые политики** | Настройка весов и порогов для вашей модели безопасности |
+| **MFA на уровне протокола** | WireGuard-пир удаляется со шлюза при истечении сессии |
+| **DNS-правила доступа** | DNS-фильтрация по устройствам и split-horizon DNS |
+
+### Управление идентификацией и доступом
+
+| Возможность | Описание |
+|---|---|
+| **Встроенный OIDC-провайдер** | «Войти через Outpost» (Authorization Code + PKCE, RS256) |
+| **MFA/2FA** | TOTP, WebAuthn/FIDO2, email OTP, резервные коды |
+| **Внешний SSO** | Google, Azure AD, Okta, Keycloak через OIDC |
+| **LDAP/Active Directory** | Полная синхронизация каталога с маппингом групп |
+| **SAML 2.0** | Режим Service Provider для корпоративных IdP |
+| **SCIM 2.0** | Автоматический провижининг пользователей/групп из Okta, Azure AD |
+| **RBAC** | Ролевое управление доступом с гранулярными сетевыми ACL |
+
+### Аналитика и соответствие стандартам
+
+| Возможность | Описание |
+|---|---|
+| **Аналитика трафика** | Графики пропускной способности в реальном времени, топ пользователей, тепловые карты соединений |
+| **Панель соответствия** | Автоматическая оценка готовности к SOC 2, ISO 27001, GDPR |
+| **Аудиторский журнал** | Каждое действие администратора записывается с полным контекстом и экспортом |
+| **Интеграция с SIEM** | Экспорт через вебхуки и syslog с проверкой HMAC-подписи |
+
+### Платформа
+
+| Возможность | Описание |
+|---|---|
+| **Мультитенантность** | MSP/реселлер-режим с полной изоляцией организаций |
+| **Встроенная PKI** | Автоматическая ротация ключей WireGuard без простоев |
+| **Визуальная карта сети** | Интерактивная SVG-топология всей VPN-сети |
+| **Email-уведомления** | Настраиваемый SMTP для MFA, регистрации устройств, оповещений (i18n) |
+| **Метрики Prometheus** | Полная наблюдаемость с готовыми дашбордами |
+| **Docker и Kubernetes** | docker-compose для разработки, Helm-чарты для продакшена |
+
+---
+
+## Архитектура
+
+```
+                         Интернет
+                            |
+                   ┌────────┴────────┐
+                   │  outpost-proxy  │  DMZ-безопасная регистрация
+                   │     :8081       │  и auth-прокси
+                   └────────┬────────┘
+                            |
+                   ┌────────┴────────┐
+                   │  outpost-core   │  API-сервер, OIDC-провайдер,
+                   │  :8080  HTTP    │  панель администратора, gRPC-хаб
+                   │  :50051 gRPC   │  React UI (go:embed)
+                   └───┬────────┬───┘
+                       │        │
+            gRPC-стриминг   gRPC-стриминг
+                       │        │
+              ┌────────┴──┐  ┌──┴────────┐
+              │  шлюз     │  │  шлюз     │     N шлюзов
+              │ :51820/udp│  │ :51821/udp│     по площадкам
+              │ WireGuard │  │ WireGuard │
+              └───────────┘  └───────────┘
+                    |              |
+              ┌─────┴─────┐  ┌────┴──────┐
+              │  Клиенты  │  │  Клиенты  │
+              └───────────┘  └───────────┘
+```
+
+| Компонент | Роль | Порты по умолчанию |
+|---|---|---|
+| `outpost-core` | API, OIDC-провайдер, панель администратора, gRPC control plane | 8080 (HTTP), 50051 (gRPC) |
+| `outpost-gateway` | WireGuard data plane -- клиентский VPN и S2S-туннели | 51820/udp |
+| `outpost-proxy` | Публичный прокси для регистрации/авторизации, безопасный для DMZ | 8081 |
+| `outpost-client` | Кроссплатформенный VPN-клиент с MFA и отчётами о состоянии устройства | -- |
+| `outpostctl` | CLI-инструмент для управления и автоматизации | -- |
+
+> Подробный обзор архитектуры смотрите в [docs/architecture.md](docs/architecture.md).
+
+---
+
+## Технологический стек
+
+| Уровень | Технология |
+|---|---|
+| **Бэкенд** | Go 1.24+, Chi (HTTP-роутер), gRPC (межсервисное взаимодействие), pgx/v5 + sqlc |
+| **Фронтенд** | React 19, TypeScript, Vite, Tailwind CSS 4, Zustand, TanStack Query, Recharts |
+| **База данных** | PostgreSQL 17 с golang-migrate |
+| **Кэш** | Redis 7 (сессии, pub/sub, rate limiting) |
+| **VPN** | WireGuard (ядро через netlink + userspace через wireguard-go) |
+| **Аутентификация** | Встроенный OIDC, SAML 2.0, LDAP/AD, SCIM 2.0, WebAuthn, TOTP |
+| **Protobuf** | Buf-управляемые proto-определения с gRPC-кодогенерацией |
+| **Наблюдаемость** | Prometheus, структурированное логирование (slog), аудиторский журнал, SIEM-вебхуки |
+| **Деплой** | Docker, docker-compose, Helm, GitHub Actions CI |
+
+---
+
+## Скриншоты
+
+<!-- Добавьте скриншоты интерфейса Outpost сюда -->
+
+| Дашборд | Карта сети | Аналитика |
+|---|---|---|
+| ![Дашборд](promo/screenshots/dashboard.png) | ![Карта сети](promo/screenshots/network-map.png) | ![Аналитика](promo/screenshots/analytics.png) |
+
+| Устройства | Соответствие | Smart Routes |
+|---|---|---|
+| ![Устройства](promo/screenshots/devices.png) | ![Соответствие](promo/screenshots/compliance.png) | ![Smart Routes](promo/screenshots/smart-routes.png) |
+
+> Скриншоты скоро появятся. Интерфейс использует тёмную кибер-тему с акцентным цветом `#00ff88` и шрифтом JetBrains Mono.
+
+---
 
 ## API
 
-All endpoints under `/api/v1/` with JWT authentication:
+Outpost предоставляет полноценный REST API по адресу `/api/v1/` с JWT-аутентификацией. Полная спецификация OpenAPI доступна по адресу `/api/docs/openapi.yaml`.
 
 ```
-Auth:        POST /auth/login, /auth/mfa/verify, /auth/refresh
-Users:       GET/POST /users, GET/PUT/DELETE /users/{id}
-Groups:      GET/POST /groups, members, ACLs
-Networks:    GET/POST /networks, GET/PUT/DELETE /networks/{id}
-Devices:     GET/POST /devices, /devices/enroll, approve, revoke, config
-Gateways:    GET/POST /gateways, GET/DELETE /gateways/{id}
-S2S:         GET/POST/DELETE /s2s-tunnels, members, routes
-ZTNA:        GET/PUT /ztna/trust-config, GET/POST/DELETE /ztna/policies, dns-rules
-Smart Routes: GET/POST/PUT/DELETE /smart-routes, entries, proxy-servers
-Analytics:   GET /analytics/summary, bandwidth, top-users, heatmap
-Compliance:  GET /compliance/report, soc2, iso27001, gdpr
-Tenants:     GET/POST /tenants, GET/PUT/DELETE /tenants/{id}, stats
-Settings:    GET/PUT /settings, POST /settings/smtp/test
-Audit:       GET /audit, /audit/stats, /audit/export
+Аутентификация: POST /auth/login, /auth/mfa/verify, /auth/refresh, /auth/logout
+Пользователи:   GET/POST /users, GET/PUT/DELETE /users/{id}
+Группы:          GET/POST /groups, участники, ACL
+Сети:            GET/POST /networks, GET/PUT/DELETE /networks/{id}
+Устройства:      GET/POST /devices, /devices/enroll, одобрение, отзыв, загрузка конфига
+Шлюзы:           GET/POST /gateways, GET/PUT/DELETE /gateways/{id}
+S2S-туннели:     GET/POST/DELETE /s2s-tunnels, участники, маршруты, конфиг
+Smart Routes:    GET/POST/PUT/DELETE /smart-routes, записи, прокси-серверы
+ZTNA:            GET/PUT /ztna/trust-config, политики, DNS-правила
+Аналитика:       GET /analytics/summary, bandwidth, top-users, heatmap
+Соответствие:    GET /compliance/report, soc2, iso27001, gdpr
+Тенанты:         GET/POST /tenants, GET/PUT/DELETE /tenants/{id}, статистика
+Аудит:           GET /audit, /audit/stats, /audit/export
+SCIM 2.0:        /scim/v2/Users, /scim/v2/Groups (bearer token auth)
 ```
 
-## Development
+> Полный [справочник по API](docs/API.md) с описанием запросов/ответов и примерами.
 
-```bash
-# Build
-go build ./...
+---
 
-# Test
-go test ./... -race -count=1
+## Сравнение
 
-# E2E tests (requires running PostgreSQL)
-TEST_DATABASE_URL="postgres://..." go test -v ./tests/e2e/
+| Возможность | Outpost | defguard | NetBird | Tailscale | Firezone |
+|---|:---:|:---:|:---:|:---:|:---:|
+| **Полностью открытый код** | Да | Частично (enterprise paywall) | Да | Нет | Частично |
+| **Zero Trust (ZTNA)** | Да | Нет | Частично | Да | Нет |
+| **Site-to-Site mesh** | Да | Нет | Да | Да | Нет |
+| **Встроенный OIDC-провайдер** | Да | Да | Нет | Нет | Нет |
+| **SAML 2.0 + SCIM 2.0** | Да | Нет | Нет | Да (платно) | Да (платно) |
+| **Мультитенантность (MSP-режим)** | Да | Нет | Нет | Нет | Нет |
+| **Аналитика трафика** | Да | Нет | Нет | Нет | Нет |
+| **Панель соответствия** | Да | Нет | Нет | Нет | Нет |
+| **Умная маршрутизация (прокси)** | Да | Нет | Нет | Нет | Нет |
+| **Встроенная PKI / ротация ключей** | Да | Нет | Нет | Да | Нет |
+| **Визуальная карта сети** | Да | Нет | Нет | Нет | Нет |
+| **Self-hosted** | Да | Да | Да | Нет | Да |
+| **MFA на уровне протокола** | Да | Нет | Нет | Нет | Нет |
+| **Лицензия** | Apache 2.0 | Apache 2.0 | BSD-3 | Проприетарная | Apache 2.0 |
 
-# Frontend
-cd web-ui && pnpm install && pnpm dev
+---
 
-# Full stack
-docker compose -f deploy/docker/docker-compose.yml up -d --build
-```
-
-## Project Structure
+## Структура проекта
 
 ```
 outpost/
 ├── cmd/
-│   ├── outpost-core/         # API + UI server
-│   ├── outpost-gateway/      # WireGuard gateway agent
-│   ├── outpost-proxy/        # DMZ enrollment proxy
-│   ├── outpost-client/       # VPN client with MFA
-│   └── outpostctl/           # CLI tool
+│   ├── outpost-core/         # API + UI сервер
+│   ├── outpost-gateway/      # WireGuard-шлюз (агент)
+│   ├── outpost-proxy/        # DMZ прокси для регистрации
+│   ├── outpost-client/       # Кроссплатформенный VPN-клиент
+│   └── outpostctl/           # CLI-инструмент управления
 ├── internal/
-│   ├── core/handler/         # REST API handlers
+│   ├── core/handler/         # REST API обработчики (Chi)
 │   ├── auth/                 # OIDC, SAML, LDAP, SCIM, MFA, RBAC
-│   ├── gateway/              # WG interface management
-│   ├── wireguard/            # Kernel + userspace abstraction
-│   ├── s2s/                  # Site-to-site mesh engine
-│   ├── ztna/                 # Zero Trust posture checks
-│   ├── analytics/            # Traffic flow records
-│   ├── tenant/               # Multi-tenant isolation
-│   ├── compliance/           # SOC2/ISO27001/GDPR checks
-│   ├── pki/                  # Certificate lifecycle
-│   └── db/                   # pgx pool, sqlc queries
-├── web-ui/                   # React frontend (embedded via go:embed)
-├── migrations/               # PostgreSQL migrations (golang-migrate)
-├── proto/                    # Protobuf definitions (Buf)
-├── tests/e2e/                # End-to-end API tests
+│   ├── gateway/              # Управление WG-интерфейсами, файрвол
+│   ├── wireguard/            # Абстракция WG: ядро + userspace
+│   ├── s2s/                  # Движок site-to-site mesh
+│   ├── ztna/                 # Движок Zero Trust проверок
+│   ├── analytics/            # Аналитика потоков трафика
+│   ├── tenant/               # Мультитенантная изоляция
+│   ├── compliance/           # Проверки SOC2 / ISO27001 / GDPR
+│   ├── pki/                  # Жизненный цикл сертификатов и ключей
+│   ├── client/               # Клиентская VPN-библиотека
+│   ├── observability/        # Prometheus, аудит, SIEM
+│   ├── mail/                 # Email с i18n-шаблонами
+│   └── db/                   # pgx-пул, sqlc-запросы
+├── pkg/
+│   ├── pb/                   # Сгенерированный protobuf Go-код
+│   └── version/              # Инъекция версии при сборке
+├── web-ui/                   # React 19 фронтенд (встроен через go:embed)
+├── proto/                    # Protobuf-определения (Buf)
+├── migrations/               # Миграции PostgreSQL (golang-migrate)
+├── tests/e2e/                # E2E-тесты API
+├── docs/                     # Документация проекта
 └── deploy/
     ├── docker/               # Dockerfiles + docker-compose.yml
-    └── helm/                 # Helm charts
+    └── helm/                 # Helm-чарты для Kubernetes
 ```
 
-## Comparison
+---
 
-| | Outpost | defguard | NetBird | Tailscale |
-|---|:---:|:---:|:---:|:---:|
-| Fully open-source | :white_check_mark: | :x: Enterprise paywall | :white_check_mark: | :x: |
-| Zero Trust (ZTNA) | :white_check_mark: | :x: | Partial | :white_check_mark: |
-| Site-to-Site mesh | :white_check_mark: | :x: | :white_check_mark: | :white_check_mark: |
-| Built-in OIDC | :white_check_mark: | :white_check_mark: | :x: | :x: |
-| Multi-tenant | :white_check_mark: | :x: | :x: | :x: |
-| Traffic analytics | :white_check_mark: | :x: | :x: | :x: |
-| Compliance dashboard | :white_check_mark: | :x: | :x: | :x: |
-| Smart routing | :white_check_mark: | :x: | :x: | :x: |
-| Self-hosted | :white_check_mark: | :white_check_mark: | :white_check_mark: | :x: |
+## Разработка
 
-## Contributing
+### Требования
 
-We welcome contributions! Fork the repo, create a branch, and submit a PR.
+- Go 1.24+
+- Node.js 22+ и pnpm
+- Docker и Docker Compose
+- PostgreSQL 17 (или используйте Docker Compose)
+
+### Сборка из исходников
 
 ```bash
-git checkout -b feature/my-feature
-make test && make lint
+# Бэкенд
+go build ./...
+
+# Фронтенд
+cd web-ui && pnpm install && pnpm build
+
+# Запуск тестов
+go test ./... -race -count=1
+
+# E2E-тесты (требуется PostgreSQL)
+TEST_DATABASE_URL="postgres://outpost:outpost@localhost:5432/outpost_test?sslmode=disable" \
+  go test -v ./tests/e2e/
+
+# Полный стек через Docker
+docker compose -f deploy/docker/docker-compose.yml up -d --build
 ```
 
-## License
+> Смотрите [CONTRIBUTING.md](CONTRIBUTING.md) для полного руководства по настройке окружения разработки.
 
-[Apache License 2.0](LICENSE) — use it however you want, commercially or not.
+---
 
-All features are and will remain fully open-source. No enterprise tier. No feature gating.
+## Документация
+
+| Документ | Описание |
+|---|---|
+| [Быстрый старт](docs/getting-started.md) | Первоначальная настройка и пошаговое руководство |
+| [Архитектура](docs/architecture.md) | Проектирование системы и взаимодействие компонентов |
+| [Справочник по API](docs/API.md) | Полная документация REST API |
+| [Развёртывание](docs/deployment.md) | Руководство по продуктивному развёртыванию (Docker, Helm, bare metal) |
+| [Конфигурация](docs/configuration.md) | Переменные окружения и справочник по настройкам |
+| [Возможности](docs/features.md) | Подробная документация по функциям |
+| [Mesh-сети](docs/mesh-networking.md) | Руководство по site-to-site и mesh-топологии |
+
+---
+
+## Участие в проекте
+
+Мы приветствуем любые вклады -- баг-репорты, запросы функций, улучшения документации и код.
+
+Пожалуйста, прочитайте наше [Руководство по участию](CONTRIBUTING.md) перед отправкой pull request.
+
+---
+
+## Безопасность
+
+Если вы обнаружили уязвимость, пожалуйста, сообщите о ней ответственно. Подробности в нашей [Политике безопасности](SECURITY.md).
+
+---
+
+## Лицензия
+
+[Apache License 2.0](LICENSE)
+
+Все функции являются и всегда будут полностью открытыми. Без enterprise-тарифа. Без ограничения функций. Без подвоха.
+
+Монетизация осуществляется через [Outpost Cloud](https://outpost.dev) (управляемый SaaS), контракты на поддержку и профессиональные услуги -- а не путём ограничения открытого кода.
 
 ---
 
 <p align="center">
-  Built by <a href="https://github.com/romashqua">Romashqua Labs</a>
+  <sub>Разработано <a href="https://github.com/romashqua">Romashqua Labs</a></sub>
 </p>

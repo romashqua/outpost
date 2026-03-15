@@ -39,6 +39,14 @@ type settingEntry struct {
 	Value any    `json:"value"`
 }
 
+// @Summary Get all settings
+// @Description Returns all settings as a key-value map.
+// @Tags Settings
+// @Produce json
+// @Success 200 {object} map[string]any
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /settings [get]
 func (h *SettingsHandler) getAll(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.pool.Query(r.Context(),
 		`SELECT key, value FROM settings ORDER BY key`)
@@ -51,9 +59,14 @@ func (h *SettingsHandler) getAll(w http.ResponseWriter, r *http.Request) {
 	settings := make(map[string]any)
 	for rows.Next() {
 		var key string
-		var value any
-		if err := rows.Scan(&key, &value); err != nil {
+		var rawValue []byte
+		if err := rows.Scan(&key, &rawValue); err != nil {
 			respondError(w, http.StatusInternalServerError, "failed to scan setting")
+			return
+		}
+		var value any
+		if err := json.Unmarshal(rawValue, &value); err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to parse setting value")
 			return
 		}
 		settings[key] = value
@@ -67,13 +80,23 @@ func (h *SettingsHandler) getAll(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, settings)
 }
 
+// @Summary Get setting by key
+// @Description Retrieve a single setting by its key.
+// @Tags Settings
+// @Produce json
+// @Param key path string true "Setting key"
+// @Success 200 {object} settingEntry
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /settings/{key} [get]
 func (h *SettingsHandler) get(w http.ResponseWriter, r *http.Request) {
 	key := chi.URLParam(r, "key")
 
-	var value any
+	var rawValue []byte
 	err := h.pool.QueryRow(r.Context(),
 		`SELECT value FROM settings WHERE key = $1`, key,
-	).Scan(&value)
+	).Scan(&rawValue)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			respondError(w, http.StatusNotFound, "setting not found")
@@ -83,9 +106,27 @@ func (h *SettingsHandler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var value any
+	if err := json.Unmarshal(rawValue, &value); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to parse setting value")
+		return
+	}
+
 	respondJSON(w, http.StatusOK, settingEntry{Key: key, Value: value})
 }
 
+// @Summary Set setting by key
+// @Description Create or update a single setting. Requires admin privileges.
+// @Tags Settings
+// @Accept json
+// @Produce json
+// @Param key path string true "Setting key"
+// @Param body body object true "Setting value"
+// @Success 200 {object} settingEntry
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /settings/{key} [put]
 func (h *SettingsHandler) set(w http.ResponseWriter, r *http.Request) {
 	key := chi.URLParam(r, "key")
 
@@ -118,6 +159,17 @@ func (h *SettingsHandler) set(w http.ResponseWriter, r *http.Request) {
 }
 
 // batchSet accepts a JSON object of key-value pairs and upserts them all.
+// @Summary Batch update settings
+// @Description Upsert multiple settings at once. Requires admin privileges.
+// @Tags Settings
+// @Accept json
+// @Produce json
+// @Param body body map[string]any true "Key-value pairs to set"
+// @Success 200 {object} map[string]any
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /settings [put]
 func (h *SettingsHandler) batchSet(w http.ResponseWriter, r *http.Request) {
 	var body map[string]any
 	if err := parseBody(r, &body); err != nil {
@@ -163,6 +215,16 @@ func (h *SettingsHandler) batchSet(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, body)
 }
 
+// @Summary Delete setting
+// @Description Delete a setting by key. Requires admin privileges.
+// @Tags Settings
+// @Produce json
+// @Param key path string true "Setting key"
+// @Success 204 "No Content"
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /settings/{key} [delete]
 func (h *SettingsHandler) delete(w http.ResponseWriter, r *http.Request) {
 	key := chi.URLParam(r, "key")
 
@@ -181,6 +243,17 @@ func (h *SettingsHandler) delete(w http.ResponseWriter, r *http.Request) {
 }
 
 // testSMTP sends a test email to verify SMTP configuration.
+// @Summary Test SMTP settings
+// @Description Send a test email to verify SMTP configuration. Requires admin privileges.
+// @Tags Settings
+// @Accept json
+// @Produce json
+// @Param body body object true "Recipient email" example({"to": "user@example.com"})
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /settings/smtp/test [post]
 func (h *SettingsHandler) testSMTP(w http.ResponseWriter, r *http.Request) {
 	if h.mailer == nil {
 		respondError(w, http.StatusBadRequest, "SMTP is not configured")

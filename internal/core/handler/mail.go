@@ -27,6 +27,17 @@ func (h *MailHandler) Routes() chi.Router {
 }
 
 // testSMTP sends a test email to verify SMTP configuration.
+// @Summary Test email delivery
+// @Description Send a test email to verify SMTP is working.
+// @Tags Mail
+// @Accept json
+// @Produce json
+// @Param body body object true "Recipient email" example({"to": "user@example.com"})
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /mail/test [post]
 func (h *MailHandler) testSMTP(w http.ResponseWriter, r *http.Request) {
 	if h.mailer == nil {
 		respondError(w, http.StatusBadRequest, "SMTP is not configured")

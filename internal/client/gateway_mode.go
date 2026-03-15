@@ -71,6 +71,8 @@ func (g *GatewayMode) Start(ctx context.Context) error {
 		g.mu.Unlock()
 		return fmt.Errorf("gateway mode already running")
 	}
+	// Mark as running early to prevent concurrent Start calls.
+	g.running = true
 	g.mu.Unlock()
 
 	g.logger.Info("starting S2S gateway mode")
@@ -78,6 +80,9 @@ func (g *GatewayMode) Start(ctx context.Context) error {
 	// Register as a tunnel member.
 	config, err := g.fetchS2SConfig(ctx)
 	if err != nil {
+		g.mu.Lock()
+		g.running = false
+		g.mu.Unlock()
 		return fmt.Errorf("fetch S2S config: %w", err)
 	}
 
@@ -94,15 +99,24 @@ func (g *GatewayMode) Start(ctx context.Context) error {
 	// Build WireGuard config.
 	wgConfig, err := g.buildWireGuardConfig(config)
 	if err != nil {
+		g.mu.Lock()
+		g.running = false
+		g.mu.Unlock()
 		return fmt.Errorf("build wireguard config: %w", err)
 	}
 
 	// Write config to disk.
 	confPath := filepath.Join(g.configDir, "outpost-s2s.conf")
 	if err := os.MkdirAll(g.configDir, 0700); err != nil {
+		g.mu.Lock()
+		g.running = false
+		g.mu.Unlock()
 		return fmt.Errorf("create config dir: %w", err)
 	}
 	if err := os.WriteFile(confPath, []byte(wgConfig), 0600); err != nil {
+		g.mu.Lock()
+		g.running = false
+		g.mu.Unlock()
 		return fmt.Errorf("write config: %w", err)
 	}
 
@@ -110,12 +124,11 @@ func (g *GatewayMode) Start(ctx context.Context) error {
 	if err := g.wgUp(confPath); err != nil {
 		// Clean up config file containing private key.
 		os.Remove(confPath)
+		g.mu.Lock()
+		g.running = false
+		g.mu.Unlock()
 		return fmt.Errorf("bring up S2S interface: %w", err)
 	}
-
-	g.mu.Lock()
-	g.running = true
-	g.mu.Unlock()
 
 	g.logger.Info("S2S gateway interface is up",
 		"routes", config.Routes,
@@ -145,6 +158,9 @@ func (g *GatewayMode) Stop() error {
 		g.logger.Error("failed to tear down S2S interface", "error", err)
 		return err
 	}
+
+	// Clean up config file containing private key material.
+	os.Remove(confPath)
 
 	g.logger.Info("S2S gateway interface stopped")
 	return nil

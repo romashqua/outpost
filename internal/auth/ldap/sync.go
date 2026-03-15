@@ -12,7 +12,9 @@ package ldap
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"time"
@@ -269,7 +271,9 @@ func (s *Syncer) SyncUsers(ctx context.Context) (*SyncResult, error) {
 		seenDNs[u.DN] = true
 
 		// Generate a random password hash for LDAP-sourced users (they auth via LDAP bind).
-		passwordHash, err := auth.HashPassword(fmt.Sprintf("ldap-%s-%d", u.DN, time.Now().UnixNano()))
+		var rb [16]byte
+		_, _ = rand.Read(rb[:])
+		passwordHash, err := auth.HashPassword("ldap-" + hex.EncodeToString(rb[:]))
 		if err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("hashing password for %s: %v", u.Username, err))
 			continue

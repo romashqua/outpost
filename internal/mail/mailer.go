@@ -169,6 +169,20 @@ func (m *Mailer) SendWelcome(ctx context.Context, to, username, instanceName str
 	return m.Send(ctx, to, "Welcome to "+instanceName, body)
 }
 
+// SendDeviceConfig sends a WireGuard configuration to the user's email.
+// The config is included as a preformatted block that can be copy-pasted
+// into any WireGuard client.
+func (m *Mailer) SendDeviceConfig(ctx context.Context, to, deviceName, configText string) error {
+	body, err := renderTemplate("device_config", deviceConfigTemplate, map[string]string{
+		"DeviceName": deviceName,
+		"Config":     configText,
+	})
+	if err != nil {
+		return err
+	}
+	return m.Send(ctx, to, "WireGuard configuration for "+deviceName+" — Outpost VPN", body)
+}
+
 // ---- Embedded HTML Templates ------------------------------------------------
 
 const baseStyle = `
@@ -215,6 +229,19 @@ const passwordResetTemplate = `<!DOCTYPE html>
   <p>Or copy this link into your browser:</p>
   <p style="word-break: break-all; font-size: 13px; color: #6b7280;">{{.ResetURL}}</p>
   <p>If you did not request a password reset, please ignore this email. The link will expire in 1 hour.</p>
+  <div class="footer">Outpost VPN</div>
+</div>
+</body></html>`
+
+const deviceConfigTemplate = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8">` + baseStyle + `</head><body>
+<div class="container">
+  <h1>WireGuard Configuration</h1>
+  <p>Your VPN configuration for device <strong>{{.DeviceName}}</strong> is ready.</p>
+  <p>Copy the configuration below into your WireGuard client:</p>
+  <pre style="background: #1a1a2e; color: #00ff88; padding: 16px; border-radius: 6px; font-family: 'JetBrains Mono', monospace; font-size: 13px; overflow-x: auto; white-space: pre-wrap;">{{.Config}}</pre>
+  <p style="font-size: 13px; color: #6b7280;">You can also import this configuration from the Outpost dashboard under <strong>My Devices</strong>.</p>
+  <p style="font-size: 13px; color: #ef4444;"><strong>Important:</strong> This email contains your private key. Delete it after saving the configuration to your device.</p>
   <div class="footer">Outpost VPN</div>
 </div>
 </body></html>`

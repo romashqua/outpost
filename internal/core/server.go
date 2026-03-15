@@ -41,13 +41,48 @@ type ipRateLimiter struct {
 	attempts map[string][]time.Time
 	limit    int
 	window   time.Duration
+	stop     chan struct{}
 }
 
 func newIPRateLimiter(limit int, window time.Duration) *ipRateLimiter {
-	return &ipRateLimiter{
+	rl := &ipRateLimiter{
 		attempts: make(map[string][]time.Time),
 		limit:    limit,
 		window:   window,
+		stop:     make(chan struct{}),
+	}
+	go rl.cleanup()
+	return rl
+}
+
+// cleanup periodically removes expired entries to prevent memory leaks from
+// IPs that made requests but never returned.
+func (rl *ipRateLimiter) cleanup() {
+	ticker := time.NewTicker(rl.window)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			rl.mu.Lock()
+			now := time.Now()
+			cutoff := now.Add(-rl.window)
+			for ip, attempts := range rl.attempts {
+				valid := attempts[:0]
+				for _, t := range attempts {
+					if t.After(cutoff) {
+						valid = append(valid, t)
+					}
+				}
+				if len(valid) == 0 {
+					delete(rl.attempts, ip)
+				} else {
+					rl.attempts[ip] = valid
+				}
+			}
+			rl.mu.Unlock()
+		case <-rl.stop:
+			return
+		}
 	}
 }
 
@@ -87,11 +122,10 @@ func (rl *ipRateLimiter) allow(ip string) bool {
 func rateLimitMiddleware(rl *ipRateLimiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Use RemoteAddr for rate limiting. X-Real-IP/X-Forwarded-For
+			// headers are easily spoofed and must not be trusted for
+			// security-sensitive decisions unless behind a verified proxy.
 			ip := r.RemoteAddr
-			// Use X-Real-IP if set by the RealIP middleware.
-			if realIP := r.Header.Get("X-Real-Ip"); realIP != "" {
-				ip = realIP
-			}
 			// Strip port from ip if present.
 			if host, _, err := net.SplitHostPort(ip); err == nil {
 				ip = host
@@ -112,6 +146,7 @@ type Server struct {
 	httpServer *http.Server
 	grpcServer *grpc.Server
 	logger     *slog.Logger
+	streamHub  *StreamHub
 }
 
 func NewServer(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) *Server {
@@ -129,14 +164,32 @@ func NewServer(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) *Ser
 	}
 
 	return &Server{
-		cfg:    cfg,
-		pool:   pool,
-		mailer: mailer,
-		logger: logger,
+		cfg:       cfg,
+		pool:      pool,
+		mailer:    mailer,
+		logger:    logger,
+		streamHub: NewStreamHub(logger),
 	}
 }
 
 func (s *Server) Start(ctx context.Context) error {
+	// Periodically clean up expired token blacklist entries.
+	go func() {
+		bl := auth.NewDBTokenBlacklist(s.pool)
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if err := bl.Cleanup(ctx); err != nil {
+					s.logger.Warn("token blacklist cleanup failed", "error", err)
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
 	router := s.setupHTTPRouter()
 	s.httpServer = &http.Server{
 		Addr:              s.cfg.Server.HTTPAddr,
@@ -255,7 +308,8 @@ func (s *Server) setupHTTPRouter() chi.Router {
 	r.Route("/api/v1", func(r chi.Router) {
 		// Auth endpoints (no JWT required) — rate limited to 10 req/min per IP.
 		authRateLimiter := newIPRateLimiter(10, time.Minute)
-		authHandler := handler.NewAuthHandler(s.pool, s.cfg.Auth.JWTSecret)
+		tokenBlacklist := auth.NewDBTokenBlacklist(s.pool)
+		authHandler := handler.NewAuthHandler(s.pool, s.cfg.Auth.JWTSecret, handler.WithTokenBlacklist(tokenBlacklist))
 		r.With(rateLimitMiddleware(authRateLimiter)).Mount("/auth", authHandler.Routes())
 
 		// Dashboard stats — moved inside protected group below.
@@ -265,7 +319,7 @@ func (s *Server) setupHTTPRouter() chi.Router {
 
 		// Protected routes.
 		r.Group(func(r chi.Router) {
-			r.Use(auth.JWTMiddleware(s.cfg.Auth.JWTSecret))
+			r.Use(auth.JWTMiddleware(s.cfg.Auth.JWTSecret, tokenBlacklist))
 
 			userHandlerOpts := []handler.Mailer{}
 			if s.mailer != nil {
@@ -274,7 +328,11 @@ func (s *Server) setupHTTPRouter() chi.Router {
 			r.Mount("/users", handler.NewUserHandler(s.pool, s.logger, userHandlerOpts...).Routes())
 			r.Mount("/groups", handler.NewGroupHandler(s.pool, s.logger).Routes())
 			r.Mount("/networks", handler.NewNetworkHandler(s.pool, s.logger).Routes())
-			r.Mount("/devices", handler.NewDeviceHandler(s.pool, s.logger).Routes())
+			devHandler := handler.NewDeviceHandler(s.pool, s.logger).WithNotifier(&hubPeerNotifier{hub: s.streamHub})
+			if s.mailer != nil {
+				devHandler = devHandler.WithMailer(s.mailer)
+			}
+			r.Mount("/devices", devHandler.Routes())
 			r.Mount("/gateways", handler.NewGatewayHandler(s.pool, s.logger).Routes())
 
 			// MFA management.
@@ -352,6 +410,6 @@ func (s *Server) TestableRouter() http.Handler {
 
 func (s *Server) setupGRPCServer() *grpc.Server {
 	srv := grpc.NewServer()
-	registerGatewayService(srv, s.pool, s.logger)
+	registerGatewayService(srv, s.pool, s.logger, s.streamHub)
 	return srv
 }

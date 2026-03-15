@@ -119,8 +119,9 @@ type SAML struct {
 
 // Gateway holds configuration for the gateway component.
 type Gateway struct {
-	Token    string
-	CoreAddr string
+	Token         string
+	CoreAddr      string
+	InterfaceName string // WireGuard interface name (default: wg0)
 }
 
 // Proxy holds configuration for the proxy component.

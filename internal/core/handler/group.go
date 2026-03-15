@@ -95,6 +95,14 @@ type updateGroupRequest struct {
 
 // --- Handlers ---
 
+// @Summary List groups
+// @Description Returns all groups with member counts.
+// @Tags Groups
+// @Produce json
+// @Success 200 {array} groupListItem
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /groups [get]
 func (h *GroupHandler) list(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.pool.Query(r.Context(),
 		`SELECT g.id, g.name, g.description, g.is_system, g.created_at,
@@ -127,6 +135,18 @@ func (h *GroupHandler) list(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, groups)
 }
 
+// @Summary Create group
+// @Description Create a new group. Requires admin privileges.
+// @Tags Groups
+// @Accept json
+// @Produce json
+// @Param body body createGroupRequest true "Group data"
+// @Success 201 {object} groupListItem
+// @Failure 400 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /groups [post]
 func (h *GroupHandler) create(w http.ResponseWriter, r *http.Request) {
 	var req createGroupRequest
 	if err := parseBody(r, &req); err != nil {
@@ -162,6 +182,17 @@ func (h *GroupHandler) create(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusCreated, g)
 }
 
+// @Summary Get group
+// @Description Retrieve a group by ID with its members and ACLs.
+// @Tags Groups
+// @Produce json
+// @Param id path string true "Group ID (UUID)"
+// @Success 200 {object} groupDetail
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /groups/{id} [get]
 func (h *GroupHandler) get(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -244,6 +275,20 @@ func (h *GroupHandler) get(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, g)
 }
 
+// @Summary Update group
+// @Description Update an existing group. Requires admin privileges.
+// @Tags Groups
+// @Accept json
+// @Produce json
+// @Param id path string true "Group ID (UUID)"
+// @Param body body updateGroupRequest true "Fields to update"
+// @Success 200 {object} groupListItem
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /groups/{id} [put]
 func (h *GroupHandler) update(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -284,6 +329,18 @@ func (h *GroupHandler) update(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, g)
 }
 
+// @Summary Delete group
+// @Description Delete a group by ID. System groups cannot be deleted. Requires admin privileges.
+// @Tags Groups
+// @Produce json
+// @Param id path string true "Group ID (UUID)"
+// @Success 204 "No Content"
+// @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /groups/{id} [delete]
 func (h *GroupHandler) delete(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -326,6 +383,16 @@ func (h *GroupHandler) delete(w http.ResponseWriter, r *http.Request) {
 
 // --- Members ---
 
+// @Summary List group members
+// @Description Returns all members of a group.
+// @Tags Groups
+// @Produce json
+// @Param id path string true "Group ID (UUID)"
+// @Success 200 {array} groupMember
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /groups/{id}/members [get]
 func (h *GroupHandler) listMembers(w http.ResponseWriter, r *http.Request) {
 	groupID, err := parseUUID(r, "id")
 	if err != nil {
@@ -362,6 +429,18 @@ func (h *GroupHandler) listMembers(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, members)
 }
 
+// @Summary Add group member
+// @Description Add a user to a group. Requires admin privileges.
+// @Tags Groups
+// @Accept json
+// @Produce json
+// @Param id path string true "Group ID (UUID)"
+// @Param body body object true "User ID to add" example({"user_id": "uuid"})
+// @Success 201 "Created"
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /groups/{id}/members [post]
 func (h *GroupHandler) addMember(w http.ResponseWriter, r *http.Request) {
 	groupID, err := parseUUID(r, "id")
 	if err != nil {
@@ -405,6 +484,18 @@ func (h *GroupHandler) addMember(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 }
 
+// @Summary Remove group member
+// @Description Remove a user from a group. Requires admin privileges.
+// @Tags Groups
+// @Produce json
+// @Param id path string true "Group ID (UUID)"
+// @Param userId path string true "User ID (UUID)"
+// @Success 204 "No Content"
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /groups/{id}/members/{userId} [delete]
 func (h *GroupHandler) removeMember(w http.ResponseWriter, r *http.Request) {
 	groupID, err := parseUUID(r, "id")
 	if err != nil {
@@ -434,6 +525,16 @@ func (h *GroupHandler) removeMember(w http.ResponseWriter, r *http.Request) {
 
 // --- ACLs ---
 
+// @Summary List group ACLs
+// @Description Returns all network ACLs for a group.
+// @Tags Groups
+// @Produce json
+// @Param id path string true "Group ID (UUID)"
+// @Success 200 {array} groupACL
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /groups/{id}/acls [get]
 func (h *GroupHandler) listACLs(w http.ResponseWriter, r *http.Request) {
 	groupID, err := parseUUID(r, "id")
 	if err != nil {
@@ -475,6 +576,19 @@ func (h *GroupHandler) listACLs(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, acls)
 }
 
+// @Summary Add group ACL
+// @Description Add a network ACL to a group. Requires admin privileges.
+// @Tags Groups
+// @Accept json
+// @Produce json
+// @Param id path string true "Group ID (UUID)"
+// @Param body body object true "Network ID and allowed IPs"
+// @Success 201 {object} groupACL
+// @Failure 400 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /groups/{id}/acls [post]
 func (h *GroupHandler) addACL(w http.ResponseWriter, r *http.Request) {
 	groupID, err := parseUUID(r, "id")
 	if err != nil {
@@ -542,6 +656,18 @@ func (h *GroupHandler) addACL(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusCreated, acl)
 }
 
+// @Summary Remove group ACL
+// @Description Remove a network ACL from a group. Requires admin privileges.
+// @Tags Groups
+// @Produce json
+// @Param id path string true "Group ID (UUID)"
+// @Param aclId path string true "ACL ID (UUID)"
+// @Success 204 "No Content"
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /groups/{id}/acls/{aclId} [delete]
 func (h *GroupHandler) removeACL(w http.ResponseWriter, r *http.Request) {
 	groupID, err := parseUUID(r, "id")
 	if err != nil {

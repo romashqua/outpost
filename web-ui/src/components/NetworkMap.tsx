@@ -193,17 +193,19 @@ function layoutNodes(
 }
 
 export default function NetworkMap() {
-  const { data: gateways = [] } = useQuery<Gateway[]>({
+  const { data: gatewaysData } = useQuery<{ gateways: Gateway[] }>({
     queryKey: ['gateways'],
     queryFn: () => api.get('/gateways'),
     staleTime: 30_000,
   })
+  const gateways = gatewaysData?.gateways ?? []
 
-  const { data: devices = [] } = useQuery<Device[]>({
+  const { data: devicesData } = useQuery<{ devices: Device[] }>({
     queryKey: ['devices'],
     queryFn: () => api.get('/devices'),
     staleTime: 30_000,
   })
+  const devices = devicesData?.devices ?? []
 
   const { data: tunnels = [] } = useQuery<S2STunnel[]>({
     queryKey: ['s2s-tunnels'],

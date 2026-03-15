@@ -5,14 +5,16 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/pquerna/otp/totp"
 
 	"github.com/romashqua/outpost/internal/auth"
@@ -24,11 +26,12 @@ type PasswordResetMailer interface {
 }
 
 type AuthHandler struct {
-	pool      *pgxpool.Pool
-	jwtSecret string
-	log       *slog.Logger
-	mailer    PasswordResetMailer
-	baseURL   string // e.g. "https://vpn.example.com"
+	pool           *pgxpool.Pool
+	jwtSecret      string
+	log            *slog.Logger
+	mailer         PasswordResetMailer
+	baseURL        string // e.g. "https://vpn.example.com"
+	tokenBlacklist auth.TokenBlacklist
 }
 
 func NewAuthHandler(pool *pgxpool.Pool, jwtSecret string, opts ...func(*AuthHandler)) *AuthHandler {
@@ -51,6 +54,10 @@ func WithBaseURL(u string) func(*AuthHandler) {
 	return func(h *AuthHandler) { h.baseURL = u }
 }
 
+func WithTokenBlacklist(bl auth.TokenBlacklist) func(*AuthHandler) {
+	return func(h *AuthHandler) { h.tokenBlacklist = bl }
+}
+
 func (h *AuthHandler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Post("/login", h.login)
@@ -60,7 +67,7 @@ func (h *AuthHandler) Routes() chi.Router {
 	r.Post("/forgot-password", h.forgotPassword)
 	r.Post("/reset-password", h.resetPassword)
 	// change-password validates JWT internally via GetUserFromContext.
-	r.With(auth.JWTMiddleware(h.jwtSecret)).Post("/change-password", h.changePassword)
+	r.With(auth.JWTMiddleware(h.jwtSecret, h.tokenBlacklist)).Post("/change-password", h.changePassword)
 	return r
 }
 
@@ -83,6 +90,18 @@ type mfaVerifyRequest struct {
 	Method   string `json:"method"` // totp, email, backup
 }
 
+// @Summary Login
+// @Description Authenticate a user with username and password. Returns JWT token or MFA challenge.
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Param body body loginRequest true "Login credentials"
+// @Success 200 {object} loginResponse
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /auth/login [post]
 func (h *AuthHandler) login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := parseBody(r, &req); err != nil {
@@ -103,13 +122,17 @@ func (h *AuthHandler) login(w http.ResponseWriter, r *http.Request) {
 		isAdmin            bool
 		isActive           bool
 		passwordMustChange bool
+		failedAttempts     int
+		lockedUntil        *time.Time
 	)
 
 	err := h.pool.QueryRow(r.Context(),
-		`SELECT id, username, email, password_hash, is_admin, is_active, password_must_change
+		`SELECT id, username, email, password_hash, is_admin, is_active, password_must_change,
+		        failed_login_attempts, locked_until
 		 FROM users WHERE username = $1`,
 		req.Username,
-	).Scan(&userID, &username, &email, &passwordHash, &isAdmin, &isActive, &passwordMustChange)
+	).Scan(&userID, &username, &email, &passwordHash, &isAdmin, &isActive, &passwordMustChange,
+		&failedAttempts, &lockedUntil)
 
 	if err != nil {
 		// Constant-time: always run bcrypt to prevent timing-based user enumeration.
@@ -123,9 +146,36 @@ func (h *AuthHandler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check account lockout.
+	if lockedUntil != nil && lockedUntil.After(time.Now()) {
+		remaining := time.Until(*lockedUntil).Truncate(time.Second)
+		respondError(w, http.StatusForbidden, fmt.Sprintf("account is locked, try again after %s", remaining))
+		return
+	}
+
 	if err := auth.CheckPassword(passwordHash, req.Password); err != nil {
+		// Increment failed attempts; lock account after 5 consecutive failures.
+		newAttempts := failedAttempts + 1
+		if newAttempts >= 5 {
+			lockUntil := time.Now().Add(15 * time.Minute)
+			_, _ = h.pool.Exec(r.Context(),
+				`UPDATE users SET failed_login_attempts = $1, locked_until = $2 WHERE id = $3`,
+				newAttempts, lockUntil, userID)
+			h.log.Warn("account locked due to failed login attempts", "user_id", userID, "attempts", newAttempts)
+		} else {
+			_, _ = h.pool.Exec(r.Context(),
+				`UPDATE users SET failed_login_attempts = $1 WHERE id = $2`,
+				newAttempts, userID)
+		}
 		respondError(w, http.StatusUnauthorized, "invalid credentials")
 		return
+	}
+
+	// Successful password check — reset lockout counters.
+	if failedAttempts > 0 || lockedUntil != nil {
+		_, _ = h.pool.Exec(r.Context(),
+			`UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1`,
+			userID)
 	}
 
 	// Check if user has MFA enabled.
@@ -140,10 +190,11 @@ func (h *AuthHandler) login(w http.ResponseWriter, r *http.Request) {
 	if mfaEnabled {
 		// Issue a short-lived MFA token (10 min) instead of a full session token.
 		mfaToken, err := auth.GenerateToken(h.jwtSecret, auth.TokenClaims{
-			UserID:   userID,
-			Username: username,
-			Email:    email,
-			IsAdmin:  false, // Limited token — no admin access until MFA verified.
+			UserID:    userID,
+			Username:  username,
+			Email:     email,
+			IsAdmin:   false, // Limited token — no admin access until MFA verified.
+			TokenType: "mfa",
 			RegisteredClaims: jwt.RegisteredClaims{
 				ExpiresAt: jwt.NewNumericDate(time.Now().Add(10 * time.Minute)),
 			},
@@ -178,6 +229,17 @@ func (h *AuthHandler) login(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// @Summary Verify MFA
+// @Description Verify a multi-factor authentication code (TOTP or backup) to complete login.
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Param body body mfaVerifyRequest true "MFA verification payload"
+// @Success 200 {object} loginResponse
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /auth/mfa/verify [post]
 func (h *AuthHandler) verifyMFA(w http.ResponseWriter, r *http.Request) {
 	var req mfaVerifyRequest
 	if err := parseBody(r, &req); err != nil {
@@ -194,6 +256,12 @@ func (h *AuthHandler) verifyMFA(w http.ResponseWriter, r *http.Request) {
 	claims, err := auth.ValidateToken(h.jwtSecret, req.MFAToken)
 	if err != nil {
 		respondError(w, http.StatusUnauthorized, "invalid or expired mfa token")
+		return
+	}
+
+	// Ensure this is actually an MFA-pending token, not a regular session token.
+	if claims.TokenType != "mfa" {
+		respondError(w, http.StatusUnauthorized, "invalid mfa token type")
 		return
 	}
 
@@ -280,6 +348,16 @@ func (h *AuthHandler) tryBackupCode(r *http.Request, userID, code string) bool {
 	return false
 }
 
+// @Summary Refresh token
+// @Description Refresh an existing JWT token. The current token must be valid.
+// @Tags Auth
+// @Produce json
+// @Success 200 {object} loginResponse
+// @Failure 401 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /auth/refresh [post]
 func (h *AuthHandler) refreshToken(w http.ResponseWriter, r *http.Request) {
 	// Extract current token from Authorization header.
 	tokenStr := r.Header.Get("Authorization")
@@ -296,11 +374,17 @@ func (h *AuthHandler) refreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check user is still active.
-	var isActive bool
+	// MFA-pending tokens cannot be refreshed into full session tokens.
+	if claims.TokenType == "mfa" {
+		respondError(w, http.StatusUnauthorized, "mfa verification required")
+		return
+	}
+
+	// Re-read current user state from DB (is_active AND is_admin may have changed).
+	var isActive, isAdmin bool
 	err = h.pool.QueryRow(r.Context(),
-		`SELECT is_active FROM users WHERE id = $1`, claims.UserID,
-	).Scan(&isActive)
+		`SELECT is_active, is_admin FROM users WHERE id = $1`, claims.UserID,
+	).Scan(&isActive, &isAdmin)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to verify account status")
 		return
@@ -315,7 +399,7 @@ func (h *AuthHandler) refreshToken(w http.ResponseWriter, r *http.Request) {
 		UserID:   claims.UserID,
 		Username: claims.Username,
 		Email:    claims.Email,
-		IsAdmin:  claims.IsAdmin,
+		IsAdmin:  isAdmin,
 	})
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to generate token")
@@ -328,9 +412,37 @@ func (h *AuthHandler) refreshToken(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// @Summary Logout
+// @Description Logout the current user. Client should discard the token.
+// @Tags Auth
+// @Produce json
+// @Success 200 {object} map[string]string
+// @Router /auth/logout [post]
 func (h *AuthHandler) logout(w http.ResponseWriter, r *http.Request) {
-	// For JWT-based auth, logout is client-side (discard token).
-	// Server-side session invalidation will be added with Redis sessions.
+	header := r.Header.Get("Authorization")
+	tokenStr, ok := strings.CutPrefix(header, "Bearer ")
+	if !ok || tokenStr == "" {
+		// No token provided — nothing to invalidate.
+		respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		return
+	}
+
+	// Validate to extract expiry, then blacklist.
+	claims, err := auth.ValidateToken(h.jwtSecret, tokenStr)
+	if err != nil {
+		// Token is already invalid/expired — nothing to revoke.
+		respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		return
+	}
+
+	if h.tokenBlacklist != nil && claims.ExpiresAt != nil {
+		if err := h.tokenBlacklist.Add(r.Context(), tokenStr, claims.ExpiresAt.Time); err != nil {
+			h.log.Error("failed to blacklist token on logout", "error", err)
+			respondError(w, http.StatusInternalServerError, "failed to invalidate token")
+			return
+		}
+	}
+
 	respondJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -340,6 +452,15 @@ type forgotPasswordRequest struct {
 	Email string `json:"email"`
 }
 
+// @Summary Forgot password
+// @Description Request a password reset email. Always returns success to prevent email enumeration.
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Param body body forgotPasswordRequest true "Email address"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Router /auth/forgot-password [post]
 func (h *AuthHandler) forgotPassword(w http.ResponseWriter, r *http.Request) {
 	var req forgotPasswordRequest
 	if err := parseBody(r, &req); err != nil {
@@ -393,7 +514,7 @@ func (h *AuthHandler) forgotPassword(w http.ResponseWriter, r *http.Request) {
 			}
 		}()
 	} else {
-		h.log.Info("password reset token generated (no mailer configured)", "user_id", userID, "token", plainToken)
+		h.log.Info("password reset token generated (no mailer configured)", "user_id", userID)
 	}
 }
 
@@ -402,6 +523,16 @@ type resetPasswordRequest struct {
 	NewPassword string `json:"new_password"`
 }
 
+// @Summary Reset password
+// @Description Reset password using a valid reset token.
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Param body body resetPasswordRequest true "Reset token and new password"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /auth/reset-password [post]
 func (h *AuthHandler) resetPassword(w http.ResponseWriter, r *http.Request) {
 	var req resetPasswordRequest
 	if err := parseBody(r, &req); err != nil {
@@ -412,20 +543,22 @@ func (h *AuthHandler) resetPassword(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "token and new_password are required")
 		return
 	}
-	if len(req.NewPassword) < 8 {
-		respondError(w, http.StatusBadRequest, "password must be at least 8 characters")
+	if err := auth.ValidatePasswordPolicy(req.NewPassword); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	tokenHash := sha256.Sum256([]byte(req.Token))
 	tokenHashHex := hex.EncodeToString(tokenHash[:])
 
-	var tokenID, userID string
+	// Atomically consume the token to prevent TOCTOU race conditions.
+	var userID string
 	err := h.pool.QueryRow(r.Context(),
-		`SELECT id, user_id FROM password_reset_tokens
-		 WHERE token_hash = $1 AND used = false AND expires_at > now()`,
+		`UPDATE password_reset_tokens SET used = true
+		 WHERE token_hash = $1 AND used = false AND expires_at > now()
+		 RETURNING user_id`,
 		tokenHashHex,
-	).Scan(&tokenID, &userID)
+	).Scan(&userID)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			respondError(w, http.StatusBadRequest, "invalid or expired reset token")
@@ -441,7 +574,7 @@ func (h *AuthHandler) resetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update password and clear force-change flag in one query.
+	// Update password and clear force-change flag.
 	if _, err := h.pool.Exec(r.Context(),
 		`UPDATE users SET password_hash = $1, password_must_change = false, updated_at = now()
 		 WHERE id = $2`, hash, userID,
@@ -449,10 +582,6 @@ func (h *AuthHandler) resetPassword(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, "failed to update password")
 		return
 	}
-
-	// Mark token as used.
-	_, _ = h.pool.Exec(r.Context(),
-		`UPDATE password_reset_tokens SET used = true WHERE id = $1`, tokenID)
 
 	h.log.Info("password reset completed", "user_id", userID)
 	respondJSON(w, http.StatusOK, map[string]string{"message": "password has been reset"})
@@ -463,6 +592,18 @@ type changePasswordRequest struct {
 	NewPassword     string `json:"new_password"`
 }
 
+// @Summary Change password
+// @Description Change the current user's password. Requires valid current password.
+// @Tags Auth
+// @Accept json
+// @Produce json
+// @Param body body changePasswordRequest true "Current and new password"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /auth/change-password [post]
 func (h *AuthHandler) changePassword(w http.ResponseWriter, r *http.Request) {
 	// This endpoint requires a valid JWT (the user must be logged in).
 	claims, ok := auth.GetUserFromContext(r.Context())
@@ -480,8 +621,8 @@ func (h *AuthHandler) changePassword(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "current_password and new_password are required")
 		return
 	}
-	if len(req.NewPassword) < 8 {
-		respondError(w, http.StatusBadRequest, "new password must be at least 8 characters")
+	if err := auth.ValidatePasswordPolicy(req.NewPassword); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

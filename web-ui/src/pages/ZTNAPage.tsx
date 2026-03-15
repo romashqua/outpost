@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Shield, Plus, Trash2, Settings2 } from 'lucide-react'
@@ -600,6 +600,9 @@ function TrustConfigModal({
   t: (key: string) => string
 }) {
   const [form, setForm] = useState<TrustConfig>(config)
+
+  // Sync form with external config changes (e.g. when modal reopens).
+  useEffect(() => { setForm(config) }, [config])
 
   const totalWeight = form.weight_disk_encryption + form.weight_screen_lock +
     form.weight_antivirus + form.weight_firewall +

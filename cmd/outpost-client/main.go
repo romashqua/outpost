@@ -95,11 +95,9 @@ func cmdConnect(c *client.Client, logger *slog.Logger) {
 		case client.TunnelConnected:
 			fmt.Println("✓ VPN connected")
 		case client.TunnelMFARequired:
-			fmt.Println("⚠ MFA re-authentication required")
-			fmt.Print("Enter MFA code: ")
-			code := readLine()
-			if err := c.VerifyMFA(ctx, "", code, "totp"); err != nil {
-				logger.Error("MFA verification failed", "error", err)
+			fmt.Println("⚠ MFA re-authentication required, please re-login")
+			if err := doLogin(ctx, c); err != nil {
+				logger.Error("re-authentication failed", "error", err)
 			}
 		case client.TunnelDisconnected:
 			fmt.Println("✗ VPN disconnected")

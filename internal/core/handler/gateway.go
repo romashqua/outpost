@@ -75,11 +75,31 @@ type createGatewayRequest struct {
 	Priority  *int    `json:"priority,omitempty"`
 }
 
+// @Summary List gateways
+// @Description Returns a paginated list of all gateways.
+// @Tags Gateways
+// @Produce json
+// @Param page query int false "Page number" default(1)
+// @Param per_page query int false "Items per page" default(50)
+// @Success 200 {object} map[string]any
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /gateways [get]
 func (h *GatewayHandler) list(w http.ResponseWriter, r *http.Request) {
+	page, perPage := parsePagination(r)
+	offset := (page - 1) * perPage
+
+	var total int
+	if err := h.pool.QueryRow(r.Context(), `SELECT COUNT(*) FROM gateways`).Scan(&total); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to count gateways")
+		return
+	}
+
 	rows, err := h.pool.Query(r.Context(),
 		`SELECT id, network_id, name, public_ip::text, wireguard_pubkey, endpoint, is_active, priority, last_seen, created_at, updated_at
 		 FROM gateways
-		 ORDER BY created_at DESC`)
+		 ORDER BY created_at DESC
+		 LIMIT $1 OFFSET $2`, perPage, offset)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to query gateways")
 		return
@@ -102,9 +122,26 @@ func (h *GatewayHandler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respondJSON(w, http.StatusOK, gateways)
+	respondJSON(w, http.StatusOK, map[string]any{
+		"gateways": gateways,
+		"total":    total,
+		"page":     page,
+		"per_page": perPage,
+	})
 }
 
+// @Summary Create gateway
+// @Description Create a new WireGuard gateway. Returns a one-time authentication token. Requires admin privileges.
+// @Tags Gateways
+// @Accept json
+// @Produce json
+// @Param body body createGatewayRequest true "Gateway data"
+// @Success 201 {object} gatewayCreateResponse
+// @Failure 400 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /gateways [post]
 func (h *GatewayHandler) create(w http.ResponseWriter, r *http.Request) {
 	var req createGatewayRequest
 	if err := parseBody(r, &req); err != nil {
@@ -196,6 +233,17 @@ func (h *GatewayHandler) create(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusCreated, resp)
 }
 
+// @Summary Get gateway
+// @Description Retrieve a gateway by ID.
+// @Tags Gateways
+// @Produce json
+// @Param id path string true "Gateway ID (UUID)"
+// @Success 200 {object} gatewayResponse
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /gateways/{id} [get]
 func (h *GatewayHandler) get(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -229,6 +277,20 @@ type updateGatewayRequest struct {
 	IsActive *bool   `json:"is_active,omitempty"`
 }
 
+// @Summary Update gateway
+// @Description Update an existing gateway. Requires admin privileges.
+// @Tags Gateways
+// @Accept json
+// @Produce json
+// @Param id path string true "Gateway ID (UUID)"
+// @Param body body updateGatewayRequest true "Fields to update"
+// @Success 200 {object} gatewayResponse
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /gateways/{id} [put]
 func (h *GatewayHandler) update(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
@@ -274,6 +336,17 @@ func (h *GatewayHandler) update(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, g)
 }
 
+// @Summary Delete gateway
+// @Description Delete a gateway by ID. Requires admin privileges.
+// @Tags Gateways
+// @Produce json
+// @Param id path string true "Gateway ID (UUID)"
+// @Success 204 "No Content"
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /gateways/{id} [delete]
 func (h *GatewayHandler) delete(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(r, "id")
 	if err != nil {
