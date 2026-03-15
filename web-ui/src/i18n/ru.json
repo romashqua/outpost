@@ -11,6 +11,7 @@
     "groups": "Группы",
     "compliance": "Соответствие",
     "ztna": "Zero Trust",
+    "tenants": "Тенанты",
     "docs": "Документация",
     "settings": "Настройки"
   },
@@ -104,6 +105,7 @@
     "removing": "Удаление...",
     "failedToLoad": "Не удалось загрузить группы",
     "custom": "Другое",
+    "userCreated": "Пользовательская",
     "descriptionPlaceholder": "Описание группы",
     "allowedIpsHint": "CIDR через запятую, например 10.0.0.0/24",
     "network": "Сеть",
@@ -132,6 +134,8 @@
     "wireguardPubkey": "Публичный ключ WireGuard",
     "selectUser": "Выберите пользователя...",
     "user": "Пользователь",
+    "network": "Сеть",
+    "selectNetwork": "Выберите сеть...",
     "copy": "Копировать",
     "downloadConf": "Скачать .conf",
     "sendToEmail": "Отправить конфиг на почту",
@@ -385,7 +389,10 @@
     "noDNSRules": "DNS-правила не настроены",
     "dnsRuleCreated": "DNS-правило создано",
     "dnsRuleDeleted": "DNS-правило удалено",
-    "confirmDeleteDNS": "Вы уверены, что хотите удалить это DNS-правило?"
+    "confirmDeleteDNS": "Вы уверены, что хотите удалить это DNS-правило?",
+    "networks": "Сети",
+    "networksHint": "Оставьте пустым для применения ко всем сетям",
+    "network": "Сеть"
   },
   "settings": {
     "title": "Настройки",
@@ -471,7 +478,27 @@
     "disabling": "Отключение...",
     "testing": "Тестирование...",
     "unnamedKey": "Без имени",
-    "loadingSettings": "Загрузка настроек..."
+    "loadingSettings": "Загрузка настроек...",
+    "smtpUsername": "Имя пользователя SMTP",
+    "smtpPassword": "Пароль SMTP",
+    "smtpEncryption": "Шифрование",
+    "smtpFromName": "Имя отправителя",
+    "encNone": "Без шифрования (не рекомендуется)",
+    "eventAll": "Все события",
+    "eventUserCreated": "Пользователь создан",
+    "eventUserUpdated": "Пользователь обновлён",
+    "eventUserDeleted": "Пользователь удалён",
+    "eventDeviceCreated": "Устройство создано",
+    "eventDeviceApproved": "Устройство одобрено",
+    "eventDeviceRevoked": "Устройство отозвано",
+    "eventDeviceDeleted": "Устройство удалено",
+    "eventNetworkCreated": "Сеть создана",
+    "eventNetworkUpdated": "Сеть обновлена",
+    "eventGatewayConnected": "Шлюз подключен",
+    "eventGatewayDisconnected": "Шлюз отключен",
+    "eventAuthLogin": "Вход пользователя",
+    "eventAuthLogout": "Выход пользователя",
+    "eventMfaFailed": "Ошибка MFA-верификации"
   },
   "common": {
     "create": "Создать",
@@ -492,6 +519,8 @@
     "connected": "Подключено",
     "connect": "Подключить",
     "copy": "Копировать",
+    "copied": "Скопировано",
+    "copyFailed": "Не удалось скопировать",
     "status": "Статус",
     "created": "Создано",
     "test": "Тест",
@@ -820,6 +849,23 @@
       }
     },
 
+    "vpnClient": {
+      "title": "VPN-клиент",
+      "content": "Outpost поддерживает два способа подключения: нативный Outpost Client и стандартные клиенты WireGuard. Выбор зависит от ваших требований к безопасности.",
+      "outpostClient": {
+        "title": "Outpost Client (Рекомендуется)",
+        "content": "Outpost Client — наш специализированный VPN-клиент с полной поддержкой всех функций:\n\n• **Интеграция 2FA/MFA** — аутентификация напрямую с сервером Outpost, обработка TOTP/WebAuthn\n• **Автоматическая ротация ключей** — ключи обновляются прозрачно без переподключения\n• **Отчёт о состоянии устройства** — отправляет версию ОС, шифрование диска, статус антивируса для ZTNA\n• **Автопереподключение** — обрабатывает смену сети и режим сна\n• **Мульти-сеть** — подключение к нескольким VPN-сетям одновременно\n\nУстановка:\n```bash\n# Linux\ncurl -fsSL https://get.outpost.vpn | sh\n\n# macOS\nbrew install outpost-vpn/tap/outpost-client\n\n# Windows\nwinget install OutpostVPN.Client\n```\n\nИспользование:\n```bash\noutpost-client login --server https://vpn.company.com\noutpost-client connect\noutpost-client status\noutpost-client disconnect\n```"
+      },
+      "wireguardNative": {
+        "title": "Стандартный клиент WireGuard",
+        "content": "Вы можете использовать любой стандартный клиент WireGuard (wg-quick, приложение WireGuard для iOS/Android/Windows/macOS) с сгенерированными .conf файлами.\n\n**Ограничения стандартного WireGuard:**\n• Нет поддержки 2FA/MFA — если MFA включен, стандартный клиент **не будет работать**\n• Нет автоматической ротации ключей\n• Нет отчётов о состоянии устройства (функции ZTNA недоступны)\n• Нет автопереподключения при истечении сессии\n• Работает для базового VPN-доступа без MFA\n\nДля использования:\n1. Скачайте .conf файл со страницы Устройства\n2. Импортируйте его в клиент WireGuard\n3. Подключитесь\n\n```bash\n# Пример для Linux\nsudo wg-quick up ./wg-outpost.conf\n```"
+      },
+      "mfa2fa": {
+        "title": "2FA/MFA и VPN-клиенты",
+        "content": "**Важно:** Когда 2FA/MFA включен для пользователя, для подключения можно использовать только Outpost Client.\n\nКак это работает:\n1. Пользователь инициирует подключение через Outpost Client\n2. Клиент аутентифицируется по логину/паролю\n3. Сервер запрашивает код 2FA (TOTP, WebAuthn или резервный код)\n4. Клиент запрашивает код у пользователя и отправляет его\n5. Сервер выдаёт сессионный токен с ограниченным сроком\n6. WireGuard-пир добавляется на шлюз\n7. При истечении сессии пир **автоматически удаляется** со шлюза — трафик мгновенно прекращается\n\nЭто функция **WireGuard Protocol-Level MFA**: пир физически удаляется из WireGuard-интерфейса при истечении сессии, обеспечивая настоящий zero-trust.\n\nСтандартные клиенты WireGuard не могут выполнить этот поток аутентификации и не смогут подключиться при включенном MFA.\n\n**Рекомендация:** Если требуется MFA (рекомендуется для безопасности), разверните Outpost Client для всех пользователей. Используйте стандартный WireGuard только для сервисных аккаунтов или сред без MFA."
+      }
+    },
+
     "troubleshooting": {
       "title": "Устранение неполадок",
       "commonErrors": {
@@ -871,5 +917,25 @@
     "tenantUpdated": "Арендатор обновлён",
     "tenantDeactivated": "Арендатор деактивирован",
     "failedToLoad": "Не удалось загрузить арендаторов"
+  },
+  "notifications": {
+    "title": "Уведомления",
+    "empty": "Пока нет уведомлений",
+    "markAllRead": "Отметить все прочитанными",
+    "showingRecent": "Последние {{count}} событий",
+    "justNow": "Только что",
+    "minutesAgo": "{{count}} мин. назад",
+    "hoursAgo": "{{count}} ч. назад",
+    "daysAgo": "{{count}} д. назад",
+    "created": "Создано",
+    "updated": "Обновлено",
+    "deleted": "Удалено",
+    "deviceApproved": "Устройство подтверждено",
+    "deviceRevoked": "Устройство отозвано",
+    "userLoggedIn": "Пользователь вошёл",
+    "userLoggedOut": "Пользователь вышел",
+    "mfaFailed": "Ошибка проверки MFA",
+    "gatewayConnected": "Шлюз подключён",
+    "gatewayDisconnected": "Шлюз отключён"
   }
 }

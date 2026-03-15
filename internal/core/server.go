@@ -377,6 +377,9 @@ func (s *Server) setupHTTPRouter() chi.Router {
 			// Multi-tenant management.
 			r.Mount("/tenants", tenant.NewHandler(s.pool, s.logger).Routes())
 
+			// In-app notifications (sourced from audit_log).
+			r.Mount("/notifications", handler.NewNotificationHandler(s.pool).Routes())
+
 			// NAT traversal (STUN/TURN relay management).
 			r.Mount("/nat", nat.NewHandler(s.pool, s.logger).Routes())
 

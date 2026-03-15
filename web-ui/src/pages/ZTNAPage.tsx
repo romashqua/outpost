@@ -11,6 +11,18 @@ import Input from '@/components/ui/Input'
 import { api } from '@/api/client'
 import { useToastStore } from '@/store/toast'
 
+interface Network {
+  id: string
+  name: string
+  address: string
+  is_active: boolean
+}
+
+interface NetworksResponse {
+  networks: Network[]
+  total: number
+}
+
 interface TrustScoreSummary {
   device_id: string
   device_name: string
@@ -95,10 +107,28 @@ export default function ZTNAPage() {
   const [deletePolicyId, setDeletePolicyId] = useState<string | null>(null)
   const [deleteDNSId, setDeleteDNSId] = useState<string | null>(null)
 
-  const [policyForm, setPolicyForm] = useState({ name: '', description: '', action: 'allow', priority: '100' })
+  const [policyForm, setPolicyForm] = useState({
+    name: '',
+    description: '',
+    action: 'allow',
+    priority: '100',
+    network_ids: [] as string[],
+    min_trust_score: '',
+    require_disk_encryption: false,
+    require_screen_lock: false,
+    require_antivirus: false,
+    require_firewall: false,
+    require_mfa: false,
+  })
   const [dnsForm, setDnsForm] = useState({ network_id: '', domain: '', dns_server: '' })
 
   // --- Queries ---
+
+  const { data: networksData } = useQuery<NetworksResponse>({
+    queryKey: ['networks'],
+    queryFn: () => api.get('/networks'),
+  })
+  const networks = networksData?.networks?.filter(n => n.is_active) ?? []
 
   const { data: trustScores = [], isLoading: scoresLoading } = useQuery<TrustScoreSummary[]>({
     queryKey: ['trust-scores'],
@@ -133,12 +163,12 @@ export default function ZTNAPage() {
   })
 
   const createPolicyMutation = useMutation({
-    mutationFn: (data: { name: string; description?: string; action: string; priority: number }) =>
+    mutationFn: (data: { name: string; description?: string; action: string; priority: number; network_ids: string[]; conditions: Record<string, unknown> }) =>
       api.post('/ztna/policies', data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['ztna-policies'] })
       setShowCreatePolicy(false)
-      setPolicyForm({ name: '', description: '', action: 'allow', priority: '100' })
+      setPolicyForm({ name: '', description: '', action: 'allow', priority: '100', network_ids: [], min_trust_score: '', require_disk_encryption: false, require_screen_lock: false, require_antivirus: false, require_firewall: false, require_mfa: false })
       addToast(t('ztna.policyCreated'), 'success')
     },
     onError: (err) => addToast((err as Error).message, 'error'),
@@ -462,26 +492,40 @@ export default function ZTNAPage() {
         <form
           onSubmit={(e) => {
             e.preventDefault()
+            const conditions: Record<string, unknown> = {}
+            if (policyForm.min_trust_score) conditions.min_trust_score = parseInt(policyForm.min_trust_score)
+            if (policyForm.require_disk_encryption) conditions.require_disk_encryption = true
+            if (policyForm.require_screen_lock) conditions.require_screen_lock = true
+            if (policyForm.require_antivirus) conditions.require_antivirus = true
+            if (policyForm.require_firewall) conditions.require_firewall = true
+            if (policyForm.require_mfa) conditions.require_mfa = true
             createPolicyMutation.mutate({
               name: policyForm.name,
               description: policyForm.description || undefined,
               action: policyForm.action,
               priority: Number.isNaN(parseInt(policyForm.priority)) ? 100 : parseInt(policyForm.priority),
+              network_ids: policyForm.network_ids,
+              conditions,
             })
           }}
-          className="flex flex-col gap-4"
+          className="flex flex-col gap-4 max-h-[70vh] overflow-y-auto"
         >
+          {/* Basic info */}
           <Input
             label={t('common.name')}
+            placeholder={t('ztna.policyNamePlaceholder')}
             value={policyForm.name}
             onChange={(e) => setPolicyForm({ ...policyForm, name: e.target.value })}
             required
           />
           <Input
             label={t('common.description')}
+            placeholder={t('ztna.policyDescPlaceholder')}
             value={policyForm.description}
             onChange={(e) => setPolicyForm({ ...policyForm, description: e.target.value })}
           />
+
+          {/* Action */}
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
               {t('ztna.action')}
@@ -495,13 +539,92 @@ export default function ZTNAPage() {
               <option value="restrict">{t('ztna.actionRestrict')}</option>
               <option value="deny">{t('ztna.actionDeny')}</option>
             </select>
+            <p className="text-[10px] text-[var(--text-muted)]">{t('ztna.actionHint')}</p>
           </div>
-          <Input
-            label={t('ztna.priority')}
-            type="number"
-            value={policyForm.priority}
-            onChange={(e) => setPolicyForm({ ...policyForm, priority: e.target.value })}
-          />
+
+          {/* Priority */}
+          <div className="flex flex-col gap-1.5">
+            <Input
+              label={t('ztna.priority')}
+              type="number"
+              value={policyForm.priority}
+              onChange={(e) => setPolicyForm({ ...policyForm, priority: e.target.value })}
+            />
+            <p className="text-[10px] text-[var(--text-muted)]">{t('ztna.priorityHint')}</p>
+          </div>
+
+          {/* Conditions */}
+          <div className="border border-[var(--border)] rounded-lg p-3 space-y-3">
+            <h4 className="text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
+              {t('ztna.conditions')}
+            </h4>
+            <p className="text-[10px] text-[var(--text-muted)]">{t('ztna.conditionsHint')}</p>
+
+            <Input
+              label={t('ztna.minTrustScore')}
+              type="number"
+              placeholder="0-100"
+              value={policyForm.min_trust_score}
+              onChange={(e) => setPolicyForm({ ...policyForm, min_trust_score: e.target.value })}
+            />
+
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
+                <input type="checkbox" checked={policyForm.require_disk_encryption} onChange={(e) => setPolicyForm({ ...policyForm, require_disk_encryption: e.target.checked })} className="rounded border-[var(--border)]" />
+                {t('ztna.requireDiskEncryption')}
+              </label>
+              <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
+                <input type="checkbox" checked={policyForm.require_screen_lock} onChange={(e) => setPolicyForm({ ...policyForm, require_screen_lock: e.target.checked })} className="rounded border-[var(--border)]" />
+                {t('ztna.requireScreenLock')}
+              </label>
+              <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
+                <input type="checkbox" checked={policyForm.require_antivirus} onChange={(e) => setPolicyForm({ ...policyForm, require_antivirus: e.target.checked })} className="rounded border-[var(--border)]" />
+                {t('ztna.requireAntivirus')}
+              </label>
+              <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
+                <input type="checkbox" checked={policyForm.require_firewall} onChange={(e) => setPolicyForm({ ...policyForm, require_firewall: e.target.checked })} className="rounded border-[var(--border)]" />
+                {t('ztna.requireFirewall')}
+              </label>
+              <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
+                <input type="checkbox" checked={policyForm.require_mfa} onChange={(e) => setPolicyForm({ ...policyForm, require_mfa: e.target.checked })} className="rounded border-[var(--border)]" />
+                {t('ztna.requireMfa')}
+              </label>
+            </div>
+          </div>
+
+          {/* Networks */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
+              {t('ztna.networks')}
+            </label>
+            <div className="flex flex-col gap-1 max-h-32 overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-2">
+              {networks.length === 0 ? (
+                <span className="text-xs text-[var(--text-muted)] px-1">{t('common.loading')}</span>
+              ) : networks.map((n) => (
+                <label key={n.id} className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer px-1 py-0.5 hover:bg-[var(--bg-tertiary)] rounded">
+                  <input
+                    type="checkbox"
+                    checked={policyForm.network_ids.includes(n.id)}
+                    onChange={(e) => {
+                      const ids = e.target.checked
+                        ? [...policyForm.network_ids, n.id]
+                        : policyForm.network_ids.filter((id) => id !== n.id)
+                      setPolicyForm({ ...policyForm, network_ids: ids })
+                    }}
+                    className="rounded border-[var(--border)]"
+                  />
+                  <span className="font-mono text-xs">{n.name}</span>
+                  <span className="text-xs text-[var(--text-muted)]">({n.address})</span>
+                </label>
+              ))}
+            </div>
+            <span className="text-xs text-[var(--text-muted)]">{t('ztna.networksHint')}</span>
+          </div>
+
+          {createPolicyMutation.error && (
+            <p className="text-sm text-[var(--danger)]">{(createPolicyMutation.error as Error).message}</p>
+          )}
+
           <div className="flex justify-end gap-2 mt-2">
             <Button variant="ghost" type="button" onClick={() => setShowCreatePolicy(false)}>
               {t('common.cancel')}
@@ -551,13 +674,24 @@ export default function ZTNAPage() {
             onChange={(e) => setDnsForm({ ...dnsForm, dns_server: e.target.value })}
             required
           />
-          <Input
-            label={t('ztna.networkId')}
-            placeholder="UUID"
-            value={dnsForm.network_id}
-            onChange={(e) => setDnsForm({ ...dnsForm, network_id: e.target.value })}
-            required
-          />
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
+              {t('ztna.network')}
+            </label>
+            <select
+              className="w-full rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-sm text-[var(--text-primary)] font-mono glow-focus transition-all duration-150"
+              value={dnsForm.network_id}
+              onChange={(e) => setDnsForm({ ...dnsForm, network_id: e.target.value })}
+              required
+            >
+              <option value="">{t('devices.selectNetwork')}</option>
+              {networks.map((n) => (
+                <option key={n.id} value={n.id}>
+                  {n.name} ({n.address})
+                </option>
+              ))}
+            </select>
+          </div>
           <div className="flex justify-end gap-2 mt-2">
             <Button variant="ghost" type="button" onClick={() => setShowCreateDNS(false)}>
               {t('common.cancel')}

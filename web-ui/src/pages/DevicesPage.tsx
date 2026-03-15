@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { CheckCircle, XCircle, Trash2, Plus, Download, Copy, FileDown, Mail } from 'lucide-react'
+import { CheckCircle, XCircle, Trash2, Plus, Download, Copy, Check, FileDown, Mail } from 'lucide-react'
 import Table from '@/components/ui/Table'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
@@ -9,6 +9,7 @@ import Input from '@/components/ui/Input'
 import Modal from '@/components/ui/Modal'
 import { api } from '@/api/client'
 import { useToastStore } from '@/store/toast'
+import { useAuthStore } from '@/store/auth'
 
 interface Device {
   id: string
@@ -48,6 +49,8 @@ export default function DevicesPage() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const addToast = useToastStore((s) => s.addToast)
+  const currentUser = useAuthStore((s) => s.user)
+  const isAdmin = currentUser?.role === 'admin'
   const [deleteTarget, setDeleteTarget] = useState<Device | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showConfigModal, setShowConfigModal] = useState(false)
@@ -56,9 +59,22 @@ export default function DevicesPage() {
   const [createForm, setCreateForm] = useState({
     name: '',
     user_id: '',
+    network_id: '',
     autoGenerateKey: true,
     wireguard_pubkey: '',
   })
+  const [copiedConfig, setCopiedConfig] = useState(false)
+
+  interface Network {
+    id: string
+    name: string
+    address: string
+    is_active: boolean
+  }
+  interface NetworksResponse {
+    networks: Network[]
+    total: number
+  }
 
   interface DevicesResponse {
     devices: Device[]
@@ -68,8 +84,8 @@ export default function DevicesPage() {
   }
 
   const { data: devicesData, isLoading, error } = useQuery<DevicesResponse>({
-    queryKey: ['devices'],
-    queryFn: () => api.get('/devices'),
+    queryKey: ['devices', isAdmin ? 'all' : 'my'],
+    queryFn: () => api.get(isAdmin ? '/devices' : '/devices/my'),
   })
 
   const devices = devicesData?.devices ?? []
@@ -77,9 +93,47 @@ export default function DevicesPage() {
   const { data: usersData } = useQuery<UsersResponse>({
     queryKey: ['users'],
     queryFn: () => api.get('/users'),
+    enabled: isAdmin,
   })
 
   const users = usersData?.users ?? []
+
+  const { data: networksData } = useQuery<NetworksResponse>({
+    queryKey: ['networks', isAdmin ? 'all' : 'my'],
+    queryFn: () => api.get(isAdmin ? '/networks' : '/networks/my'),
+  })
+
+  const networks = networksData?.networks ?? []
+
+  function copyToClipboard(text: string) {
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text).then(() => {
+        setCopiedConfig(true)
+        setTimeout(() => setCopiedConfig(false), 2000)
+      }).catch(() => {
+        fallbackCopy(text)
+      })
+    } else {
+      fallbackCopy(text)
+    }
+  }
+
+  function fallbackCopy(text: string) {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.select()
+    try {
+      document.execCommand('copy')
+      setCopiedConfig(true)
+      setTimeout(() => setCopiedConfig(false), 2000)
+    } catch {
+      addToast(t('common.copyFailed') || 'Failed to copy', 'error')
+    }
+    document.body.removeChild(textarea)
+  }
 
   const approveMutation = useMutation({
     mutationFn: (id: string) => api.post(`/devices/${id}/approve`),
@@ -127,6 +181,7 @@ export default function DevicesPage() {
         name: form.name,
         user_id: form.user_id,
         wireguard_pubkey: pubkey,
+        ...(form.network_id ? { network_id: form.network_id } : {}),
       })
 
       if (form.autoGenerateKey) {
@@ -139,7 +194,7 @@ export default function DevicesPage() {
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['devices'] })
       setShowCreateModal(false)
-      setCreateForm({ name: '', user_id: '', autoGenerateKey: true, wireguard_pubkey: '' })
+      setCreateForm({ name: '', user_id: '', network_id: '', autoGenerateKey: true, wireguard_pubkey: '' })
       addToast(t('devices.createDevice'), 'success')
 
       if (result.config) {
@@ -175,13 +230,8 @@ export default function DevicesPage() {
     },
   })
 
-  const copyConfig = async () => {
-    try {
-      await navigator.clipboard.writeText(configText)
-      addToast(t('devices.copy'), 'success')
-    } catch {
-      addToast(t('devices.failedToCopy'), 'error')
-    }
+  const copyConfig = () => {
+    copyToClipboard(configText)
   }
 
   const downloadConfigFile = () => {
@@ -210,14 +260,14 @@ export default function DevicesPage() {
         <span className="font-mono text-[var(--text-primary)]">{row.name}</span>
       ),
     },
-    {
+    ...(isAdmin ? [{
       key: 'user_id',
       header: t('devices.owner'),
       sortable: true,
       render: (row: Device) => (
         <span className="font-mono text-[var(--accent)]">{row.user_id}</span>
       ),
-    },
+    }] : []),
     {
       key: 'wireguard_pubkey',
       header: t('devices.pubkey'),
@@ -284,45 +334,49 @@ export default function DevicesPage() {
           >
             <Mail size={14} className="text-[var(--accent)]" />
           </Button>
-          {!row.is_approved ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              title={t('devices.approve')}
-              disabled={approveMutation.isPending}
-              onClick={(e) => {
-                e.stopPropagation()
-                approveMutation.mutate(row.id)
-              }}
-            >
-              <CheckCircle size={14} className="text-[var(--accent)]" />
-            </Button>
-          ) : (
-            <Button
-              variant="ghost"
-              size="sm"
-              title={t('devices.revoke')}
-              disabled={revokeMutation.isPending}
-              onClick={(e) => {
-                e.stopPropagation()
-                revokeMutation.mutate(row.id)
-              }}
-            >
-              <XCircle size={14} className="text-[var(--warning)]" />
-            </Button>
+          {isAdmin && (
+            <>
+              {!row.is_approved ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  title={t('devices.approve')}
+                  disabled={approveMutation.isPending}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    approveMutation.mutate(row.id)
+                  }}
+                >
+                  <CheckCircle size={14} className="text-[var(--accent)]" />
+                </Button>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  title={t('devices.revoke')}
+                  disabled={revokeMutation.isPending}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    revokeMutation.mutate(row.id)
+                  }}
+                >
+                  <XCircle size={14} className="text-[var(--warning)]" />
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                title={t('common.delete')}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  deleteMutation.reset()
+                  setDeleteTarget(row)
+                }}
+              >
+                <Trash2 size={14} className="text-[var(--danger)]" />
+              </Button>
+            </>
           )}
-          <Button
-            variant="ghost"
-            size="sm"
-            title={t('common.delete')}
-            onClick={(e) => {
-              e.stopPropagation()
-              deleteMutation.reset()
-              setDeleteTarget(row)
-            }}
-          >
-            <Trash2 size={14} className="text-[var(--danger)]" />
-          </Button>
         </div>
       ),
     },
@@ -364,9 +418,10 @@ export default function DevicesPage() {
         <form
           onSubmit={(e) => {
             e.preventDefault()
-            if (!createForm.name || !createForm.user_id) return
+            const userId = isAdmin ? createForm.user_id : (currentUser?.id ?? '')
+            if (!createForm.name || !userId || !createForm.network_id) return
             if (!createForm.autoGenerateKey && !createForm.wireguard_pubkey) return
-            createMutation.mutate(createForm)
+            createMutation.mutate({ ...createForm, user_id: userId })
           }}
         >
           <div className="flex flex-col gap-4 mb-6">
@@ -378,20 +433,41 @@ export default function DevicesPage() {
               required
             />
 
+            {isAdmin ? (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
+                  {t('devices.user')}
+                </label>
+                <select
+                  className="w-full rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-sm text-[var(--text-primary)] font-mono glow-focus transition-all duration-150"
+                  value={createForm.user_id}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, user_id: e.target.value }))}
+                  required
+                >
+                  <option value="">{t('devices.selectUser')}</option>
+                  {users.map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.username} ({u.email})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
+
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
-                {t('devices.user')}
+                {t('devices.network')}
               </label>
               <select
                 className="w-full rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-sm text-[var(--text-primary)] font-mono glow-focus transition-all duration-150"
-                value={createForm.user_id}
-                onChange={(e) => setCreateForm((f) => ({ ...f, user_id: e.target.value }))}
+                value={createForm.network_id}
+                onChange={(e) => setCreateForm((f) => ({ ...f, network_id: e.target.value }))}
                 required
               >
-                <option value="">{t('devices.selectUser')}</option>
-                {users.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.username} ({u.email})
+                <option value="">{t('devices.selectNetwork')}</option>
+                {networks.filter(n => n.is_active).map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.name} ({n.address})
                   </option>
                 ))}
               </select>
@@ -460,8 +536,8 @@ export default function DevicesPage() {
 
           <div className="flex gap-3 justify-end">
             <Button variant="secondary" onClick={copyConfig}>
-              <Copy size={14} className="mr-1" />
-              {t('devices.copy')}
+              {copiedConfig ? <Check size={14} className="mr-1" /> : <Copy size={14} className="mr-1" />}
+              {copiedConfig ? t('common.copied') || 'Copied' : t('devices.copy')}
             </Button>
             <Button variant="secondary" onClick={downloadConfigFile}>
               <FileDown size={14} className="mr-1" />

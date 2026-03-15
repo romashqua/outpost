@@ -109,14 +109,34 @@ export default function GatewaysPage() {
   }
 
   function copyToken() {
-    if (showToken) {
+    if (!showToken) return
+    if (navigator.clipboard && window.isSecureContext) {
       navigator.clipboard.writeText(showToken).then(() => {
         setCopiedToken(true)
         setTimeout(() => setCopiedToken(false), 2000)
       }).catch(() => {
-        addToast('Failed to copy to clipboard', 'error')
+        fallbackCopyToken(showToken)
       })
+    } else {
+      fallbackCopyToken(showToken)
     }
+  }
+
+  function fallbackCopyToken(text: string) {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.style.position = 'fixed'
+    textarea.style.opacity = '0'
+    document.body.appendChild(textarea)
+    textarea.select()
+    try {
+      document.execCommand('copy')
+      setCopiedToken(true)
+      setTimeout(() => setCopiedToken(false), 2000)
+    } catch {
+      addToast('Failed to copy to clipboard', 'error')
+    }
+    document.body.removeChild(textarea)
   }
 
   function formatLastSeen(lastSeen: string | null): string {

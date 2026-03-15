@@ -250,7 +250,7 @@ export default function GroupsPage() {
             {t('groups.system')}
           </Badge>
         ) : (
-          <Badge variant="default">{t('groups.custom')}</Badge>
+          <Badge variant="online">{t('groups.userCreated')}</Badge>
         ),
     },
     {

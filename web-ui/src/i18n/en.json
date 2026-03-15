@@ -11,6 +11,7 @@
     "groups": "Groups",
     "compliance": "Compliance",
     "ztna": "Zero Trust",
+    "tenants": "Tenants",
     "docs": "Docs",
     "settings": "Settings"
   },
@@ -104,6 +105,7 @@
     "removing": "Removing...",
     "failedToLoad": "Failed to load groups",
     "custom": "Custom",
+    "userCreated": "User-created",
     "descriptionPlaceholder": "Group description",
     "allowedIpsHint": "Comma-separated CIDR notation, e.g. 10.0.0.0/24",
     "network": "Network",
@@ -132,6 +134,8 @@
     "wireguardPubkey": "WireGuard Public Key",
     "selectUser": "Select a user...",
     "user": "User",
+    "network": "Network",
+    "selectNetwork": "Select a network...",
     "copy": "Copy",
     "downloadConf": "Download .conf",
     "sendToEmail": "Send config to email",
@@ -385,7 +389,10 @@
     "noDNSRules": "No DNS rules configured",
     "dnsRuleCreated": "DNS rule created",
     "dnsRuleDeleted": "DNS rule deleted",
-    "confirmDeleteDNS": "Are you sure you want to delete this DNS rule?"
+    "confirmDeleteDNS": "Are you sure you want to delete this DNS rule?",
+    "networks": "Networks",
+    "networksHint": "Leave empty to apply to all networks",
+    "network": "Network"
   },
   "settings": {
     "title": "Settings",
@@ -471,7 +478,27 @@
     "disabling": "Disabling...",
     "testing": "Testing...",
     "unnamedKey": "Unnamed key",
-    "loadingSettings": "Loading settings..."
+    "loadingSettings": "Loading settings...",
+    "smtpUsername": "SMTP Username",
+    "smtpPassword": "SMTP Password",
+    "smtpEncryption": "Encryption",
+    "smtpFromName": "Sender Name",
+    "encNone": "None (not recommended)",
+    "eventAll": "All events",
+    "eventUserCreated": "User created",
+    "eventUserUpdated": "User updated",
+    "eventUserDeleted": "User deleted",
+    "eventDeviceCreated": "Device created",
+    "eventDeviceApproved": "Device approved",
+    "eventDeviceRevoked": "Device revoked",
+    "eventDeviceDeleted": "Device deleted",
+    "eventNetworkCreated": "Network created",
+    "eventNetworkUpdated": "Network updated",
+    "eventGatewayConnected": "Gateway connected",
+    "eventGatewayDisconnected": "Gateway disconnected",
+    "eventAuthLogin": "User login",
+    "eventAuthLogout": "User logout",
+    "eventMfaFailed": "MFA verification failed"
   },
   "common": {
     "create": "Create",
@@ -492,6 +519,8 @@
     "connected": "Connected",
     "connect": "Connect",
     "copy": "Copy",
+    "copied": "Copied",
+    "copyFailed": "Failed to copy",
     "status": "Status",
     "created": "Created",
     "test": "Test",
@@ -820,6 +849,23 @@
       }
     },
 
+    "vpnClient": {
+      "title": "VPN Client",
+      "content": "Outpost supports two ways to connect: the native Outpost Client and standard WireGuard clients. The choice depends on your security requirements.",
+      "outpostClient": {
+        "title": "Outpost Client (Recommended)",
+        "content": "The Outpost Client is our dedicated VPN client with full feature support:\n\n• **2FA/MFA integration** — authenticates directly with the Outpost server, handles TOTP/WebAuthn challenges\n• **Automatic key rotation** — keys are rotated transparently without reconnection\n• **Device posture reporting** — sends OS version, disk encryption, antivirus status for ZTNA scoring\n• **Auto-reconnect** — handles network changes and sleep/wake cycles\n• **Multi-network support** — connect to multiple VPN networks simultaneously\n\nInstallation:\n```bash\n# Linux\ncurl -fsSL https://get.outpost.vpn | sh\n\n# macOS\nbrew install outpost-vpn/tap/outpost-client\n\n# Windows\nwinget install OutpostVPN.Client\n```\n\nUsage:\n```bash\noutpost-client login --server https://vpn.company.com\noutpost-client connect\noutpost-client status\noutpost-client disconnect\n```"
+      },
+      "wireguardNative": {
+        "title": "Standard WireGuard Client",
+        "content": "You can use any standard WireGuard client (wg-quick, WireGuard app for iOS/Android/Windows/macOS) with generated .conf files.\n\n**Limitations when using standard WireGuard:**\n• No 2FA/MFA support — if MFA is enabled, the standard client **will not work**\n• No automatic key rotation\n• No device posture reporting (ZTNA features unavailable)\n• No auto-reconnect on session expiry\n• Works for basic VPN access without MFA\n\nTo use:\n1. Download the .conf file from the Devices page\n2. Import it into your WireGuard client\n3. Connect\n\n```bash\n# Linux example\nsudo wg-quick up ./wg-outpost.conf\n```"
+      },
+      "mfa2fa": {
+        "title": "2FA/MFA and VPN Clients",
+        "content": "**Important:** When 2FA/MFA is enabled for a user, only the Outpost Client can be used to connect.\n\nHow it works:\n1. User initiates connection via Outpost Client\n2. Client authenticates with username/password\n3. Server requests 2FA code (TOTP, WebAuthn, or backup code)\n4. Client prompts user for the code and sends it\n5. Server issues a time-limited session token\n6. WireGuard peer is added to the gateway\n7. When the session expires, the peer is **automatically removed** from the gateway — traffic stops instantly\n\nThis is the **WireGuard Protocol-Level MFA** feature: the peer is physically removed from the WireGuard interface on session expiry, providing true zero-trust enforcement.\n\nStandard WireGuard clients cannot perform this authentication flow, so they will fail to connect when MFA is required.\n\n**Recommendation:** If you require MFA (recommended for security), deploy the Outpost Client to all users. Use standard WireGuard only for service accounts or environments where MFA is not required."
+      }
+    },
+
     "troubleshooting": {
       "title": "Troubleshooting",
       "commonErrors": {
@@ -871,5 +917,25 @@
     "tenantUpdated": "Tenant updated",
     "tenantDeactivated": "Tenant deactivated",
     "failedToLoad": "Failed to load tenants"
+  },
+  "notifications": {
+    "title": "Notifications",
+    "empty": "No notifications yet",
+    "markAllRead": "Mark all as read",
+    "showingRecent": "Showing last {{count}} events",
+    "justNow": "Just now",
+    "minutesAgo": "{{count}}m ago",
+    "hoursAgo": "{{count}}h ago",
+    "daysAgo": "{{count}}d ago",
+    "created": "Created",
+    "updated": "Updated",
+    "deleted": "Deleted",
+    "deviceApproved": "Device approved",
+    "deviceRevoked": "Device revoked",
+    "userLoggedIn": "User logged in",
+    "userLoggedOut": "User logged out",
+    "mfaFailed": "MFA verification failed",
+    "gatewayConnected": "Gateway connected",
+    "gatewayDisconnected": "Gateway disconnected"
   }
 }

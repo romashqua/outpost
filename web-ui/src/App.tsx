@@ -24,6 +24,12 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+function AdminRoute({ children }: { children: React.ReactNode }) {
+  const role = useAuthStore((s) => s.user?.role)
+  if (role !== 'admin') return <Navigate to="/" replace />
+  return <>{children}</>
+}
+
 export default function App() {
   return (
     <>
@@ -37,17 +43,17 @@ export default function App() {
             <Layout>
               <Routes>
                 <Route path="/" element={<DashboardPage />} />
-                <Route path="/users" element={<UsersPage />} />
-                <Route path="/groups" element={<GroupsPage />} />
-                <Route path="/networks" element={<NetworksPage />} />
+                <Route path="/users" element={<AdminRoute><UsersPage /></AdminRoute>} />
+                <Route path="/groups" element={<AdminRoute><GroupsPage /></AdminRoute>} />
+                <Route path="/networks" element={<AdminRoute><NetworksPage /></AdminRoute>} />
                 <Route path="/devices" element={<DevicesPage />} />
-                <Route path="/gateways" element={<GatewaysPage />} />
-                <Route path="/s2s" element={<S2SPage />} />
-                <Route path="/smart-routes" element={<SmartRoutesPage />} />
-                <Route path="/analytics" element={<AnalyticsPage />} />
-                <Route path="/compliance" element={<CompliancePage />} />
-                <Route path="/ztna" element={<ZTNAPage />} />
-                <Route path="/tenants" element={<TenantsPage />} />
+                <Route path="/gateways" element={<AdminRoute><GatewaysPage /></AdminRoute>} />
+                <Route path="/s2s" element={<AdminRoute><S2SPage /></AdminRoute>} />
+                <Route path="/smart-routes" element={<AdminRoute><SmartRoutesPage /></AdminRoute>} />
+                <Route path="/analytics" element={<AdminRoute><AnalyticsPage /></AdminRoute>} />
+                <Route path="/compliance" element={<AdminRoute><CompliancePage /></AdminRoute>} />
+                <Route path="/ztna" element={<AdminRoute><ZTNAPage /></AdminRoute>} />
+                <Route path="/tenants" element={<AdminRoute><TenantsPage /></AdminRoute>} />
                 <Route path="/docs" element={<DocsPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
               </Routes>

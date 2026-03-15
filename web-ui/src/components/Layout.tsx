@@ -16,25 +16,27 @@ import {
   BookOpen,
   Settings,
   LogOut,
+  Building2,
   Globe,
-  Bell,
 } from 'lucide-react'
 import { useAuthStore } from '@/store/auth'
+import NotificationDropdown from '@/components/NotificationDropdown'
 
 const navItems = [
-  { to: '/', icon: LayoutDashboard, labelKey: 'nav.dashboard' },
-  { to: '/users', icon: Users, labelKey: 'nav.users' },
-  { to: '/groups', icon: UsersRound, labelKey: 'nav.groups' },
-  { to: '/devices', icon: Laptop2, labelKey: 'nav.devices' },
-  { to: '/networks', icon: Network, labelKey: 'nav.networks' },
-  { to: '/gateways', icon: Server, labelKey: 'nav.gateways' },
-  { to: '/s2s', icon: Cable, labelKey: 'nav.s2s' },
-  { to: '/smart-routes', icon: Route, labelKey: 'nav.smartRoutes' },
-  { to: '/analytics', icon: BarChart3, labelKey: 'nav.analytics' },
-  { to: '/compliance', icon: ShieldCheck, labelKey: 'nav.compliance' },
-  { to: '/ztna', icon: Shield, labelKey: 'nav.ztna' },
-  { to: '/docs', icon: BookOpen, labelKey: 'nav.docs' },
-  { to: '/settings', icon: Settings, labelKey: 'nav.settings' },
+  { to: '/', icon: LayoutDashboard, labelKey: 'nav.dashboard', adminOnly: false },
+  { to: '/users', icon: Users, labelKey: 'nav.users', adminOnly: true },
+  { to: '/groups', icon: UsersRound, labelKey: 'nav.groups', adminOnly: true },
+  { to: '/devices', icon: Laptop2, labelKey: 'nav.devices', adminOnly: false },
+  { to: '/networks', icon: Network, labelKey: 'nav.networks', adminOnly: true },
+  { to: '/gateways', icon: Server, labelKey: 'nav.gateways', adminOnly: true },
+  { to: '/s2s', icon: Cable, labelKey: 'nav.s2s', adminOnly: true },
+  { to: '/smart-routes', icon: Route, labelKey: 'nav.smartRoutes', adminOnly: true },
+  { to: '/analytics', icon: BarChart3, labelKey: 'nav.analytics', adminOnly: true },
+  { to: '/compliance', icon: ShieldCheck, labelKey: 'nav.compliance', adminOnly: true },
+  { to: '/ztna', icon: Shield, labelKey: 'nav.ztna', adminOnly: true },
+  { to: '/tenants', icon: Building2, labelKey: 'nav.tenants', adminOnly: true },
+  { to: '/docs', icon: BookOpen, labelKey: 'nav.docs', adminOnly: false },
+  { to: '/settings', icon: Settings, labelKey: 'nav.settings', adminOnly: false },
 ]
 
 export default function Layout({ children }: { children: React.ReactNode }) {
@@ -74,7 +76,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 
         {/* Navigation */}
         <nav className="flex-1 overflow-y-auto py-3 px-2">
-          {navItems.map((item) => (
+          {navItems.filter((item) => !item.adminOnly || user?.role === 'admin').map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
@@ -126,10 +128,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
             <Globe size={14} />
             {i18n.language.toUpperCase()}
           </button>
-          <button className="relative rounded-md p-2 text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer">
-            <Bell size={16} />
-            <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-[var(--accent)]" />
-          </button>
+          <NotificationDropdown />
         </header>
 
         {/* Content */}

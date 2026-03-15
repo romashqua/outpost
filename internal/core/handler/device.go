@@ -92,6 +92,7 @@ type createDeviceRequest struct {
 	Name            string `json:"name"`
 	WireguardPubkey string `json:"wireguard_pubkey"`
 	UserID          string `json:"user_id"`
+	NetworkID       string `json:"network_id"`
 }
 
 type enrollRequest struct {
@@ -311,12 +312,22 @@ func (h *DeviceHandler) create(w http.ResponseWriter, r *http.Request) {
 	// Atomically allocate the next available IP and insert the device.
 	// Uses a CTE that finds the first unused IP in the network range,
 	// with a retry loop to handle concurrent inserts racing for the same IP.
+	// If network_id is specified, use that network; otherwise pick the first active one.
 	const maxRetries = 5
 	var d deviceResponse
+
+	netQuery := `SELECT id, address FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1`
+	args := []any{userID, req.Name, req.WireguardPubkey, ptrOrNil(generatedPrivKey)}
+
+	if req.NetworkID != "" {
+		netQuery = `SELECT id, address FROM networks WHERE id = $5 AND is_active = true LIMIT 1`
+		args = append(args, req.NetworkID)
+	}
+
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		err = h.pool.QueryRow(r.Context(),
 			`WITH net AS (
-				SELECT id, address FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1
+				`+netQuery+`
 			),
 			candidate AS (
 				SELECT host(network(net.address) + s.off)::inet AS ip, net.id AS net_id
@@ -330,7 +341,7 @@ func (h *DeviceHandler) create(w http.ResponseWriter, r *http.Request) {
 			SELECT $1, $2, $3, $4, candidate.ip, candidate.net_id
 			FROM candidate
 			RETURNING id, user_id, name, wireguard_pubkey, host(assigned_ip), is_approved, last_handshake, created_at, updated_at`,
-			userID, req.Name, req.WireguardPubkey, ptrOrNil(generatedPrivKey),
+			args...,
 		).Scan(&d.ID, &d.UserID, &d.Name, &d.WireguardPubkey,
 			&d.AssignedIP, &d.IsApproved, &d.LastHandshake, &d.CreatedAt, &d.UpdatedAt)
 		if err == nil {

@@ -206,6 +206,16 @@ const docSections: DocSection[] = [
       { id: 'gateway-connectivity', titleKey: 'docs.troubleshooting.gatewayConnectivity.title', contentKey: 'docs.troubleshooting.gatewayConnectivity.content' },
     ],
   },
+  {
+    id: 'vpn-client',
+    icon: Laptop2,
+    titleKey: 'docs.vpnClient.title',
+    subsections: [
+      { id: 'outpost-client', titleKey: 'docs.vpnClient.outpostClient.title', contentKey: 'docs.vpnClient.outpostClient.content' },
+      { id: 'wireguard-native', titleKey: 'docs.vpnClient.wireguardNative.title', contentKey: 'docs.vpnClient.wireguardNative.content' },
+      { id: 'mfa-2fa-clients', titleKey: 'docs.vpnClient.mfa2fa.title', contentKey: 'docs.vpnClient.mfa2fa.content' },
+    ],
+  },
 ]
 
 /* ------------------------------------------------------------------ */

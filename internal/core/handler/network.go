@@ -37,6 +37,7 @@ func NewNetworkHandler(pool *pgxpool.Pool, logger ...*slog.Logger) *NetworkHandl
 func (h *NetworkHandler) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Get("/", h.list)
+	r.Get("/my", h.listMy)
 	r.With(auth.RequireAdmin).Post("/", h.create)
 	r.Route("/{id}", func(r chi.Router) {
 		r.Get("/", h.get)
@@ -127,6 +128,57 @@ func (h *NetworkHandler) list(w http.ResponseWriter, r *http.Request) {
 		"total":    total,
 		"page":     page,
 		"per_page": perPage,
+	})
+}
+
+// @Summary List my networks
+// @Description Returns networks accessible to the current user through their group memberships (via network_acls).
+// @Tags Networks
+// @Produce json
+// @Success 200 {object} map[string]any
+// @Failure 401 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /networks/my [get]
+func (h *NetworkHandler) listMy(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	rows, err := h.pool.Query(r.Context(),
+		`SELECT DISTINCT n.id, n.name, n.address::text, n.dns, n.port, n.keepalive, n.is_active, n.created_at, n.updated_at
+		 FROM networks n
+		 JOIN network_acls a ON a.network_id = n.id
+		 JOIN user_groups ug ON ug.group_id = a.group_id
+		 WHERE ug.user_id = $1 AND n.is_active = true
+		 ORDER BY n.created_at DESC`, claims.UserID)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to query networks")
+		return
+	}
+	defer rows.Close()
+
+	networks := make([]networkResponse, 0)
+	for rows.Next() {
+		var n networkResponse
+		if err := rows.Scan(&n.ID, &n.Name, &n.Address, &n.DNS, &n.Port,
+			&n.Keepalive, &n.IsActive, &n.CreatedAt, &n.UpdatedAt); err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to scan network")
+			return
+		}
+		networks = append(networks, n)
+	}
+
+	if err := rows.Err(); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to iterate networks")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{
+		"networks": networks,
+		"total":    len(networks),
 	})
 }
 

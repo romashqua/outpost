@@ -65,6 +65,10 @@ interface SettingsData {
   smtpHost: string
   smtpPort: string
   smtpFrom: string
+  smtpFromName: string
+  smtpUsername: string
+  smtpPassword: string
+  smtpEncryption: string
 }
 
 const defaultSettings: SettingsData = {
@@ -93,6 +97,10 @@ const defaultSettings: SettingsData = {
   smtpHost: '',
   smtpPort: '587',
   smtpFrom: '',
+  smtpFromName: '',
+  smtpUsername: '',
+  smtpPassword: '',
+  smtpEncryption: 'starttls',
 }
 
 function str(v: unknown): string {
@@ -127,6 +135,10 @@ function parseSettingsFromApi(data: Record<string, unknown>): SettingsData {
     smtpHost: str(data['smtpHost']),
     smtpPort: str(data['smtpPort']) || defaultSettings.smtpPort,
     smtpFrom: str(data['smtpFrom']),
+    smtpFromName: str(data['smtpFromName']),
+    smtpUsername: str(data['smtpUsername']),
+    smtpPassword: str(data['smtpPassword']),
+    smtpEncryption: str(data['smtpEncryption']) || defaultSettings.smtpEncryption,
   }
 }
 
@@ -157,6 +169,10 @@ function settingsToPayload(data: SettingsData): Record<string, string> {
     smtpHost: data.smtpHost,
     smtpPort: data.smtpPort,
     smtpFrom: data.smtpFrom,
+    smtpFromName: data.smtpFromName,
+    smtpUsername: data.smtpUsername,
+    smtpPassword: data.smtpPassword,
+    smtpEncryption: data.smtpEncryption,
   }
 }
 
@@ -185,8 +201,26 @@ function IntegrationsTab() {
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [formUrl, setFormUrl] = useState('')
   const [formSecret, setFormSecret] = useState('')
-  const [formEvents, setFormEvents] = useState('*')
+  const [formEvents, setFormEvents] = useState<string[]>(['*'])
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null)
+
+  const availableEvents = [
+    { value: '*', labelKey: 'settings.eventAll' },
+    { value: 'user.created', labelKey: 'settings.eventUserCreated' },
+    { value: 'user.updated', labelKey: 'settings.eventUserUpdated' },
+    { value: 'user.deleted', labelKey: 'settings.eventUserDeleted' },
+    { value: 'device.created', labelKey: 'settings.eventDeviceCreated' },
+    { value: 'device.approved', labelKey: 'settings.eventDeviceApproved' },
+    { value: 'device.revoked', labelKey: 'settings.eventDeviceRevoked' },
+    { value: 'device.deleted', labelKey: 'settings.eventDeviceDeleted' },
+    { value: 'network.created', labelKey: 'settings.eventNetworkCreated' },
+    { value: 'network.updated', labelKey: 'settings.eventNetworkUpdated' },
+    { value: 'gateway.connected', labelKey: 'settings.eventGatewayConnected' },
+    { value: 'gateway.disconnected', labelKey: 'settings.eventGatewayDisconnected' },
+    { value: 'auth.login', labelKey: 'settings.eventAuthLogin' },
+    { value: 'auth.logout', labelKey: 'settings.eventAuthLogout' },
+    { value: 'auth.mfa_failed', labelKey: 'settings.eventMfaFailed' },
+  ]
 
   const { data: webhooks = [], isLoading } = useQuery<WebhookSubscription[]>({
     queryKey: ['webhooks'],
@@ -224,14 +258,28 @@ function IntegrationsTab() {
   function resetForm() {
     setFormUrl('')
     setFormSecret('')
-    setFormEvents('*')
+    setFormEvents(['*'])
     setSelectedTemplate(null)
+  }
+
+  function toggleEvent(value: string) {
+    if (value === '*') {
+      setFormEvents(['*'])
+      return
+    }
+    setFormEvents((prev) => {
+      const without = prev.filter((e) => e !== '*')
+      if (without.includes(value)) {
+        const result = without.filter((e) => e !== value)
+        return result.length === 0 ? ['*'] : result
+      }
+      return [...without, value]
+    })
   }
 
   function handleAddSubmit(e: React.FormEvent) {
     e.preventDefault()
-    const events = formEvents.split(',').map((s) => s.trim()).filter(Boolean)
-    createMutation.mutate({ url: formUrl, secret: formSecret || 'auto', events })
+    createMutation.mutate({ url: formUrl, secret: formSecret || 'auto', events: formEvents })
   }
 
   return (
@@ -257,7 +305,7 @@ function IntegrationsTab() {
               setSelectedTemplate(tmpl.name)
               setFormUrl('')
               setFormSecret('')
-              setFormEvents('*')
+              setFormEvents(['*'])
               createMutation.reset()
               setShowAddModal(true)
             }}
@@ -334,12 +382,26 @@ function IntegrationsTab() {
             value={formSecret}
             onChange={(e) => setFormSecret(e.target.value)}
           />
-          <Input
-            label={t('settings.events')}
-            placeholder="*, user.created, device.approved"
-            value={formEvents}
-            onChange={(e) => setFormEvents(e.target.value)}
-          />
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
+              {t('settings.events')}
+            </label>
+            <div className="flex flex-col gap-1 max-h-48 overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-2">
+              {availableEvents.map((evt) => (
+                <label key={evt.value} className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer px-1 py-0.5 hover:bg-[var(--bg-tertiary)] rounded">
+                  <input
+                    type="checkbox"
+                    checked={formEvents.includes(evt.value) || (evt.value !== '*' && formEvents.includes('*'))}
+                    disabled={evt.value !== '*' && formEvents.includes('*')}
+                    onChange={() => toggleEvent(evt.value)}
+                    className="rounded border-[var(--border)]"
+                  />
+                  <code className="text-xs font-mono text-[var(--accent)]">{evt.value}</code>
+                  <span className="text-xs text-[var(--text-muted)]">— {t(evt.labelKey)}</span>
+                </label>
+              ))}
+            </div>
+          </div>
           {createMutation.error && (
             <p className="text-sm text-[var(--danger)]">{(createMutation.error as Error).message}</p>
           )}
@@ -773,24 +835,64 @@ export default function SettingsPage() {
 
           {activeTab === 'smtp' && (
             <form className="flex flex-col gap-5 max-w-lg" onSubmit={handleSave}>
+              <div className="grid grid-cols-2 gap-4">
+                <Input
+                  label={t('settings.smtpHost')}
+                  placeholder="smtp.corp.ru"
+                  value={settings.smtpHost}
+                  onChange={(e) => update('smtpHost', e.target.value)}
+                  required
+                />
+                <Input
+                  label={t('settings.smtpPort')}
+                  value={settings.smtpPort}
+                  onChange={(e) => update('smtpPort', e.target.value)}
+                  type="number"
+                  required
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
+                  {t('settings.smtpEncryption')}
+                </label>
+                <select
+                  className="w-full rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-sm text-[var(--text-primary)] font-mono glow-focus transition-all duration-150"
+                  value={settings.smtpEncryption}
+                  onChange={(e) => update('smtpEncryption', e.target.value)}
+                >
+                  <option value="none">{t('settings.encNone')}</option>
+                  <option value="starttls">STARTTLS (587)</option>
+                  <option value="ssl">SSL/TLS (465)</option>
+                </select>
+              </div>
               <Input
-                label={t('settings.smtpHost')}
-                placeholder="smtp.corp.ru"
-                value={settings.smtpHost}
-                onChange={(e) => update('smtpHost', e.target.value)}
+                label={t('settings.smtpUsername')}
+                placeholder="user@corp.ru"
+                value={settings.smtpUsername}
+                onChange={(e) => update('smtpUsername', e.target.value)}
               />
               <Input
-                label={t('settings.smtpPort')}
-                value={settings.smtpPort}
-                onChange={(e) => update('smtpPort', e.target.value)}
-                type="number"
+                label={t('settings.smtpPassword')}
+                type="password"
+                placeholder="••••••••"
+                value={settings.smtpPassword}
+                onChange={(e) => update('smtpPassword', e.target.value)}
               />
-              <Input
-                label={t('settings.smtpFrom')}
-                placeholder="noreply@outpost.local"
-                value={settings.smtpFrom}
-                onChange={(e) => update('smtpFrom', e.target.value)}
-              />
+              <div className="grid grid-cols-2 gap-4">
+                <Input
+                  label={t('settings.smtpFrom')}
+                  placeholder="noreply@outpost.local"
+                  value={settings.smtpFrom}
+                  onChange={(e) => update('smtpFrom', e.target.value)}
+                  required
+                />
+                <Input
+                  label={t('settings.smtpFromName')}
+                  placeholder="Outpost VPN"
+                  value={settings.smtpFromName}
+                  onChange={(e) => update('smtpFromName', e.target.value)}
+                />
+              </div>
               <div className="flex gap-3 mt-2">
                 <Button type="submit" disabled={saveMutation.isPending}>
                   {saveMutation.isPending ? t('settings.saving') : t('settings.save')}
