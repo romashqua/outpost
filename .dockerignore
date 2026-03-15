@@ -78,5 +78,6 @@ tmp/
 # Docker overrides
 docker-compose.override.yml
 
-# Docs (not needed in build)
+# Docs (not needed in build, except embedded OpenAPI spec)
 docs/
+!docs/openapi.yaml
