@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -60,7 +61,8 @@ func (h *MailHandler) testSMTP(w http.ResponseWriter, r *http.Request) {
 		"Outpost VPN - SMTP Test",
 		"<h1>SMTP Configuration Test</h1><p>If you are reading this, your SMTP settings are working correctly.</p>")
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to send test email: "+err.Error())
+		slog.Error("SMTP test email failed", "to", body.To, "error", err)
+		respondError(w, http.StatusInternalServerError, "failed to send test email")
 		return
 	}
 

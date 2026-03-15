@@ -1,0 +1,82 @@
+# Git
+.git/
+.gitignore
+
+# IDE
+.idea/
+.vscode/
+.vs/
+*.swp
+*.swo
+*~
+*.sublime-*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment / Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+
+# Frontend build artifacts (rebuilt in Docker)
+web-ui/node_modules/
+web-ui/dist/
+web-ui/.vite/
+
+# Test / Coverage
+*.test
+*.out
+coverage.txt
+coverage.html
+*.prof
+
+# Binaries
+/bin/
+outpost-core
+outpost-gateway
+outpost-proxy
+outpost-client
+outpostctl
+outpost-*-*
+
+# Go
+vendor/
+go.work
+go.work.sum
+
+# Terraform / Helm artifacts
+.terraform/
+*.tfstate
+*.tfstate.backup
+deploy/helm/outpost/charts/
+deploy/helm/outpost/*.tgz
+
+# Claude / AI
+CLAUDE.md
+.claude/
+.claude-*
+claude.md
+.cursorrules
+.cursor/
+.aider*
+.continue/
+.copilot/
+.github/copilot/
+
+# Logs / Temp
+*.log
+tmp/
+.tmp/
+
+# Docker overrides
+docker-compose.override.yml
+
+# Docs (not needed in build)
+docs/

@@ -1,13 +1,12 @@
 -- Seed default admin user (password: admin)
 -- IMPORTANT: Change the password after first login!
-INSERT INTO users (username, email, password_hash, first_name, last_name, is_active, is_admin, password_must_change)
+INSERT INTO users (username, email, password_hash, first_name, last_name, is_active, is_admin)
 VALUES (
     'admin',
     'admin@outpost.local',
     crypt('admin', gen_salt('bf')),
     'Admin',
     'User',
-    true,
     true,
     true
 ) ON CONFLICT (username) DO NOTHING;

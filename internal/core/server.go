@@ -140,13 +140,14 @@ func rateLimitMiddleware(rl *ipRateLimiter) func(http.Handler) http.Handler {
 }
 
 type Server struct {
-	cfg        *config.Config
-	pool       *pgxpool.Pool
-	mailer     *mail.Mailer
-	httpServer *http.Server
-	grpcServer *grpc.Server
-	logger     *slog.Logger
-	streamHub  *StreamHub
+	cfg             *config.Config
+	pool            *pgxpool.Pool
+	mailer          *mail.Mailer
+	httpServer      *http.Server
+	grpcServer      *grpc.Server
+	logger          *slog.Logger
+	streamHub       *StreamHub
+	authRateLimiter *ipRateLimiter
 }
 
 func NewServer(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) *Server {
@@ -236,6 +237,11 @@ func (s *Server) Start(ctx context.Context) error {
 func (s *Server) Shutdown() error {
 	s.logger.Info("shutting down servers")
 
+	// Stop rate limiter cleanup goroutine.
+	if s.authRateLimiter != nil {
+		close(s.authRateLimiter.stop)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
@@ -308,6 +314,7 @@ func (s *Server) setupHTTPRouter() chi.Router {
 	r.Route("/api/v1", func(r chi.Router) {
 		// Auth endpoints (no JWT required) — rate limited to 10 req/min per IP.
 		authRateLimiter := newIPRateLimiter(10, time.Minute)
+		s.authRateLimiter = authRateLimiter
 		tokenBlacklist := auth.NewDBTokenBlacklist(s.pool)
 		authHandler := handler.NewAuthHandler(s.pool, s.cfg.Auth.JWTSecret, handler.WithTokenBlacklist(tokenBlacklist))
 		r.With(rateLimitMiddleware(authRateLimiter)).Mount("/auth", authHandler.Routes())
@@ -357,8 +364,10 @@ func (s *Server) setupHTTPRouter() chi.Router {
 			// Settings management.
 			r.Mount("/settings", handler.NewSettingsHandler(s.pool, s.mailer).Routes())
 
-			// Mail test endpoint.
-			r.Mount("/mail", handler.NewMailHandler(s.mailer).Routes())
+			// Mail endpoints.
+			if s.mailer != nil {
+				r.Mount("/mail", handler.NewMailHandler(s.mailer).Routes())
+			}
 
 			// Smart routing (selective proxy bypass).
 			r.Mount("/smart-routes", handler.NewSmartRouteHandler(s.pool).Routes())

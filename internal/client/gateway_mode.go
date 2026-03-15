@@ -190,11 +190,6 @@ func (g *GatewayMode) fetchS2SConfig(ctx context.Context) (*s2sConfigResponse, e
 	if err != nil {
 		return nil, fmt.Errorf("generate private key: %w", err)
 	}
-	pubKey, err := wireguard.PublicKey(privKey)
-	if err != nil {
-		return nil, fmt.Errorf("derive public key: %w", err)
-	}
-
 	// Save private key.
 	keyPath := filepath.Join(g.configDir, "s2s_private.key")
 	if err := os.MkdirAll(g.configDir, 0700); err != nil {
@@ -204,19 +199,14 @@ func (g *GatewayMode) fetchS2SConfig(ctx context.Context) (*s2sConfigResponse, e
 		return nil, fmt.Errorf("save private key: %w", err)
 	}
 
-	// Register with server — POST /api/v1/s2s-tunnels/{id}/register-client
-	reqBody, err := json.Marshal(map[string]string{
-		"public_key": pubKey,
-		"hostname":   g.hostname(),
-	})
+	// Fetch the S2S tunnel config using the existing config endpoint.
+	// NOTE: The /register-client endpoint does not exist yet.
+	// Use the documented config endpoint instead.
+	resp, err := g.client.doRequest(ctx, "GET",
+		fmt.Sprintf("/api/v1/s2s-tunnels/%s/config/%s", g.tunnelID, g.hostname()), nil, true)
 	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
-
-	resp, err := g.client.doRequest(ctx, "POST",
-		fmt.Sprintf("/api/v1/s2s-tunnels/%s/register-client", g.tunnelID), reqBody, true)
-	if err != nil {
-		return nil, err
+		g.logger.Warn("S2S config endpoint not available, skipping registration", "error", err)
+		return nil, fmt.Errorf("fetch S2S config: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -259,30 +249,10 @@ func (g *GatewayMode) buildWireGuardConfig(config *s2sConfigResponse) (string, e
 	return wireguard.RenderConfig(iface), nil
 }
 
-func (g *GatewayMode) reportHealth(ctx context.Context) {
-	g.mu.RLock()
-	gid := g.gatewayID
-	g.mu.RUnlock()
-
-	reqBody, err := json.Marshal(map[string]any{
-		"gateway_id": gid,
-		"status":     "healthy",
-		"hostname":   g.hostname(),
-		"os":         runtime.GOOS,
-		"arch":       runtime.GOARCH,
-	})
-	if err != nil {
-		g.logger.Warn("failed to marshal health report", "error", err)
-		return
-	}
-
-	resp, err := g.client.doRequest(ctx, "POST",
-		fmt.Sprintf("/api/v1/s2s-tunnels/%s/health", g.tunnelID), reqBody, true)
-	if err != nil {
-		g.logger.Warn("failed to report health", "error", err)
-		return
-	}
-	resp.Body.Close()
+func (g *GatewayMode) reportHealth(_ context.Context) {
+	// The /health endpoint for S2S tunnels does not exist yet.
+	// Log at debug level and skip the call to avoid noisy errors.
+	g.logger.Debug("skipping S2S health report: endpoint not implemented yet")
 }
 
 func (g *GatewayMode) hostname() string {

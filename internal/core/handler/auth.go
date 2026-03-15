@@ -122,17 +122,18 @@ func (h *AuthHandler) login(w http.ResponseWriter, r *http.Request) {
 		isAdmin            bool
 		isActive           bool
 		passwordMustChange bool
+		mfaEnabled         bool
 		failedAttempts     int
 		lockedUntil        *time.Time
 	)
 
 	err := h.pool.QueryRow(r.Context(),
 		`SELECT id, username, email, password_hash, is_admin, is_active, password_must_change,
-		        failed_login_attempts, locked_until
+		        mfa_enabled, failed_login_attempts, locked_until
 		 FROM users WHERE username = $1`,
 		req.Username,
 	).Scan(&userID, &username, &email, &passwordHash, &isAdmin, &isActive, &passwordMustChange,
-		&failedAttempts, &lockedUntil)
+		&mfaEnabled, &failedAttempts, &lockedUntil)
 
 	if err != nil {
 		// Constant-time: always run bcrypt to prevent timing-based user enumeration.
@@ -176,15 +177,6 @@ func (h *AuthHandler) login(w http.ResponseWriter, r *http.Request) {
 		_, _ = h.pool.Exec(r.Context(),
 			`UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1`,
 			userID)
-	}
-
-	// Check if user has MFA enabled.
-	var mfaEnabled bool
-	if err := h.pool.QueryRow(r.Context(),
-		`SELECT mfa_enabled FROM users WHERE id = $1`, userID,
-	).Scan(&mfaEnabled); err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to check MFA status")
-		return
 	}
 
 	if mfaEnabled {

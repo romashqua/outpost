@@ -80,16 +80,14 @@ func (s *gatewayService) GetConfig(ctx context.Context, req *gatewayv1.ConfigReq
 	}, nil
 }
 
-// fetchPeers returns all approved device peers for a gateway's network.
-func (s *gatewayService) fetchPeers(ctx context.Context, gatewayID string) ([]*commonv1.Peer, error) {
+// fetchPeers returns all approved device peers.
+// Currently returns all approved devices since the data model does not
+// associate devices with specific networks (all devices are on the default network).
+func (s *gatewayService) fetchPeers(ctx context.Context, _ string) ([]*commonv1.Peer, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT d.wireguard_pubkey, host(d.assigned_ip) || '/32'
-		 FROM devices d
-		 JOIN gateways g ON g.network_id = (
-		   SELECT network_id FROM gateways WHERE id::text = $1
-		 )
-		 WHERE d.is_approved = true AND d.wireguard_pubkey != ''`,
-		gatewayID,
+		`SELECT wireguard_pubkey, host(assigned_ip) || '/32'
+		 FROM devices
+		 WHERE is_approved = true AND wireguard_pubkey != ''`,
 	)
 	if err != nil {
 		return nil, err
@@ -201,9 +199,8 @@ func (s *gatewayService) handlePeerStats(ctx context.Context, gatewayID string, 
 		}
 		_, err := s.pool.Exec(ctx,
 			`UPDATE devices SET last_handshake = $1
-			 WHERE wireguard_pubkey = $2
-			   AND network_id = (SELECT network_id FROM gateways WHERE id::text = $3)`,
-			ht, ps.GetPublicKey(), gatewayID,
+			 WHERE wireguard_pubkey = $2`,
+			ht, ps.GetPublicKey(),
 		)
 		if err != nil {
 			s.logger.Warn("failed to update last_handshake", "pubkey", ps.GetPublicKey(), "error", err)
@@ -217,8 +214,10 @@ func (s *gatewayService) Heartbeat(ctx context.Context, req *gatewayv1.Heartbeat
 
 	// Update gateway last_seen.
 	if gwID != "" {
-		_, _ = s.pool.Exec(ctx,
-			`UPDATE gateways SET last_seen = now() WHERE id::text = $1`, gwID)
+		if _, err := s.pool.Exec(ctx,
+			`UPDATE gateways SET last_seen = now() WHERE id::text = $1`, gwID); err != nil {
+			s.logger.Error("failed to update gateway last_seen", "gateway_id", gwID, "error", err)
+		}
 	}
 
 	return &emptypb.Empty{}, nil

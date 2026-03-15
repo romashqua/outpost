@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -810,6 +811,10 @@ func (h *SmartRouteHandler) addRouteNetwork(w http.ResponseWriter, r *http.Reque
 	}
 	if req.NetworkID == "" {
 		respondError(w, http.StatusBadRequest, "network_id is required")
+		return
+	}
+	if _, err := uuid.Parse(req.NetworkID); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid network_id: not a valid UUID")
 		return
 	}
 

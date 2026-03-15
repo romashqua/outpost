@@ -128,9 +128,8 @@ func (c *Client) VerifyMFA(ctx context.Context, mfaToken, code, method string) e
 // --- Device Enrollment ---
 
 type enrollmentRequest struct {
-	PublicKey string         `json:"public_key"`
-	Name      string         `json:"name"`
-	Posture   *DevicePosture `json:"posture,omitempty"`
+	PublicKey string `json:"wireguard_pubkey"`
+	Name      string `json:"name"`
 }
 
 type enrollmentResponse struct {
@@ -156,12 +155,9 @@ type NetworkConfig struct {
 
 // Enroll registers this device with the Outpost server.
 func (c *Client) Enroll(ctx context.Context, publicKey, deviceName string) (*enrollmentResponse, error) {
-	posture := CollectPosture()
-
 	body, err := json.Marshal(enrollmentRequest{
 		PublicKey: publicKey,
 		Name:      deviceName,
-		Posture:   posture,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal enrollment: %w", err)
@@ -210,28 +206,13 @@ func CollectPosture() *DevicePosture {
 	return posture
 }
 
-// ReportPosture sends the current device posture to the server.
-func (c *Client) ReportPosture(ctx context.Context) error {
-	if c.deviceID == "" {
-		return fmt.Errorf("device not enrolled: deviceID is empty")
-	}
-
-	posture := CollectPosture()
-	body, err := json.Marshal(posture)
-	if err != nil {
-		return fmt.Errorf("marshal posture: %w", err)
-	}
-
-	resp, err := c.doRequest(ctx, http.MethodPost, "/api/v1/devices/"+c.deviceID+"/posture", body, true)
-	if err != nil {
-		return fmt.Errorf("report posture: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return c.readError(resp)
-	}
-
+// ReportPosture collects device posture but currently skips reporting
+// because no server-side posture ingestion endpoint exists yet.
+// When a ZTNA posture endpoint is added, this should send data there.
+func (c *Client) ReportPosture(_ context.Context) error {
+	// No posture reporting endpoint exists on the server yet.
+	// Collect posture locally for future use but skip the HTTP call.
+	_ = CollectPosture()
 	return nil
 }
 

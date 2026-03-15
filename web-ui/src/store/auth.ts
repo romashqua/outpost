@@ -24,7 +24,7 @@ interface AuthState {
   mfaToken: string | null
   passwordMustChange: boolean
   login: (username: string, password: string) => Promise<void>
-  verifyMFA: (code: string) => Promise<void>
+  verifyMFA: (code: string, method?: string) => Promise<void>
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>
   clearPasswordMustChange: () => void
   logout: () => void
@@ -58,6 +58,11 @@ function applyToken(token: string, username?: string) {
   return user
 }
 
+// NOTE: Token is stored in localStorage which is accessible to any JS running
+// on the same origin. This is a known XSS risk inherent to SPA architectures.
+// Mitigations: strict CSP headers, input sanitization, and subresource integrity.
+// Moving to httpOnly cookies would eliminate this vector but complicates the
+// cross-origin / multi-tab auth flow. Accepted tradeoff for now.
 export const useAuthStore = create<AuthState>((set) => ({
   token: localStorage.getItem('outpost-token'),
   user: (() => {
@@ -92,13 +97,14 @@ export const useAuthStore = create<AuthState>((set) => ({
     })
   },
 
-  verifyMFA: async (code: string) => {
+  verifyMFA: async (code: string, method: string = 'totp') => {
     const { mfaToken } = useAuthStore.getState()
     if (!mfaToken) throw new Error('No MFA session')
 
     const res = await api.post<LoginResponse>('/auth/mfa/verify', {
       mfa_token: mfaToken,
       code,
+      method,
     })
 
     if (!res.token) {
@@ -129,6 +135,10 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   logout: () => {
+    api.post('/auth/logout').catch(() => {
+      // Best-effort: if the API call fails (network error, expired token, etc.),
+      // we still clear local state so the user is logged out client-side.
+    })
     localStorage.removeItem('outpost-token')
     localStorage.removeItem('outpost-user')
     set({

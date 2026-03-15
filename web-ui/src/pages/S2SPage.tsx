@@ -69,7 +69,7 @@ function TunnelDetailPanel({
   const [showAddDomain, setShowAddDomain] = useState(false)
   const [domainName, setDomainName] = useState('')
   const [domains, setDomains] = useState<AllowedDomain[]>([])
-  const [domainsApiUnavailable, setDomainsApiUnavailable] = useState(false)
+  const [domainsApiUnavailable, setDomainsApiUnavailable] = useState(true)
 
   // Fetch members
   const { data: members = [], isLoading: membersLoading } = useQuery<TunnelMember[]>({

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -30,7 +31,7 @@ func (h *SettingsHandler) Routes() chi.Router {
 	r.Get("/{key}", h.get)
 	r.With(auth.RequireAdmin).Put("/{key}", h.set)
 	r.With(auth.RequireAdmin).Delete("/{key}", h.delete)
-	r.With(auth.RequireAdmin).Post("/smtp/test", h.testSMTP)
+	r.With(auth.RequireAdmin).Post("/smtp/test", h.TestSMTP)
 	return r
 }
 
@@ -254,7 +255,7 @@ func (h *SettingsHandler) delete(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} map[string]string
 // @Security BearerAuth
 // @Router /settings/smtp/test [post]
-func (h *SettingsHandler) testSMTP(w http.ResponseWriter, r *http.Request) {
+func (h *SettingsHandler) TestSMTP(w http.ResponseWriter, r *http.Request) {
 	if h.mailer == nil {
 		respondError(w, http.StatusBadRequest, "SMTP is not configured")
 		return
@@ -276,7 +277,8 @@ func (h *SettingsHandler) testSMTP(w http.ResponseWriter, r *http.Request) {
 		"Outpost VPN - SMTP Test",
 		"<h1>SMTP Configuration Test</h1><p>If you are reading this, your SMTP settings are working correctly.</p>")
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to send test email: "+err.Error())
+		slog.Error("SMTP test email failed", "to", body.To, "error", err)
+		respondError(w, http.StatusInternalServerError, "failed to send test email")
 		return
 	}
 
