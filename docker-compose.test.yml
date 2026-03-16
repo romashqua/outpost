@@ -43,7 +43,7 @@ services:
       OUTPOST_DB_SSLMODE: disable
       OUTPOST_REDIS_ADDR: "redis:6379"
       OUTPOST_REDIS_PASSWORD: testpassword123
-      OUTPOST_AUTH_JWT_SECRET: test-jwt-secret-not-for-production
+      OUTPOST_JWT_SECRET: test-jwt-secret-not-for-production
       OUTPOST_LOG_LEVEL: debug
       OUTPOST_LOG_FORMAT: text
     ports:

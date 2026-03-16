@@ -911,16 +911,27 @@ func (h *DeviceHandler) downloadConfig(w http.ResponseWriter, r *http.Request) {
 // This works identically for standard WireGuard clients and outpost-client.
 func (h *DeviceHandler) resolveAllowedIPs(ctx context.Context, userID string, fallbackCIDR string) []string {
 	// Query: get all allowed CIDRs from network_acls for groups the user belongs to.
+	// Uses LATERAL unnest to avoid set-returning functions inside CASE.
 	rows, err := h.pool.Query(ctx,
-		`SELECT DISTINCT
-		     CASE WHEN a.allowed_ips = '{0.0.0.0/0}' THEN n.address::text
-		          ELSE unnest(a.allowed_ips)::text
-		     END AS cidr
-		 FROM network_acls a
-		 JOIN user_groups ug ON ug.group_id = a.group_id
-		 JOIN networks n ON n.id = a.network_id
-		 WHERE ug.user_id = $1::uuid
-		   AND n.is_active = true
+		`SELECT DISTINCT cidr FROM (
+		     -- Explicit allowed_ips entries
+		     SELECT unnest(a.allowed_ips)::text AS cidr
+		     FROM network_acls a
+		     JOIN user_groups ug ON ug.group_id = a.group_id
+		     JOIN networks n ON n.id = a.network_id
+		     WHERE ug.user_id = $1::uuid
+		       AND n.is_active = true
+		       AND a.allowed_ips != '{0.0.0.0/0}'
+		     UNION
+		     -- Wildcard entries: use network CIDR
+		     SELECT n.address::text AS cidr
+		     FROM network_acls a
+		     JOIN user_groups ug ON ug.group_id = a.group_id
+		     JOIN networks n ON n.id = a.network_id
+		     WHERE ug.user_id = $1::uuid
+		       AND n.is_active = true
+		       AND a.allowed_ips = '{0.0.0.0/0}'
+		 ) sub
 		 ORDER BY cidr`, userID)
 	if err != nil {
 		h.log.Error("failed to resolve ACL allowed IPs", "error", err, "user_id", userID)

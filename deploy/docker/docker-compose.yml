@@ -47,7 +47,7 @@ services:
       OUTPOST_DB_SSLMODE: disable
       OUTPOST_REDIS_ADDR: "redis:6379"
       OUTPOST_REDIS_PASSWORD: ${REDIS_PASSWORD:-outpost-dev-password}
-      OUTPOST_AUTH_JWT_SECRET: ${JWT_SECRET:-outpost-dev-jwt-secret-change-me}
+      OUTPOST_JWT_SECRET: ${JWT_SECRET:-outpost-dev-jwt-secret-change-me}
       OUTPOST_LOG_LEVEL: info
       OUTPOST_LOG_FORMAT: json
     ports:

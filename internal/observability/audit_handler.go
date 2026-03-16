@@ -81,7 +81,7 @@ func (h *AuditHandler) listAuditLogs(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch page.
 	dataQuery := fmt.Sprintf(
-		"SELECT id, timestamp, user_id, action, resource, details, ip_address, user_agent FROM audit_log%s ORDER BY timestamp DESC LIMIT $%d OFFSET $%d",
+		"SELECT id, timestamp, user_id::text, action, resource, details, ip_address, user_agent FROM audit_log%s ORDER BY timestamp DESC LIMIT $%d OFFSET $%d",
 		where, len(args)+1, len(args)+2,
 	)
 	args = append(args, perPage, offset)
@@ -132,7 +132,7 @@ func (h *AuditHandler) exportAuditLogs(w http.ResponseWriter, r *http.Request) {
 
 	where, args := buildWhereClause(r)
 	// Limit export to 50,000 rows to prevent OOM on large audit logs.
-	query := "SELECT id, timestamp, user_id, action, resource, details, ip_address, user_agent FROM audit_log" + where + " ORDER BY timestamp DESC LIMIT 50000"
+	query := "SELECT id, timestamp, user_id::text, action, resource, details, ip_address, user_agent FROM audit_log" + where + " ORDER BY timestamp DESC LIMIT 50000"
 
 	rows, err := h.pool.Query(ctx, query, args...)
 	if err != nil {

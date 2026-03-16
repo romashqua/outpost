@@ -81,9 +81,15 @@ func cmdConnect(c *client.Client, logger *slog.Logger) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// Try loading existing token.
-	if err := c.LoadToken(); err != nil {
-		// Need to login.
+	// If credentials are provided via env vars, always do a fresh login
+	// (saved token may have been signed with a different JWT secret).
+	if os.Getenv("OUTPOST_USER") != "" && os.Getenv("OUTPOST_PASS") != "" {
+		if err := doLogin(ctx, c); err != nil {
+			logger.Error("authentication failed", "error", err)
+			os.Exit(1)
+		}
+	} else if err := c.LoadToken(); err != nil {
+		// No env vars — try loading saved token, fall back to interactive login.
 		if err := doLogin(ctx, c); err != nil {
 			logger.Error("authentication failed", "error", err)
 			os.Exit(1)
