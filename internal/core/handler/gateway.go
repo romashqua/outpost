@@ -159,7 +159,7 @@ func (h *GatewayHandler) loadGatewayNetworks(ctx context.Context, gateways []gat
 	}
 
 	rows, err := h.pool.Query(ctx,
-		`SELECT gn.gateway_id, n.id, n.name, n.address
+		`SELECT gn.gateway_id, n.id, n.name, n.address::text
 		 FROM gateway_networks gn
 		 JOIN networks n ON n.id = gn.network_id
 		 WHERE gn.gateway_id = ANY($1)
@@ -213,9 +213,19 @@ func (h *GatewayHandler) create(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "endpoint is required")
 		return
 	}
-	// Add default WireGuard port if not specified
+	// Add default WireGuard port if not specified.
 	if !strings.Contains(req.Endpoint, ":") {
 		req.Endpoint = req.Endpoint + ":51820"
+	}
+
+	// public_ip is required — clients need a reachable IP for WireGuard endpoint.
+	if req.PublicIP == nil || *req.PublicIP == "" {
+		respondError(w, http.StatusBadRequest, "public_ip is required: clients need a reachable IP address for the WireGuard endpoint")
+		return
+	}
+	if !validIP(*req.PublicIP) {
+		respondError(w, http.StatusBadRequest, "public_ip must be a valid IPv4 or IPv6 address (no CIDR, no port)")
+		return
 	}
 
 	// Collect network IDs: support both network_ids (new) and network_id (legacy).
@@ -317,11 +327,9 @@ func (h *GatewayHandler) create(w http.ResponseWriter, r *http.Request) {
 
 	g.NetworkIDs = networkIDs
 	g.Networks = []gatewayNetworkInfo{}
-	h.loadGatewayNetworks(r.Context(), []gatewayResponse{g})
-	if len(g.Networks) == 0 {
-		// Fallback: populate from IDs we just inserted
-		g.Networks = []gatewayNetworkInfo{}
-	}
+	gSlice := []gatewayResponse{g}
+	h.loadGatewayNetworks(r.Context(), gSlice)
+	g = gSlice[0]
 
 	resp := struct {
 		gatewayResponse
@@ -372,7 +380,9 @@ func (h *GatewayHandler) get(w http.ResponseWriter, r *http.Request) {
 
 	g.NetworkIDs = []uuid.UUID{}
 	g.Networks = []gatewayNetworkInfo{}
-	h.loadGatewayNetworks(r.Context(), []gatewayResponse{g})
+	gSlice := []gatewayResponse{g}
+	h.loadGatewayNetworks(r.Context(), gSlice)
+	g = gSlice[0]
 
 	respondJSON(w, http.StatusOK, g)
 }
@@ -410,6 +420,12 @@ func (h *GatewayHandler) update(w http.ResponseWriter, r *http.Request) {
 	var req updateGatewayRequest
 	if err := parseBody(r, &req); err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Validate public_ip if provided.
+	if req.PublicIP != nil && *req.PublicIP != "" && !validIP(*req.PublicIP) {
+		respondError(w, http.StatusBadRequest, "public_ip must be a valid IPv4 or IPv6 address (no CIDR, no port)")
 		return
 	}
 
@@ -490,7 +506,9 @@ func (h *GatewayHandler) update(w http.ResponseWriter, r *http.Request) {
 
 	g.NetworkIDs = []uuid.UUID{}
 	g.Networks = []gatewayNetworkInfo{}
-	h.loadGatewayNetworks(r.Context(), []gatewayResponse{g})
+	gSlice := []gatewayResponse{g}
+	h.loadGatewayNetworks(r.Context(), gSlice)
+	g = gSlice[0]
 
 	h.log.Info("gateway updated", "id", g.ID, "name", g.Name)
 	respondJSON(w, http.StatusOK, g)

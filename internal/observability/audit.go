@@ -39,7 +39,13 @@ func (a *AuditLogger) Log(
 		VALUES ($1, $2, $3, $4, $5, $6, now())
 	`
 
-	_, err = a.pool.Exec(ctx, query, userID, action, resource, detailsJSON, ipAddress, userAgent)
+	// Pass NULL for zero UUID (anonymous/system requests) to avoid FK violation.
+	var uid any = userID
+	if userID == uuid.Nil {
+		uid = nil
+	}
+
+	_, err = a.pool.Exec(ctx, query, uid, action, resource, detailsJSON, ipAddress, userAgent)
 	if err != nil {
 		return fmt.Errorf("insert audit log: %w", err)
 	}

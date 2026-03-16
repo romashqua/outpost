@@ -106,3 +106,5 @@ docs/ROADMAP.ru.md
 docs/AUDIT_LAUNCH_READINESS.md
 habr/outpost-vpn-announcement.md
 docs/ARCHITECTURE_ANALYSIS.md
+scripts/outpost-client
+scripts/test_setup.sh

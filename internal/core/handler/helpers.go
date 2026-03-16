@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 
@@ -106,4 +107,9 @@ func queryInt(r *http.Request, key string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+// validIP returns true if s is a valid IPv4 or IPv6 address (no CIDR, no port).
+func validIP(s string) bool {
+	return net.ParseIP(s) != nil
 }

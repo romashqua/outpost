@@ -166,7 +166,7 @@ export default function GatewaysPage() {
       name: formName.trim(),
       network_ids: formNetworkIds,
       endpoint,
-      ...(formPublicIp ? { public_ip: formPublicIp } : {}),
+      public_ip: formPublicIp.trim(),
       ...(formPriority ? { priority: parseInt(formPriority, 10) } : {}),
     })
   }
@@ -446,9 +446,10 @@ export default function GatewaysPage() {
           </div>
           <Input
             label={t('gateways.publicIp')}
-            placeholder="185.12.34.10 (optional)"
+            placeholder="185.12.34.10"
             value={formPublicIp}
             onChange={(e) => setFormPublicIp(e.target.value)}
+            required
           />
           <Input
             label={t('gateways.priority')}

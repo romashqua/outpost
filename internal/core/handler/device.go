@@ -606,39 +606,43 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read network configuration (DNS, mask, CIDR) and gateway info.
+	// Find the best active gateway and its network for enrollment.
+	// Use gateway_networks junction table to pick the correct network.
 	var err error
 	var maskLen int
 	var networkCIDR string
 	var networkDNS []string
+	var networkID uuid.UUID
+	var gatewayEndpoint, gatewayPubkey string
+	var gatewayPublicIP *string
+	var networkPort int
 	err = h.pool.QueryRow(r.Context(),
-		`SELECT masklen(address), address::text, dns
-		 FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1`,
-	).Scan(&maskLen, &networkCIDR, &networkDNS)
+		`SELECT g.endpoint, g.wireguard_pubkey, g.public_ip::text,
+		        n.id, masklen(n.address), n.address::text, n.dns, n.port
+		 FROM gateways g
+		 JOIN gateway_networks gn ON gn.gateway_id = g.id
+		 JOIN networks n ON n.id = gn.network_id AND n.is_active = true
+		 WHERE g.is_active = true
+		 ORDER BY g.priority DESC, g.created_at
+		 LIMIT 1`,
+	).Scan(&gatewayEndpoint, &gatewayPubkey, &gatewayPublicIP,
+		&networkID, &maskLen, &networkCIDR, &networkDNS, &networkPort)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, "failed to allocate IP address: no active network found")
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusUnprocessableEntity, "no active gateway with an active network — create and activate a gateway first")
+			return
+		}
+		respondError(w, http.StatusInternalServerError, "failed to read gateway/network configuration")
 		return
 	}
 	if len(networkDNS) == 0 {
 		networkDNS = []string{"1.1.1.1", "8.8.8.8"}
 	}
 
-	// Get the gateway endpoint and public key from the first active gateway.
-	var gatewayEndpoint, gatewayPubkey string
-	err = h.pool.QueryRow(r.Context(),
-		`SELECT g.endpoint, g.wireguard_pubkey
-		 FROM gateways g
-		 JOIN networks n ON n.id = g.network_id
-		 WHERE n.is_active = true AND g.is_active = true
-		 ORDER BY g.priority DESC, g.created_at LIMIT 1`,
-	).Scan(&gatewayEndpoint, &gatewayPubkey)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			respondError(w, http.StatusUnprocessableEntity, "no active gateway available — create and activate a gateway first")
-			return
-		}
-		respondError(w, http.StatusInternalServerError, "failed to read gateway configuration")
-		return
+	// For client-facing endpoint, prefer public_ip + network port over internal endpoint.
+	clientEndpoint := gatewayEndpoint
+	if gatewayPublicIP != nil && *gatewayPublicIP != "" {
+		clientEndpoint = fmt.Sprintf("%s:%d", *gatewayPublicIP, networkPort)
 	}
 
 	// Use the authenticated user for enrollment.
@@ -654,7 +658,7 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Atomically allocate the next available IP and insert the device.
-	// Uses a CTE that finds the first unused IP in the network range,
+	// Uses a CTE that finds the first unused IP in the gateway's network range,
 	// with a retry loop to handle concurrent inserts racing for the same IP.
 	const maxEnrollRetries = 5
 	var deviceID uuid.UUID
@@ -662,7 +666,7 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 	for attempt := 0; attempt < maxEnrollRetries; attempt++ {
 		err = h.pool.QueryRow(r.Context(),
 			`WITH net AS (
-				SELECT id, address FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1
+				SELECT id, address FROM networks WHERE id = $4 AND is_active = true LIMIT 1
 			),
 			candidate AS (
 				SELECT host(network(net.address) + s.off)::inet AS ip, net.id AS net_id
@@ -676,7 +680,7 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 			SELECT $1, $2, $3, candidate.ip, true, candidate.net_id
 			FROM candidate
 			RETURNING id, host(assigned_ip)`,
-			userID, req.Name, req.WireguardPubkey,
+			userID, req.Name, req.WireguardPubkey, networkID,
 		).Scan(&deviceID, &assignedIP)
 		if err == nil {
 			break
@@ -715,7 +719,7 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 		DeviceID:            deviceID,
 		Address:             clientAddress,
 		DNS:                 networkDNS,
-		Endpoint:            gatewayEndpoint,
+		Endpoint:            clientEndpoint,
 		ServerPublicKey:     gatewayPubkey,
 		AllowedIPs:          []string{networkCIDR},
 		PersistentKeepalive: 25,
@@ -802,23 +806,28 @@ func (h *DeviceHandler) downloadConfig(w http.ResponseWriter, r *http.Request) {
 
 	// Get the gateway endpoint and public key.
 	// Prefer gateway that serves this device's network, fallback to any active gateway.
+	// Use public_ip for client-facing endpoint when available.
 	var gatewayEndpoint, gatewayPubkey string
+	var dlGatewayPublicIP *string
+	var dlNetworkPort int
 	if deviceNetworkID != nil {
 		err = h.pool.QueryRow(r.Context(),
-			`SELECT g.endpoint, g.wireguard_pubkey
+			`SELECT g.endpoint, g.wireguard_pubkey, g.public_ip::text, n.port
 			 FROM gateways g
 			 JOIN gateway_networks gn ON gn.gateway_id = g.id
+			 JOIN networks n ON n.id = gn.network_id
 			 WHERE gn.network_id = $1 AND g.is_active = true
 			 ORDER BY g.priority DESC, g.created_at LIMIT 1`, *deviceNetworkID,
-		).Scan(&gatewayEndpoint, &gatewayPubkey)
+		).Scan(&gatewayEndpoint, &gatewayPubkey, &dlGatewayPublicIP, &dlNetworkPort)
 	}
 	if gatewayEndpoint == "" {
 		err = h.pool.QueryRow(r.Context(),
-			`SELECT g.endpoint, g.wireguard_pubkey
+			`SELECT g.endpoint, g.wireguard_pubkey, g.public_ip::text, COALESCE(n.port, 51820)
 			 FROM gateways g
+			 LEFT JOIN networks n ON n.id = g.network_id
 			 WHERE g.is_active = true
 			 ORDER BY g.priority DESC, g.created_at LIMIT 1`,
-		).Scan(&gatewayEndpoint, &gatewayPubkey)
+		).Scan(&gatewayEndpoint, &gatewayPubkey, &dlGatewayPublicIP, &dlNetworkPort)
 	}
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -827,6 +836,14 @@ func (h *DeviceHandler) downloadConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		respondError(w, http.StatusInternalServerError, "failed to read gateway configuration")
 		return
+	}
+	// For client-facing endpoint, prefer public_ip + port over internal endpoint.
+	dlClientEndpoint := gatewayEndpoint
+	if dlGatewayPublicIP != nil && *dlGatewayPublicIP != "" {
+		if dlNetworkPort == 0 {
+			dlNetworkPort = 51820
+		}
+		dlClientEndpoint = fmt.Sprintf("%s:%d", *dlGatewayPublicIP, dlNetworkPort)
 	}
 
 	// Look up the device's stored private key (set at creation time).
@@ -869,7 +886,7 @@ func (h *DeviceHandler) downloadConfig(w http.ResponseWriter, r *http.Request) {
 			{
 				PublicKey:           gatewayPubkey,
 				AllowedIPs:          allowedIPs,
-				Endpoint:            gatewayEndpoint,
+				Endpoint:            dlClientEndpoint,
 				PersistentKeepalive: 25,
 			},
 		},
@@ -1007,16 +1024,22 @@ func (h *DeviceHandler) sendConfig(w http.ResponseWriter, r *http.Request) {
 		networkDNS = []string{"1.1.1.1", "8.8.8.8"}
 	}
 
-	var gatewayEndpoint, gatewayPubkey string
+	var scGwEndpoint, scGwPubkey string
+	var scGwPublicIP *string
+	var scNetPort int
 	err = h.pool.QueryRow(r.Context(),
-		`SELECT g.endpoint, g.wireguard_pubkey
+		`SELECT g.endpoint, g.wireguard_pubkey, g.public_ip::text, COALESCE(n.port, 51820)
 		 FROM gateways g JOIN networks n ON n.id = g.network_id
 		 WHERE n.is_active = true AND g.is_active = true
 		 ORDER BY g.priority DESC, g.created_at LIMIT 1`,
-	).Scan(&gatewayEndpoint, &gatewayPubkey)
+	).Scan(&scGwEndpoint, &scGwPubkey, &scGwPublicIP, &scNetPort)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to read gateway configuration")
 		return
+	}
+	scEndpoint := scGwEndpoint
+	if scGwPublicIP != nil && *scGwPublicIP != "" {
+		scEndpoint = fmt.Sprintf("%s:%d", *scGwPublicIP, scNetPort)
 	}
 
 	var storedPrivKey *string
@@ -1040,9 +1063,9 @@ func (h *DeviceHandler) sendConfig(w http.ResponseWriter, r *http.Request) {
 		DNS:        networkDNS,
 		Peers: []wireguard.PeerConfig{
 			{
-				PublicKey:           gatewayPubkey,
+				PublicKey:           scGwPubkey,
 				AllowedIPs:          []string{networkCIDR},
-				Endpoint:            gatewayEndpoint,
+				Endpoint:            scEndpoint,
 				PersistentKeepalive: 25,
 			},
 		},

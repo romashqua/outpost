@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"sync"
 	"time"
 
@@ -147,15 +145,8 @@ func (tm *TunnelManager) Connect(ctx context.Context, networkID string) error {
 		})
 	}
 
-	// Write config and bring up interface.
-	configPath := filepath.Join(tm.configDir, tm.ifaceName+".conf")
-	if err := os.WriteFile(configPath, []byte(wireguard.RenderConfig(iface)), 0600); err != nil {
-		tm.setState(TunnelDisconnected)
-		return fmt.Errorf("write config: %w", err)
-	}
-
-	if err := tm.wgUp(configPath); err != nil {
-		os.Remove(configPath) // Clean up config file containing private key.
+	// Bring up tunnel using built-in userspace WireGuard (no wg-quick dependency).
+	if err := tm.userspaceUp(iface); err != nil {
 		tm.setState(TunnelDisconnected)
 		return fmt.Errorf("bring up tunnel: %w", err)
 	}
@@ -170,13 +161,12 @@ func (tm *TunnelManager) Disconnect() error {
 		return nil
 	}
 
-	configPath := filepath.Join(tm.configDir, tm.ifaceName+".conf")
-	if err := tm.wgDown(configPath); err != nil {
+	if err := tm.userspaceDown(); err != nil {
 		return fmt.Errorf("bring down tunnel: %w", err)
 	}
 
-	// Clean up config file containing private key material.
-	os.Remove(configPath)
+	// Clean up any leftover config files.
+	os.Remove(filepath.Join(tm.configDir, tm.ifaceName+".conf"))
 
 	tm.setState(TunnelDisconnected)
 	return nil
@@ -246,30 +236,10 @@ func (tm *TunnelManager) ensureKeys() (privateKey, publicKey string, err error) 
 	return privateKey, publicKey, nil
 }
 
-// --- WireGuard Interface Control ---
-
-func (tm *TunnelManager) wgUp(configPath string) error {
-	switch runtime.GOOS {
-	case "linux":
-		return exec.Command("wg-quick", "up", configPath).Run()
-	case "darwin":
-		// macOS: use wireguard-go userspace + wg-quick from wireguard-tools.
-		return exec.Command("wg-quick", "up", configPath).Run()
-	case "windows":
-		// Windows: use wireguard.exe tunnel service.
-		return exec.Command("wireguard.exe", "/installtunnelservice", configPath).Run()
-	default:
-		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
+// writeConfigFile writes a WireGuard config to the config directory (used by wg-quick fallback).
+func writeConfigFile(path, content string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
 	}
-}
-
-func (tm *TunnelManager) wgDown(configPath string) error {
-	switch runtime.GOOS {
-	case "linux", "darwin":
-		return exec.Command("wg-quick", "down", configPath).Run()
-	case "windows":
-		return exec.Command("wireguard.exe", "/uninstalltunnelservice", tm.ifaceName).Run()
-	default:
-		return fmt.Errorf("unsupported platform: %s", runtime.GOOS)
-	}
+	return os.WriteFile(path, []byte(content), 0600)
 }
