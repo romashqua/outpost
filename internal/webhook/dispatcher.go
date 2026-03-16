@@ -59,6 +59,9 @@ func NewDispatcher(pool *pgxpool.Pool, logger *slog.Logger) *Dispatcher {
 		logger: logger,
 		httpClient: &http.Client{
 			Timeout: 5 * time.Second,
+			Transport: &http.Transport{
+				DialContext: safeDialContext,
+			},
 		},
 	}
 
@@ -224,6 +227,42 @@ func (d *Dispatcher) Routes() chi.Router {
 	return r
 }
 
+// isPrivateIP returns true if the IP belongs to a loopback, private, or
+// link-local range that should not be reachable by outbound webhooks.
+func isPrivateIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsUnspecified()
+}
+
+// safeDialContext is a custom DialContext that resolves the target hostname and
+// validates that all resolved IPs are public before establishing a connection.
+// This prevents DNS rebinding attacks where the hostname resolves to a private
+// IP at connection time even though it resolved to a public IP at validation time.
+func safeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid address %q: %w", addr, err)
+	}
+
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("DNS lookup failed for %s: %w", host, err)
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("no IPs resolved for %s", host)
+	}
+
+	for _, ipAddr := range ips {
+		if isPrivateIP(ipAddr.IP) {
+			return nil, fmt.Errorf("resolved IP %s for host %s is in a private/internal range", ipAddr.IP, host)
+		}
+	}
+
+	// Dial using the first validated IP to prevent TOCTOU between resolve and connect.
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+}
+
 // validateWebhookURL checks that the URL is a valid HTTPS/HTTP endpoint and
 // not pointed at internal/private network ranges (SSRF protection).
 func validateWebhookURL(rawURL string) error {
@@ -246,7 +285,7 @@ func validateWebhookURL(rawURL string) error {
 		return fmt.Errorf("cannot resolve hostname: %w", err)
 	}
 	for _, ip := range ips {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		if isPrivateIP(ip) {
 			return fmt.Errorf("URL must not point to a private/internal address")
 		}
 	}

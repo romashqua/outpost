@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -50,6 +51,9 @@ func NewSIEMExporter(pool *pgxpool.Pool, logger *slog.Logger) *SIEMExporter {
 		logger: logger,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
+			Transport: &http.Transport{
+				DialContext: safeDialContext,
+			},
 		},
 	}
 }
@@ -191,8 +195,12 @@ func (s *SIEMExporter) ExportToSyslog(entry AuditEntry) error {
 
 // StartBatchExporter runs a background goroutine that periodically queries for
 // new audit events (those with id > lastID) and exports them to all configured
-// targets. It stops when ctx is cancelled.
+// targets. It stops when ctx is cancelled. The cursor is persisted in the
+// settings table so that restarts don't re-export already-sent events.
 func (s *SIEMExporter) StartBatchExporter(ctx context.Context, interval time.Duration) {
+	// Restore cursor from DB on startup.
+	s.loadCursor(ctx)
+
 	go func() {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
@@ -207,6 +215,71 @@ func (s *SIEMExporter) StartBatchExporter(ctx context.Context, interval time.Dur
 			}
 		}
 	}()
+}
+
+const siemCursorKey = "siem_export_cursor"
+
+// loadCursor restores lastID from the settings table.
+func (s *SIEMExporter) loadCursor(ctx context.Context) {
+	var val string
+	err := s.pool.QueryRow(ctx,
+		`SELECT value FROM settings WHERE key = $1`, siemCursorKey,
+	).Scan(&val)
+	if err != nil {
+		return // no saved cursor — start from 0
+	}
+	n, err := strconv.ParseInt(val, 10, 64)
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	s.lastID = n
+	s.mu.Unlock()
+	s.logger.Info("batch exporter: restored cursor", "last_id", n)
+}
+
+// saveCursor persists lastID to the settings table.
+func (s *SIEMExporter) saveCursor(ctx context.Context, id int64) {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO settings (key, value) VALUES ($1, $2)
+		ON CONFLICT (key) DO UPDATE SET value = $2
+	`, siemCursorKey, strconv.FormatInt(id, 10))
+	if err != nil {
+		s.logger.Warn("batch exporter: failed to persist cursor", "error", err)
+	}
+}
+
+// isPrivateIP returns true if the IP belongs to a loopback, private, or
+// link-local range that should not be reachable by outbound SIEM webhooks.
+func isPrivateIP(ip net.IP) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsUnspecified()
+}
+
+// safeDialContext resolves the target hostname and validates that all resolved
+// IPs are public before establishing a connection, preventing SSRF attacks.
+func safeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid address %q: %w", addr, err)
+	}
+
+	ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("DNS lookup failed for %s: %w", host, err)
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("no IPs resolved for %s", host)
+	}
+
+	for _, ipAddr := range ips {
+		if isPrivateIP(ipAddr.IP) {
+			return nil, fmt.Errorf("resolved IP %s for host %s is in a private/internal range", ipAddr.IP, host)
+		}
+	}
+
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
 }
 
 // exportBatch fetches new audit events since the last checkpoint and exports them.
@@ -266,6 +339,7 @@ func (s *SIEMExporter) exportBatch(ctx context.Context) {
 		s.mu.Lock()
 		s.lastID = maxID
 		s.mu.Unlock()
+		s.saveCursor(ctx, maxID)
 		s.logger.Debug("batch exporter: exported events", "count", exported, "last_id", maxID)
 	}
 }

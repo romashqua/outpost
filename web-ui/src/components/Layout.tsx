@@ -37,7 +37,7 @@ const navItems = [
   { to: '/ztna', icon: Shield, labelKey: 'nav.ztna', adminOnly: true },
   { to: '/tenants', icon: Building2, labelKey: 'nav.tenants', adminOnly: true },
   { to: '/docs', icon: BookOpen, labelKey: 'nav.docs', adminOnly: false },
-  { to: '/settings', icon: Settings, labelKey: 'nav.settings', adminOnly: false },
+  { to: '/settings', icon: Settings, labelKey: 'nav.settings', adminOnly: true },
 ]
 
 export default function Layout({ children }: { children: React.ReactNode }) {

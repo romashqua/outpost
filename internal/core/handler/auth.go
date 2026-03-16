@@ -366,6 +366,20 @@ func (h *AuthHandler) refreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check token blacklist — a logged-out token must not be refreshable.
+	if h.tokenBlacklist != nil {
+		revoked, err := h.tokenBlacklist.IsBlacklisted(r.Context(), tokenStr)
+		if err != nil {
+			h.log.Error("failed to check token blacklist on refresh", "error", err)
+			respondError(w, http.StatusInternalServerError, "failed to check token status")
+			return
+		}
+		if revoked {
+			respondError(w, http.StatusUnauthorized, "token has been revoked")
+			return
+		}
+	}
+
 	// MFA-pending tokens cannot be refreshed into full session tokens.
 	if claims.TokenType == "mfa" {
 		respondError(w, http.StatusUnauthorized, "mfa verification required")

@@ -1,47 +1,47 @@
-# Руководство по развёртыванию
+# Deployment Guide
 
-Это руководство описывает развёртывание Outpost VPN в продуктивных средах с использованием Docker Compose, Kubernetes (Helm) или bare-metal.
+This guide covers deploying Outpost VPN in production environments using Docker Compose, Kubernetes (Helm), or bare-metal.
 
-## Docker Compose (один сервер)
+## Docker Compose (Single Server)
 
-Подходит для: до ~500 пиров, одна локация.
+Suitable for: up to ~500 peers, single location.
 
-### 1. Подготовка окружения
+### 1. Prepare the Environment
 
 ```bash
 git clone https://github.com/romashqua/outpost.git
 cd outpost
 ```
 
-Создайте `.env`-файл для Docker Compose:
+Create an `.env` file for Docker Compose:
 
 ```bash
 cat > deploy/docker/.env << 'EOF'
-POSTGRES_PASSWORD=<сгенерируйте-надёжный-пароль>
-REDIS_PASSWORD=<сгенерируйте-надёжный-пароль>
-JWT_SECRET=<сгенерируйте-64-символьную-случайную-строку>
-GATEWAY_TOKEN=<сгенерируйте-64-символьную-случайную-строку>
+POSTGRES_PASSWORD=<generate-a-strong-password>
+REDIS_PASSWORD=<generate-a-strong-password>
+JWT_SECRET=<generate-a-64-character-random-string>
+GATEWAY_TOKEN=<generate-a-64-character-random-string>
 EOF
 ```
 
-Генерация безопасных значений:
+Generating secure values:
 
 ```bash
-openssl rand -hex 32   # для POSTGRES_PASSWORD
-openssl rand -hex 32   # для REDIS_PASSWORD
-openssl rand -hex 32   # для JWT_SECRET
-openssl rand -hex 32   # для GATEWAY_TOKEN
+openssl rand -hex 32   # for POSTGRES_PASSWORD
+openssl rand -hex 32   # for REDIS_PASSWORD
+openssl rand -hex 32   # for JWT_SECRET
+openssl rand -hex 32   # for GATEWAY_TOKEN
 ```
 
-### 2. Запуск стека
+### 2. Start the Stack
 
 ```bash
 docker compose -f deploy/docker/docker-compose.yml up -d
 ```
 
-Сервисы и порты:
+Services and ports:
 
-| Сервис | Внутренний порт | Открытый порт | Сеть |
+| Service | Internal Port | Exposed Port | Network |
 |---------|---------------|--------------|---------|
 | PostgreSQL | 5432 | 5432 | internal |
 | Redis | 6379 | 6379 | internal |
@@ -49,22 +49,22 @@ docker compose -f deploy/docker/docker-compose.yml up -d
 | outpost-gateway | 51820/udp | 51820/udp | internal |
 | outpost-proxy | 8080 | 8081 | dmz |
 
-### 3. Проверка
+### 3. Verify
 
 ```bash
-# Проверка, что все сервисы работают
+# Check that all services are running
 docker compose -f deploy/docker/docker-compose.yml ps
 
-# Проверка эндпоинта здоровья
+# Check the health endpoint
 curl http://localhost:8080/healthz
 ```
 
-### Сетевая топология Docker Compose
+### Docker Compose Network Topology
 
-Стандартный `docker-compose.yml` определяет две сети:
+The default `docker-compose.yml` defines two networks:
 
-- **internal** -- core, шлюз, PostgreSQL, Redis (приватная, без доступа из интернета)
-- **dmz** -- core, прокси (прокси доступен из интернета для регистрации)
+- **internal** — core, gateway, PostgreSQL, Redis (private, no internet access)
+- **dmz** — core, proxy (proxy is accessible from the internet for enrollment)
 
 ```yaml
 networks:
@@ -74,25 +74,25 @@ networks:
     driver: bridge
 ```
 
-### Справочник по Docker Compose
+### Docker Compose Reference
 
-Полный compose-файл находится в `deploy/docker/docker-compose.yml`. Ключевая конфигурация:
+The full compose file is at `deploy/docker/docker-compose.yml`. Key configuration:
 
-- **core** использует переменные окружения с префиксом `OUTPOST_` (см. [Справочник по конфигурации](configuration.md))
-- **gateway** требует capabilities `NET_ADMIN` и `SYS_MODULE`, а также устройство `/dev/net/tun`
-- **gateway** включает sysctl `net.ipv4.ip_forward=1` и `net.ipv4.conf.all.src_valid_mark=1`
-- **proxy** без состояния -- нет соединений с БД или Redis
+- **core** uses environment variables prefixed with `OUTPOST_` (see [Configuration Reference](configuration.md))
+- **gateway** requires `NET_ADMIN` and `SYS_MODULE` capabilities, plus the `/dev/net/tun` device
+- **gateway** enables sysctl `net.ipv4.ip_forward=1` and `net.ipv4.conf.all.src_valid_mark=1`
+- **proxy** is stateless — no database or Redis connections
 
 ---
 
 ## Kubernetes (Helm)
 
-Helm-чарт находится в `deploy/helm/outpost/`.
+The Helm chart is located at `deploy/helm/outpost/`.
 
-### 1. Установка
+### 1. Installation
 
 ```bash
-# Из локального чарта
+# From the local chart
 helm install outpost deploy/helm/outpost \
   --namespace outpost \
   --create-namespace \
@@ -100,7 +100,7 @@ helm install outpost deploy/helm/outpost \
   --set secret.databasePassword=$(openssl rand -hex 32)
 ```
 
-Или из Helm-репозитория (когда будет опубликован):
+Or from the Helm repository (when published):
 
 ```bash
 helm repo add outpost https://charts.outpost-vpn.io
@@ -113,9 +113,9 @@ helm install outpost outpost/outpost \
   --set secret.databasePassword=$(openssl rand -hex 32)
 ```
 
-### 2. Продакшен-values
+### 2. Production Values
 
-Создайте `values-production.yaml`:
+Create `values-production.yaml`:
 
 ```yaml
 core:
@@ -133,20 +133,20 @@ core:
 
 gateway:
   enabled: true
-  # Деплой как DaemonSet на помеченных нодах для мульти-шлюзов
+  # Deploy as DaemonSet on labeled nodes for multi-gateway
   nodeSelector:
     outpost.io/gateway: "true"
   env:
-    OUTPOST_GATEWAY_TOKEN: "<токен>"
-  # Шлюз требует повышенных привилегий
-  # securityContext задан в шаблоне чарта
+    OUTPOST_GATEWAY_TOKEN: "<token>"
+  # Gateway requires elevated privileges
+  # securityContext is set in the chart template
 
 proxy:
   replicaCount: 2
   service:
     type: LoadBalancer
 
-# Используйте внешнюю управляемую БД в продакшене
+# Use an external managed DB in production
 postgresql:
   enabled: false
 
@@ -156,7 +156,7 @@ externalDatabase:
   database: outpost
   username: outpost
 
-# Используйте внешний управляемый Redis в продакшене
+# Use an external managed Redis in production
 redis:
   enabled: false
 
@@ -165,8 +165,8 @@ externalRedis:
   port: 6379
 
 secret:
-  jwtSecret: ""          # задайте через --set или внешний менеджер секретов
-  databasePassword: ""   # задайте через --set или внешний менеджер секретов
+  jwtSecret: ""          # set via --set or external secret manager
+  databasePassword: ""   # set via --set or external secret manager
   redisPassword: ""
 
 ingress:
@@ -185,7 +185,7 @@ ingress:
         - vpn.example.com
 ```
 
-Установка с продакшен-values:
+Install with production values:
 
 ```bash
 helm install outpost deploy/helm/outpost \
@@ -197,38 +197,38 @@ helm install outpost deploy/helm/outpost \
   --set secret.redisPassword=$REDIS_PASSWORD
 ```
 
-### Справочник значений Helm-чарта
+### Helm Chart Values Reference
 
-| Ключ | По умолчанию | Описание |
+| Key | Default | Description |
 |-----|---------|-------------|
-| `core.replicaCount` | `1` | Количество реплик core |
-| `core.image.repository` | `ghcr.io/romashqua/outpost-core` | Образ core |
-| `core.service.httpPort` | `8080` | Порт HTTP API |
-| `core.service.grpcPort` | `9090` | Порт gRPC |
-| `gateway.enabled` | `true` | Деплоить шлюз |
-| `gateway.service.type` | `LoadBalancer` | Тип сервиса шлюза |
-| `gateway.service.port` | `51820` | UDP-порт WireGuard |
-| `proxy.enabled` | `true` | Деплоить прокси |
-| `proxy.replicaCount` | `1` | Количество реплик прокси |
-| `postgresql.enabled` | `true` | Деплоить встроенный PostgreSQL |
-| `postgresql.storage.size` | `5Gi` | Размер PVC PostgreSQL |
-| `redis.enabled` | `true` | Деплоить встроенный Redis |
-| `redis.storage.size` | `1Gi` | Размер PVC Redis |
-| `config.logLevel` | `info` | Уровень логирования |
-| `config.coreUrl` | `http://outpost-core:8080` | URL core для межсервисного взаимодействия |
-| `config.coreGrpcUrl` | `outpost-core:9090` | gRPC URL core |
-| `ingress.enabled` | `false` | Включить Ingress |
-| `secret.jwtSecret` | `""` | Ключ подписи JWT |
-| `secret.databasePassword` | `outpost` | Пароль БД |
-| `secret.redisPassword` | `""` | Пароль Redis |
+| `core.replicaCount` | `1` | Number of core replicas |
+| `core.image.repository` | `ghcr.io/romashqua/outpost-core` | Core image |
+| `core.service.httpPort` | `8080` | HTTP API port |
+| `core.service.grpcPort` | `9090` | gRPC port |
+| `gateway.enabled` | `true` | Deploy gateway |
+| `gateway.service.type` | `LoadBalancer` | Gateway service type |
+| `gateway.service.port` | `51820` | WireGuard UDP port |
+| `proxy.enabled` | `true` | Deploy proxy |
+| `proxy.replicaCount` | `1` | Number of proxy replicas |
+| `postgresql.enabled` | `true` | Deploy built-in PostgreSQL |
+| `postgresql.storage.size` | `5Gi` | PostgreSQL PVC size |
+| `redis.enabled` | `true` | Deploy built-in Redis |
+| `redis.storage.size` | `1Gi` | Redis PVC size |
+| `config.logLevel` | `info` | Log level |
+| `config.coreUrl` | `http://outpost-core:8080` | Core URL for inter-service communication |
+| `config.coreGrpcUrl` | `outpost-core:9090` | Core gRPC URL |
+| `ingress.enabled` | `false` | Enable Ingress |
+| `secret.jwtSecret` | `""` | JWT signing key |
+| `secret.databasePassword` | `outpost` | Database password |
+| `secret.redisPassword` | `""` | Redis password |
 
 ---
 
-## Мульти-нодовая / высокодоступная конфигурация
+## Multi-Node / High-Availability Setup
 
-outpost-core не хранит состояние (всё в PostgreSQL + Redis), поэтому масштабируется горизонтально за балансировщиком нагрузки.
+outpost-core is stateless (all state is in PostgreSQL + Redis), so it scales horizontally behind a load balancer.
 
-### Архитектура
+### Architecture
 
 ```
                   ┌──────────────┐
@@ -249,12 +249,12 @@ outpost-core не хранит состояние (всё в PostgreSQL + Redis)
      └───────────────────────────────────┘
 ```
 
-### Требования
+### Requirements
 
-1. **PostgreSQL HA**: используйте Patroni, CloudNativePG или управляемую БД (RDS, Cloud SQL)
-2. **Redis HA**: используйте Redis Sentinel или Redis Cluster
-3. **Балансировщик нагрузки**: маршрутизируйте HTTP (:8080) и gRPC (:50051) на все экземпляры core
-4. **Общий JWT_SECRET**: все экземпляры core должны использовать один `OUTPOST_JWT_SECRET`
+1. **PostgreSQL HA**: use Patroni, CloudNativePG, or a managed DB (RDS, Cloud SQL)
+2. **Redis HA**: use Redis Sentinel or Redis Cluster
+3. **Load balancer**: route HTTP (:8080) and gRPC (:50051) to all core instances
+4. **Shared JWT_SECRET**: all core instances must use the same `OUTPOST_JWT_SECRET`
 
 ---
 
@@ -275,7 +275,7 @@ upstream outpost_grpc {
     server core-2:50051;
 }
 
-# HTTP API + панель администратора
+# HTTP API + admin panel
 server {
     listen 443 ssl http2;
     server_name vpn.example.com;
@@ -285,7 +285,7 @@ server {
     ssl_protocols       TLSv1.2 TLSv1.3;
     ssl_ciphers         HIGH:!aNULL:!MD5;
 
-    # Заголовки безопасности
+    # Security headers
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     add_header X-Content-Type-Options nosniff;
     add_header X-Frame-Options DENY;
@@ -299,7 +299,7 @@ server {
     }
 }
 
-# gRPC (для подключений шлюзов)
+# gRPC (for gateway connections)
 server {
     listen 50051 http2;
 
@@ -308,7 +308,7 @@ server {
     }
 }
 
-# Редирект HTTP на HTTPS
+# HTTP to HTTPS redirect
 server {
     listen 80;
     server_name vpn.example.com;
@@ -328,16 +328,16 @@ vpn.example.com {
 }
 ```
 
-Caddy автоматически получает и обновляет TLS-сертификаты через Let's Encrypt.
+Caddy automatically obtains and renews TLS certificates via Let's Encrypt.
 
 ---
 
-## Мульти-сайтовое развёртывание шлюзов
+## Multi-Site Gateway Deployment
 
-Разверните шлюзы на каждой площадке, все подключающиеся к кластеру core.
+Deploy gateways at each site, all connecting to the core cluster.
 
 ```bash
-# На каждой машине шлюза
+# On each gateway machine
 docker run -d \
   --name outpost-gateway \
   --cap-add=NET_ADMIN \
@@ -353,20 +353,20 @@ docker run -d \
   ghcr.io/romashqua/outpost-gateway:latest
 ```
 
-Зарегистрируйте каждый шлюз через панель администратора:
-1. Перейдите в **Шлюзы** > **Создать**
-2. Укажите название, сеть и публичный эндпоинт
-3. Скопируйте сгенерированный токен в `OUTPOST_GATEWAY_TOKEN` шлюза
-4. Перезапустите контейнер шлюза
+Register each gateway via the admin panel:
+1. Go to **Gateways** > **Create**
+2. Specify the name, network, and public endpoint
+3. Copy the generated token to the gateway's `OUTPOST_GATEWAY_TOKEN`
+4. Restart the gateway container
 
 ---
 
-## Настройка PostgreSQL
+## PostgreSQL Tuning
 
-Для продакшен-PostgreSQL с Outpost:
+For production PostgreSQL with Outpost:
 
 ```sql
--- Рекомендуемые настройки для сервера с 4 ГБ RAM и ~500 пиров
+-- Recommended settings for a server with 4 GB RAM and ~500 peers
 ALTER SYSTEM SET shared_buffers = '1GB';
 ALTER SYSTEM SET effective_cache_size = '3GB';
 ALTER SYSTEM SET work_mem = '16MB';
@@ -374,10 +374,10 @@ ALTER SYSTEM SET maintenance_work_mem = '256MB';
 ALTER SYSTEM SET max_connections = 100;
 ALTER SYSTEM SET checkpoint_completion_target = 0.9;
 ALTER SYSTEM SET wal_buffers = '64MB';
-ALTER SYSTEM SET random_page_cost = 1.1;  -- для SSD
+ALTER SYSTEM SET random_page_cost = 1.1;  -- for SSD
 ```
 
-Таблица `peer_stats` партиционирована по `recorded_at` для эффективных time-series запросов. Создавайте ежемесячные партиции:
+The `peer_stats` table is partitioned by `recorded_at` for efficient time-series queries. Create monthly partitions:
 
 ```sql
 CREATE TABLE peer_stats_2026_03 PARTITION OF peer_stats
@@ -386,9 +386,9 @@ CREATE TABLE peer_stats_2026_03 PARTITION OF peer_stats
 
 ---
 
-## Конфигурация Redis
+## Redis Configuration
 
-Рекомендуемые настройки Redis:
+Recommended Redis settings:
 
 ```
 maxmemory 256mb
@@ -397,44 +397,44 @@ save ""
 appendonly no
 ```
 
-Redis используется для:
-- Хранения сессий
-- Pub/sub трансляции событий
-- Хранения состояния rate limiting
+Redis is used for:
+- Session storage
+- Pub/sub event broadcasting
+- Rate limiting state storage
 
-Сессии пересоздаются при перезапуске Redis, поэтому персистентность опциональна. Отключите RDB/AOF-персистентность для лучшей производительности, если допускаете потерю сессий при перезапуске.
+Sessions are recreated on Redis restart, so persistence is optional. Disable RDB/AOF persistence for better performance if session loss on restart is acceptable.
 
 ---
 
-## Резервное копирование и восстановление
+## Backup and Recovery
 
-### Резервная копия PostgreSQL
+### PostgreSQL Backup
 
 ```bash
-# Полная резервная копия
+# Full backup
 pg_dump -h localhost -U outpost -d outpost -Fc > outpost_$(date +%Y%m%d).dump
 
-# Восстановление
+# Restore
 pg_restore -h localhost -U outpost -d outpost -c outpost_20260315.dump
 ```
 
-### Какие данные копировать
+### What to Back Up
 
-| Данные | Расположение | Критичность |
+| Data | Location | Criticality |
 |------|----------|-------------|
-| База данных PostgreSQL | Всё состояние приложения | Критично |
-| JWT-секрет | Переменная окружения `OUTPOST_JWT_SECRET` | Критично (токены недействительны без него) |
-| Токены шлюзов | `OUTPOST_GATEWAY_TOKEN` на каждом шлюзе | Высокая (шлюзы не смогут переподключиться) |
-| TLS-сертификаты | Конфигурация reverse proxy | Высокая |
-| Redis | Сессии, rate limits | Низкая (пересоздаются при перезапуске) |
+| PostgreSQL database | All application state | Critical |
+| JWT secret | `OUTPOST_JWT_SECRET` environment variable | Critical (tokens are invalid without it) |
+| Gateway tokens | `OUTPOST_GATEWAY_TOKEN` on each gateway | High (gateways cannot reconnect) |
+| TLS certificates | Reverse proxy configuration | High |
+| Redis | Sessions, rate limits | Low (recreated on restart) |
 
 ---
 
-## Мониторинг
+## Monitoring
 
-outpost-core предоставляет метрики Prometheus по адресу `/metrics` (без аутентификации).
+outpost-core exposes Prometheus metrics at `/metrics` (no authentication).
 
-### Конфигурация Prometheus
+### Prometheus Configuration
 
 ```yaml
 scrape_configs:
@@ -445,34 +445,34 @@ scrape_configs:
     scrape_interval: 15s
 ```
 
-### Ключевые метрики
+### Key Metrics
 
-| Метрика | Тип | Описание |
+| Metric | Type | Description |
 |--------|------|-------------|
-| `outpost_active_peers` | Gauge | Текущие подключённые WireGuard-пиры |
-| `outpost_bandwidth_bytes_total` | Counter | Общий трафик (метки rx/tx) |
-| `outpost_gateway_last_seen_seconds` | Gauge | Время с последнего heartbeat шлюза |
-| `outpost_auth_attempts_total` | Counter | Попытки аутентификации (метки success/failure) |
-| `outpost_s2s_tunnel_status` | Gauge | Состояние S2S-туннеля (1=работает, 0=не работает) |
+| `outpost_active_peers` | Gauge | Currently connected WireGuard peers |
+| `outpost_bandwidth_bytes_total` | Counter | Total traffic (rx/tx labels) |
+| `outpost_gateway_last_seen_seconds` | Gauge | Time since last gateway heartbeat |
+| `outpost_auth_attempts_total` | Counter | Authentication attempts (success/failure labels) |
+| `outpost_s2s_tunnel_status` | Gauge | S2S tunnel status (1=up, 0=down) |
 
-### Эндпоинты проверки здоровья
+### Health Check Endpoints
 
-| Эндпоинт | Назначение | Использование |
-|----------|---------|---------|
-| `GET /healthz` | Проверка жизнеспособности | Kubernetes liveness probe, проверка здоровья LB |
-| `GET /readyz` | Проверка готовности (проверяет БД) | Kubernetes readiness probe |
+| Endpoint | Purpose | Usage |
+|----------|---------|-------|
+| `GET /healthz` | Liveness check | Kubernetes liveness probe, LB health check |
+| `GET /readyz` | Readiness check (verifies DB) | Kubernetes readiness probe |
 
 ---
 
-## Устранение неполадок
+## Troubleshooting
 
-| Симптом | Что проверить |
-|---------|-------|
-| Не подключается к VPN | `wg show` на шлюзе, правила файрвола, статус одобрения устройства |
-| Шлюз показывается офлайн | Логи core, токен шлюза, связность gRPC, `OUTPOST_GATEWAY_CORE_ADDR` |
-| Медленные хендшейки | Настройки MTU, DNS-резолвинг, доступность эндпоинта |
-| S2S-туннель не работает | Оба шлюза онлайн, обмен маршрутами, конфликты подсетей |
-| MFA не работает | Синхронизация времени (NTP), валидность TOTP-секрета |
-| 429 Too Many Requests | Rate limit аутентификации (10/мин на IP), проверьте, нет ли прокси без `X-Real-IP` |
-| Core не запускается | Проверьте `OUTPOST_JWT_SECRET`, связность с БД, ошибки миграций |
-| Пустая страница фронтенда | Проверьте, встроен ли `web-ui/dist`, директиву `go:embed` |
+| Symptom | What to Check |
+|---------|---------------|
+| Cannot connect to VPN | `wg show` on the gateway, firewall rules, device approval status |
+| Gateway shows as offline | Core logs, gateway token, gRPC connectivity, `OUTPOST_GATEWAY_CORE_ADDR` |
+| Slow handshakes | MTU settings, DNS resolution, endpoint reachability |
+| S2S tunnel not working | Both gateways online, route exchange, subnet conflicts |
+| MFA not working | Time synchronization (NTP), TOTP secret validity |
+| 429 Too Many Requests | Auth rate limit (10/min per IP), check if a proxy is missing `X-Real-IP` |
+| Core won't start | Check `OUTPOST_JWT_SECRET`, DB connectivity, migration errors |
+| Blank frontend page | Check if `web-ui/dist` is embedded, `go:embed` directive |

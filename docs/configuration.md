@@ -1,109 +1,109 @@
-# Справочник по конфигурации
+# Configuration Reference
 
-Outpost VPN настраивается полностью через переменные окружения с префиксом `OUTPOST_`. Отсутствующие переменные используют разумные значения по умолчанию. Конфигурация загружается при старте в `internal/config/config.go`.
+Outpost VPN is configured entirely via environment variables prefixed with `OUTPOST_`. Missing variables use sensible defaults. Configuration is loaded at startup in `internal/config/config.go`.
 
 ## outpost-core
 
-### Сервер
+### Server
 
-| Переменная | По умолчанию | Описание |
+| Variable | Default | Description |
 |----------|---------|-------------|
-| `OUTPOST_HTTP_ADDR` | `:8080` | Адрес HTTP-сервера (API + панель администратора) |
-| `OUTPOST_GRPC_ADDR` | `:9090` | Адрес gRPC-сервера (связь со шлюзами) |
-| `OUTPOST_TLS_CERT` | _(пусто)_ | Путь к файлу TLS-сертификата (включает HTTPS) |
-| `OUTPOST_TLS_KEY` | _(пусто)_ | Путь к файлу приватного ключа TLS |
+| `OUTPOST_HTTP_ADDR` | `:8080` | HTTP server address (API + admin panel) |
+| `OUTPOST_GRPC_ADDR` | `:9090` | gRPC server address (gateway communication) |
+| `OUTPOST_TLS_CERT` | _(empty)_ | Path to TLS certificate file (enables HTTPS) |
+| `OUTPOST_TLS_KEY` | _(empty)_ | Path to TLS private key file |
 
-Примечание: в Docker Compose core использует `OUTPOST_SERVER_HTTP_ADDR` и `OUTPOST_SERVER_GRPC_ADDR` (с префиксом `SERVER_`) для тех же целей. Загрузчик конфигурации читает `OUTPOST_HTTP_ADDR`.
+Note: in Docker Compose, core uses `OUTPOST_SERVER_HTTP_ADDR` and `OUTPOST_SERVER_GRPC_ADDR` (with `SERVER_` prefix) for the same purpose. The config loader reads `OUTPOST_HTTP_ADDR`.
 
-### База данных (PostgreSQL)
+### Database (PostgreSQL)
 
-| Переменная | По умолчанию | Описание |
+| Variable | Default | Description |
 |----------|---------|-------------|
-| `OUTPOST_DB_HOST` | `localhost` | Хост PostgreSQL |
-| `OUTPOST_DB_PORT` | `5432` | Порт PostgreSQL |
-| `OUTPOST_DB_NAME` | `outpost` | Имя базы данных |
-| `OUTPOST_DB_USER` | `outpost` | Пользователь базы данных |
-| `OUTPOST_DB_PASSWORD` | _(пусто)_ | Пароль базы данных |
-| `OUTPOST_DB_SSLMODE` | `disable` | SSL-режим PostgreSQL (`disable`, `require`, `verify-ca`, `verify-full`) |
-| `OUTPOST_DB_MAX_CONNS` | `20` | Максимальное число соединений с БД |
-| `OUTPOST_DB_MIN_CONNS` | `2` | Минимальное число простаивающих соединений |
+| `OUTPOST_DB_HOST` | `localhost` | PostgreSQL host |
+| `OUTPOST_DB_PORT` | `5432` | PostgreSQL port |
+| `OUTPOST_DB_NAME` | `outpost` | Database name |
+| `OUTPOST_DB_USER` | `outpost` | Database user |
+| `OUTPOST_DB_PASSWORD` | _(empty)_ | Database password |
+| `OUTPOST_DB_SSLMODE` | `disable` | PostgreSQL SSL mode (`disable`, `require`, `verify-ca`, `verify-full`) |
+| `OUTPOST_DB_MAX_CONNS` | `20` | Maximum database connections |
+| `OUTPOST_DB_MIN_CONNS` | `2` | Minimum idle connections |
 
 ### Redis
 
-| Переменная | По умолчанию | Описание |
+| Variable | Default | Description |
 |----------|---------|-------------|
-| `OUTPOST_REDIS_ADDR` | `localhost:6379` | Адрес Redis (хост:порт) |
-| `OUTPOST_REDIS_PASSWORD` | _(пусто)_ | Пароль Redis |
-| `OUTPOST_REDIS_DB` | `0` | Номер базы данных Redis |
+| `OUTPOST_REDIS_ADDR` | `localhost:6379` | Redis address (host:port) |
+| `OUTPOST_REDIS_PASSWORD` | _(empty)_ | Redis password |
+| `OUTPOST_REDIS_DB` | `0` | Redis database number |
 
-### Аутентификация
+### Authentication
 
-| Переменная | По умолчанию | Описание |
+| Variable | Default | Description |
 |----------|---------|-------------|
-| `OUTPOST_JWT_SECRET` | _(авто-генерация)_ | Секрет для подписи JWT. **Критично: установите в продакшене.** Если не задан, при каждом запуске генерируется случайная 32-байтная hex-строка, и токены не переживут перезапуск. |
-| `OUTPOST_TOKEN_TTL` | `15m` | Время жизни JWT-токена (формат Go duration: `15m`, `1h`, `24h`) |
-| `OUTPOST_SESSION_TTL` | `24h` | Время жизни сессии |
+| `OUTPOST_JWT_SECRET` | _(auto-generated)_ | JWT signing secret. **Critical: set in production.** If not set, a random 32-byte hex string is generated on each startup, and tokens will not survive restarts. |
+| `OUTPOST_TOKEN_TTL` | `15m` | JWT token lifetime (Go duration format: `15m`, `1h`, `24h`) |
+| `OUTPOST_SESSION_TTL` | `24h` | Session lifetime |
 
-### OIDC-провайдер
+### OIDC Provider
 
-Outpost включает встроенный OpenID Connect провайдер идентификации.
+Outpost includes a built-in OpenID Connect identity provider.
 
-| Переменная | По умолчанию | Описание |
+| Variable | Default | Description |
 |----------|---------|-------------|
-| `OUTPOST_OIDC_ISSUER` | `http://localhost:8080` | URL OIDC-эмитента. Должен совпадать с публичным URL вашего экземпляра Outpost. |
-| `OUTPOST_OIDC_SIGNING_KEY` | _(пусто)_ | Путь к PEM-файлу приватного ключа RSA для подписи OIDC-токенов. Если пусто, ключ генерируется при запуске. |
+| `OUTPOST_OIDC_ISSUER` | `http://localhost:8080` | OIDC issuer URL. Must match the public URL of your Outpost instance. |
+| `OUTPOST_OIDC_SIGNING_KEY` | _(empty)_ | Path to RSA private key PEM file for OIDC token signing. If empty, a key is generated at startup. |
 
 ### SAML 2.0
 
-Outpost может выступать в роли SAML 2.0 Service Provider, делегируя аутентификацию внешнему Identity Provider (Okta, Azure AD, OneLogin и т.д.).
+Outpost can act as a SAML 2.0 Service Provider, delegating authentication to an external Identity Provider (Okta, Azure AD, OneLogin, etc.).
 
-| Переменная | По умолчанию | Описание |
+| Variable | Default | Description |
 |----------|---------|-------------|
-| `OUTPOST_SAML_ENABLED` | `false` | Включить SAML 2.0 SP |
-| `OUTPOST_SAML_ENTITY_ID` | _(пусто)_ | Entity ID SP (уникальный идентификатор для данного SP) |
-| `OUTPOST_SAML_ACS_URL` | _(пусто)_ | URL Assertion Consumer Service (например, `https://vpn.example.com/saml/acs`) |
-| `OUTPOST_SAML_IDP_METADATA_URL` | _(пусто)_ | URL метаданных IDP (загружается при запуске для конфигурации SP) |
-| `OUTPOST_SAML_CERT_FILE` | _(пусто)_ | Путь к X.509 сертификату SP |
-| `OUTPOST_SAML_KEY_FILE` | _(пусто)_ | Путь к приватному ключу SP |
+| `OUTPOST_SAML_ENABLED` | `false` | Enable SAML 2.0 SP |
+| `OUTPOST_SAML_ENTITY_ID` | _(empty)_ | SP Entity ID (unique identifier for this SP) |
+| `OUTPOST_SAML_ACS_URL` | _(empty)_ | Assertion Consumer Service URL (e.g., `https://vpn.example.com/saml/acs`) |
+| `OUTPOST_SAML_IDP_METADATA_URL` | _(empty)_ | IDP metadata URL (fetched at startup to configure the SP) |
+| `OUTPOST_SAML_CERT_FILE` | _(empty)_ | Path to SP X.509 certificate |
+| `OUTPOST_SAML_KEY_FILE` | _(empty)_ | Path to SP private key |
 
 ### LDAP / Active Directory
 
-| Переменная | По умолчанию | Описание |
+| Variable | Default | Description |
 |----------|---------|-------------|
-| `OUTPOST_LDAP_ENABLED` | `false` | Включить синхронизацию LDAP/AD |
-| `OUTPOST_LDAP_URL` | _(пусто)_ | URL LDAP-сервера (например, `ldap://ad.example.com:389` или `ldaps://ad.example.com:636`) |
-| `OUTPOST_LDAP_BIND_DN` | _(пусто)_ | Bind DN для LDAP-запросов (например, `cn=outpost,ou=service,dc=example,dc=com`) |
-| `OUTPOST_LDAP_BIND_PASSWORD` | _(пусто)_ | Пароль для Bind |
-| `OUTPOST_LDAP_BASE_DN` | _(пусто)_ | Base DN для поиска пользователей/групп (например, `dc=example,dc=com`) |
-| `OUTPOST_LDAP_USER_FILTER` | `(objectClass=person)` | LDAP-фильтр для поиска пользователей |
-| `OUTPOST_LDAP_GROUP_FILTER` | `(objectClass=group)` | LDAP-фильтр для поиска групп |
-| `OUTPOST_LDAP_TLS` | `false` | Включить STARTTLS |
-| `OUTPOST_LDAP_SKIP_VERIFY` | `false` | Пропустить проверку TLS-сертификата (не рекомендуется для продакшена) |
-| `OUTPOST_LDAP_SYNC_INTERVAL` | `15m` | Периодичность синхронизации пользователей/групп из LDAP |
+| `OUTPOST_LDAP_ENABLED` | `false` | Enable LDAP/AD sync |
+| `OUTPOST_LDAP_URL` | _(empty)_ | LDAP server URL (e.g., `ldap://ad.example.com:389` or `ldaps://ad.example.com:636`) |
+| `OUTPOST_LDAP_BIND_DN` | _(empty)_ | Bind DN for LDAP queries (e.g., `cn=outpost,ou=service,dc=example,dc=com`) |
+| `OUTPOST_LDAP_BIND_PASSWORD` | _(empty)_ | Bind password |
+| `OUTPOST_LDAP_BASE_DN` | _(empty)_ | Base DN for user/group searches (e.g., `dc=example,dc=com`) |
+| `OUTPOST_LDAP_USER_FILTER` | `(objectClass=person)` | LDAP filter for user searches |
+| `OUTPOST_LDAP_GROUP_FILTER` | `(objectClass=group)` | LDAP filter for group searches |
+| `OUTPOST_LDAP_TLS` | `false` | Enable STARTTLS |
+| `OUTPOST_LDAP_SKIP_VERIFY` | `false` | Skip TLS certificate verification (not recommended for production) |
+| `OUTPOST_LDAP_SYNC_INTERVAL` | `15m` | User/group sync interval from LDAP |
 
 ### WireGuard
 
-| Переменная | По умолчанию | Описание |
+| Variable | Default | Description |
 |----------|---------|-------------|
-| `OUTPOST_WG_INTERFACE` | `wg0` | Имя WireGuard-интерфейса |
-| `OUTPOST_WG_LISTEN_PORT` | `51820` | UDP-порт WireGuard |
-| `OUTPOST_WG_MTU` | `1420` | MTU WireGuard-интерфейса |
+| `OUTPOST_WG_INTERFACE` | `wg0` | WireGuard interface name |
+| `OUTPOST_WG_LISTEN_PORT` | `51820` | WireGuard UDP port |
+| `OUTPOST_WG_MTU` | `1420` | WireGuard interface MTU |
 
-### SMTP (email-уведомления)
+### SMTP (Email Notifications)
 
-Email опционален. Если `OUTPOST_SMTP_HOST` пуст, email-функции отключены.
+Email is optional. If `OUTPOST_SMTP_HOST` is empty, email features are disabled.
 
-| Переменная | По умолчанию | Описание |
+| Variable | Default | Description |
 |----------|---------|-------------|
-| `OUTPOST_SMTP_HOST` | _(пусто)_ | Хост SMTP-сервера |
-| `OUTPOST_SMTP_PORT` | `587` | Порт SMTP-сервера |
-| `OUTPOST_SMTP_USERNAME` | _(пусто)_ | Логин для SMTP-аутентификации |
-| `OUTPOST_SMTP_PASSWORD` | _(пусто)_ | Пароль для SMTP-аутентификации |
-| `OUTPOST_SMTP_FROM` | _(пусто)_ | Email-адрес отправителя (например, `noreply@example.com`) |
-| `OUTPOST_SMTP_FROM_NAME` | `Outpost VPN` | Отображаемое имя отправителя |
-| `OUTPOST_SMTP_TLS` | `false` | Включить STARTTLS |
+| `OUTPOST_SMTP_HOST` | _(empty)_ | SMTP server host |
+| `OUTPOST_SMTP_PORT` | `587` | SMTP server port |
+| `OUTPOST_SMTP_USERNAME` | _(empty)_ | SMTP authentication username |
+| `OUTPOST_SMTP_PASSWORD` | _(empty)_ | SMTP authentication password |
+| `OUTPOST_SMTP_FROM` | _(empty)_ | Sender email address (e.g., `noreply@example.com`) |
+| `OUTPOST_SMTP_FROM_NAME` | `Outpost VPN` | Sender display name |
+| `OUTPOST_SMTP_TLS` | `false` | Enable STARTTLS |
 
-#### Пример: Gmail SMTP
+#### Example: Gmail SMTP
 
 ```bash
 OUTPOST_SMTP_HOST=smtp.gmail.com
@@ -114,7 +114,7 @@ OUTPOST_SMTP_FROM=yourapp@gmail.com
 OUTPOST_SMTP_TLS=true
 ```
 
-#### Пример: AWS SES
+#### Example: AWS SES
 
 ```bash
 OUTPOST_SMTP_HOST=email-smtp.us-east-1.amazonaws.com
@@ -127,108 +127,108 @@ OUTPOST_SMTP_TLS=true
 
 ### NAT Traversal
 
-| Переменная | По умолчанию | Описание |
+| Variable | Default | Description |
 |----------|---------|-------------|
-| `OUTPOST_NAT_ENABLED` | `false` | Включить NAT traversal (STUN/TURN) |
-| `OUTPOST_STUN_PORT` | `3478` | Порт STUN-сервера |
-| `OUTPOST_TURN_PORT` | `3479` | Порт TURN-сервера |
-| `OUTPOST_TURN_REALM` | `outpost` | Realm TURN-сервера |
-| `OUTPOST_EXTERNAL_IP` | _(пусто)_ | Внешний IP для NAT traversal (определяется автоматически, если пусто) |
+| `OUTPOST_NAT_ENABLED` | `false` | Enable NAT traversal (STUN/TURN) |
+| `OUTPOST_STUN_PORT` | `3478` | STUN server port |
+| `OUTPOST_TURN_PORT` | `3479` | TURN server port |
+| `OUTPOST_TURN_REALM` | `outpost` | TURN server realm |
+| `OUTPOST_EXTERNAL_IP` | _(empty)_ | External IP for NAT traversal (auto-detected if empty) |
 
-### Логирование
+### Logging
 
-| Переменная | По умолчанию | Описание |
+| Variable | Default | Description |
 |----------|---------|-------------|
-| `OUTPOST_LOG_LEVEL` | `info` | Уровень логирования: `debug`, `info`, `warn`, `error` |
-| `OUTPOST_LOG_FORMAT` | `json` | Формат логов: `json` (продакшен), `text` (разработка) |
+| `OUTPOST_LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
+| `OUTPOST_LOG_FORMAT` | `json` | Log format: `json` (production), `text` (development) |
 
 ---
 
 ## outpost-gateway
 
-Бинарный файл шлюза использует ту же структуру конфигурации, но в основном использует следующие переменные:
+The gateway binary uses the same configuration structure but primarily uses the following variables:
 
-| Переменная | По умолчанию | Описание |
+| Variable | Default | Description |
 |----------|---------|-------------|
-| `OUTPOST_GATEWAY_TOKEN` | _(пусто)_ | Токен аутентификации для подключения к core. Генерируется при создании шлюза в панели администратора. |
-| `OUTPOST_GATEWAY_CORE_ADDR` | `localhost:9090` | gRPC-адрес outpost-core (например, `core.example.com:50051`) |
-| `OUTPOST_LOG_LEVEL` | `info` | Уровень логирования |
-| `OUTPOST_LOG_FORMAT` | `json` | Формат логов |
+| `OUTPOST_GATEWAY_TOKEN` | _(empty)_ | Authentication token for connecting to core. Generated when creating a gateway in the admin panel. |
+| `OUTPOST_GATEWAY_CORE_ADDR` | `localhost:9090` | gRPC address of outpost-core (e.g., `core.example.com:50051`) |
+| `OUTPOST_LOG_LEVEL` | `info` | Log level |
+| `OUTPOST_LOG_FORMAT` | `json` | Log format |
 
-Шлюз также читает `OUTPOST_WG_INTERFACE`, `OUTPOST_WG_LISTEN_PORT` и `OUTPOST_WG_MTU` для конфигурации WireGuard.
+The gateway also reads `OUTPOST_WG_INTERFACE`, `OUTPOST_WG_LISTEN_PORT`, and `OUTPOST_WG_MTU` for WireGuard configuration.
 
-### Системные требования
+### System Requirements
 
-Шлюз требует:
-- Capability `NET_ADMIN` (управление WireGuard-интерфейсами)
-- Capability `SYS_MODULE` (загрузка модуля ядра WireGuard)
-- Доступ к устройству `/dev/net/tun`
-- sysctl `net.ipv4.ip_forward=1` (IP-форвардинг)
-- sysctl `net.ipv4.conf.all.src_valid_mark=1` (валидация источника)
+The gateway requires:
+- `NET_ADMIN` capability (WireGuard interface management)
+- `SYS_MODULE` capability (loading the WireGuard kernel module)
+- Access to `/dev/net/tun` device
+- sysctl `net.ipv4.ip_forward=1` (IP forwarding)
+- sysctl `net.ipv4.conf.all.src_valid_mark=1` (source validation)
 
 ---
 
 ## outpost-proxy
 
-Прокси -- легковесный компонент без состояния для развёртывания в DMZ.
+The proxy is a lightweight stateless component for DMZ deployment.
 
-| Переменная | По умолчанию | Описание |
+| Variable | Default | Description |
 |----------|---------|-------------|
-| `OUTPOST_PROXY_LISTEN_ADDR` | `:8081` | Адрес HTTP-сервера |
-| `OUTPOST_PROXY_CORE_ADDR` | `localhost:9090` | gRPC-адрес outpost-core |
-| `OUTPOST_LOG_LEVEL` | `info` | Уровень логирования |
-| `OUTPOST_LOG_FORMAT` | `json` | Формат логов |
+| `OUTPOST_PROXY_LISTEN_ADDR` | `:8081` | HTTP server address |
+| `OUTPOST_PROXY_CORE_ADDR` | `localhost:9090` | gRPC address of outpost-core |
+| `OUTPOST_LOG_LEVEL` | `info` | Log level |
+| `OUTPOST_LOG_FORMAT` | `json` | Log format |
 
-Прокси не имеет соединений с базой данных или Redis. Он перенаправляет запросы регистрации и аутентификации к core через gRPC.
+The proxy has no database or Redis connections. It forwards enrollment and authentication requests to core via gRPC.
 
 ---
 
 ## outpost-client
 
-VPN-клиент. Настраивается при первом запуске через команды `login` и `enroll`.
+VPN client. Configured on first run via the `login` and `enroll` commands.
 
-| Переменная | По умолчанию | Описание |
+| Variable | Default | Description |
 |----------|---------|-------------|
-| `OUTPOST_CLIENT_SERVER` | _(пусто)_ | URL сервера Outpost (например, `https://vpn.example.com`) |
-| `OUTPOST_LOG_LEVEL` | `info` | Уровень логирования |
-| `OUTPOST_LOG_FORMAT` | `text` | Формат логов |
+| `OUTPOST_CLIENT_SERVER` | _(empty)_ | Outpost server URL (e.g., `https://vpn.example.com`) |
+| `OUTPOST_LOG_LEVEL` | `info` | Log level |
+| `OUTPOST_LOG_FORMAT` | `text` | Log format |
 
-Клиент сохраняет конфигурацию (токен, ключи, параметры туннеля) локально после успешного `login` и `enroll`.
+The client stores configuration (token, keys, tunnel parameters) locally after a successful `login` and `enroll`.
 
 ---
 
-## Формат длительности
+## Duration Format
 
-Переменные, принимающие длительность, используют формат Go `time.Duration`:
+Variables accepting durations use the Go `time.Duration` format:
 
-| Формат | Пример | Значение |
+| Format | Example | Meaning |
 |--------|---------|---------|
-| `s` | `30s` | 30 секунд |
-| `m` | `15m` | 15 минут |
-| `h` | `24h` | 24 часа |
-| Комбинированный | `1h30m` | 1 час 30 минут |
+| `s` | `30s` | 30 seconds |
+| `m` | `15m` | 15 minutes |
+| `h` | `24h` | 24 hours |
+| Combined | `1h30m` | 1 hour 30 minutes |
 
 ---
 
-## Приоритет конфигурации
+## Configuration Priority
 
-1. Переменные окружения (наивысший приоритет)
-2. Встроенные значения по умолчанию (наименьший приоритет)
+1. Environment variables (highest priority)
+2. Built-in defaults (lowest priority)
 
-Конфигурационного файла нет. Вся конфигурация -- через переменные окружения. Это следует методологии twelve-factor app и хорошо работает с Docker, Kubernetes и systemd.
+There is no configuration file. All configuration is via environment variables. This follows the twelve-factor app methodology and works well with Docker, Kubernetes, and systemd.
 
 ---
 
-## Рекомендации по безопасности
+## Security Recommendations
 
-1. **Всегда устанавливайте `OUTPOST_JWT_SECRET`** в продакшене. Если не задан, генерируется случайный секрет, и все JWT-токены становятся недействительными при перезапуске.
+1. **Always set `OUTPOST_JWT_SECRET`** in production. If not set, a random secret is generated, and all JWT tokens become invalid on restart.
 
-2. **Используйте `OUTPOST_DB_SSLMODE=require`** (или `verify-full`) при подключении к удалённой базе данных.
+2. **Use `OUTPOST_DB_SSLMODE=require`** (or `verify-full`) when connecting to a remote database.
 
-3. **Никогда не выставляйте порты PostgreSQL или Redis** в интернет. Только outpost-core должен иметь к ним доступ.
+3. **Never expose PostgreSQL or Redis ports** to the internet. Only outpost-core should have access to them.
 
-4. **Периодически ротируйте токены шлюзов.** Сгенерируйте новый токен в панели администратора и обновите переменную окружения шлюза.
+4. **Rotate gateway tokens periodically.** Generate a new token in the admin panel and update the gateway's environment variable.
 
-5. **Включите SMTP** для email-уведомлений о сбросе пароля и регистрации устройств.
+5. **Enable SMTP** for email notifications about password resets and device enrollments.
 
-6. **Установите `OUTPOST_LOG_LEVEL=info`** в продакшене. Используйте `debug` только для отладки -- он логирует чувствительные детали запросов.
+6. **Set `OUTPOST_LOG_LEVEL=info`** in production. Use `debug` only for troubleshooting — it logs sensitive request details.

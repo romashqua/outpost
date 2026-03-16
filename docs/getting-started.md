@@ -1,111 +1,111 @@
-# Быстрый старт с Outpost VPN
+# Getting Started with Outpost VPN
 
-Это руководство проведёт вас через настройку Outpost VPN с нуля: требования, установка, первый вход и подключение первого устройства.
+This guide walks you through setting up Outpost VPN from scratch: requirements, installation, first login, and connecting your first device.
 
-## Требования
+## Requirements
 
-| Программа | Версия | Назначение |
+| Software | Version | Purpose |
 |----------|---------|---------|
-| Docker | 24+ | Контейнерная среда выполнения |
-| Docker Compose | v2+ | Оркестрация |
-| Git | 2.40+ | Клонирование репозитория |
+| Docker | 24+ | Container runtime |
+| Docker Compose | v2+ | Orchestration |
+| Git | 2.40+ | Repository cloning |
 
-Для сборки из исходников (опционально):
+For building from source (optional):
 
-| Программа | Версия | Назначение |
+| Software | Version | Purpose |
 |----------|---------|---------|
-| Go | 1.24+ | Компиляция бэкенда |
-| Node.js | 22+ | Сборка фронтенда |
-| pnpm | 9+ | Менеджер пакетов фронтенда |
-| PostgreSQL | 17 | База данных |
-| Redis | 7 | Сессии, pub/sub, rate limiting |
-| Buf | последняя | Генерация кода из Protobuf |
-| sqlc | последняя | Типобезопасная SQL-кодогенерация |
-| golangci-lint | последняя | Go-линтер |
+| Go | 1.24+ | Backend compilation |
+| Node.js | 22+ | Frontend build |
+| pnpm | 9+ | Frontend package manager |
+| PostgreSQL | 17 | Database |
+| Redis | 7 | Sessions, pub/sub, rate limiting |
+| Buf | latest | Protobuf code generation |
+| sqlc | latest | Type-safe SQL code generation |
+| golangci-lint | latest | Go linter |
 
-## Быстрый старт с Docker Compose
+## Quick Start with Docker Compose
 
-### 1. Клонирование репозитория
+### 1. Clone the Repository
 
 ```bash
 git clone https://github.com/romashqua/outpost.git
 cd outpost
 ```
 
-### 2. Запуск полного стека
+### 2. Start the Full Stack
 
 ```bash
 docker compose -f deploy/docker/docker-compose.yml up -d
 ```
 
-Это запускает пять сервисов:
+This starts five services:
 
-| Сервис | Порт | Описание |
+| Service | Port | Description |
 |---------|------|-------------|
-| PostgreSQL 17 | 5432 | База данных |
-| Redis 7 | 6379 | Кэш и pub/sub |
-| outpost-core | 8080 (HTTP), 50051 (gRPC) | API-сервер, панель администратора, OIDC-провайдер |
-| outpost-gateway | 51820/udp | WireGuard-шлюз |
-| outpost-proxy | 8081 | Публичный прокси для регистрации/авторизации (безопасен для DMZ) |
+| PostgreSQL 17 | 5432 | Database |
+| Redis 7 | 6379 | Cache and pub/sub |
+| outpost-core | 8080 (HTTP), 50051 (gRPC) | API server, admin panel, OIDC provider |
+| outpost-gateway | 51820/udp | WireGuard gateway |
+| outpost-proxy | 8081 | Public proxy for enrollment/auth (DMZ-safe) |
 
-Миграции базы данных выполняются автоматически при запуске core (встроены через `go:embed`).
+Database migrations run automatically on core startup (embedded via `go:embed`).
 
-### 3. Проверка работы сервисов
+### 3. Verify Services Are Running
 
 ```bash
-# Проверка, что все контейнеры работают
+# Check that all containers are running
 docker compose -f deploy/docker/docker-compose.yml ps
 
-# Проверка эндпоинта здоровья
+# Check the health endpoint
 curl http://localhost:8080/healthz
 # → {"status":"ok"}
 
-# Проверка готовности (проверяет соединение с БД)
+# Check readiness (verifies DB connection)
 curl http://localhost:8080/readyz
 # → {"status":"ok"}
 ```
 
-### 4. Открытие панели администратора
+### 4. Open the Admin Panel
 
-Перейдите в браузере по адресу **http://localhost:8080**.
+Navigate to **http://localhost:8080** in your browser.
 
-## Первый вход
+## First Login
 
-Войдите с учётными данными администратора по умолчанию:
+Log in with the default admin credentials:
 
-- **Логин:** `admin`
-- **Пароль:** `admin`
+- **Username:** `admin`
+- **Password:** `admin`
 
-**Немедленно смените пароль.** Пароль по умолчанию создаётся миграцией `000004_seed_admin_user.up.sql` и не является безопасным для любого развёртывания, кроме локальной разработки.
+**Change the password immediately.** The default password is created by the `000004_seed_admin_user.up.sql` migration and is not secure for any deployment beyond local development.
 
-Чтобы сменить пароль:
-1. Войдите с `admin` / `admin`
-2. Перейдите в **Настройки** > **Безопасность**
-3. Установите надёжный пароль
+To change the password:
+1. Log in with `admin` / `admin`
+2. Go to **Settings** > **Security**
+3. Set a strong password
 
-## Создание первой сети
+## Creating Your First Network
 
-Сеть по умолчанию (`10.10.0.0/16`, порт 51820) создаётся автоматически миграцией-сидом. Для создания дополнительной сети:
+A default network (`10.10.0.0/16`, port 51820) is created automatically by the seed migration. To create an additional network:
 
-1. Перейдите в **Сети** в боковой панели
-2. Нажмите **Создать сеть**
-3. Заполните данные:
-   - **Название:** `office` (или любое описательное имя)
-   - **Адрес (CIDR):** `10.20.0.0/24`
-   - **DNS-серверы:** `1.1.1.1`, `8.8.8.8`
-   - **Порт:** `51820`
-   - **Keepalive:** `25` (секунд)
-4. Нажмите **Создать**
+1. Go to **Networks** in the sidebar
+2. Click **Create Network**
+3. Fill in the details:
+   - **Name:** `office` (or any descriptive name)
+   - **Address (CIDR):** `10.20.0.0/24`
+   - **DNS servers:** `1.1.1.1`, `8.8.8.8`
+   - **Port:** `51820`
+   - **Keepalive:** `25` (seconds)
+4. Click **Create**
 
-Или через API:
+Or via the API:
 
 ```bash
-# Получение JWT-токена
+# Get a JWT token
 TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"admin"}' | jq -r '.token')
 
-# Создание сети
+# Create a network
 curl -X POST http://localhost:8080/api/v1/networks \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
@@ -118,20 +118,20 @@ curl -X POST http://localhost:8080/api/v1/networks \
   }'
 ```
 
-## Регистрация шлюза
+## Registering a Gateway
 
-Шлюзы -- это WireGuard-эндпоинты, обрабатывающие VPN-трафик. Docker Compose включает один шлюз автоматически, но для дополнительных площадок:
+Gateways are WireGuard endpoints that handle VPN traffic. Docker Compose includes one gateway automatically, but for additional sites:
 
-1. Перейдите в **Шлюзы** в боковой панели
-2. Нажмите **Создать шлюз**
-3. Заполните:
-   - **Название:** `gw-office` (описательное имя)
-   - **Сеть:** Выберите сеть, созданную ранее
-   - **Эндпоинт:** `vpn.example.com:51820` (публичный IP/хостнейм + порт)
-4. Нажмите **Создать** -- будет сгенерирован токен шлюза
-5. Скопируйте токен и установите его как `OUTPOST_GATEWAY_TOKEN` на машине шлюза
+1. Go to **Gateways** in the sidebar
+2. Click **Create Gateway**
+3. Fill in:
+   - **Name:** `gw-office` (descriptive name)
+   - **Network:** Select the network created earlier
+   - **Endpoint:** `vpn.example.com:51820` (public IP/hostname + port)
+4. Click **Create** — a gateway token will be generated
+5. Copy the token and set it as `OUTPOST_GATEWAY_TOKEN` on the gateway machine
 
-Развёртывание шлюза:
+Deploying a gateway:
 
 ```bash
 docker run -d \
@@ -141,201 +141,201 @@ docker run -d \
   --device=/dev/net/tun \
   --sysctl net.ipv4.ip_forward=1 \
   -e OUTPOST_GATEWAY_CORE_ADDR=core.example.com:50051 \
-  -e OUTPOST_GATEWAY_TOKEN=<вставьте-токен-здесь> \
+  -e OUTPOST_GATEWAY_TOKEN=<paste-token-here> \
   -p 51820:51820/udp \
   outpost/gateway:latest
 ```
 
-## Регистрация устройства
+## Enrolling a Device
 
-1. Перейдите в **Устройства** в боковой панели
-2. Нажмите **Добавить устройство**
-3. Введите название устройства (например, `laptop-alice`)
-4. Система генерирует пару ключей WireGuard и назначает IP
-5. Нажмите **Одобрить** для активации устройства
-6. Нажмите **Скачать конфиг** для получения файла `.conf`
+1. Go to **Devices** in the sidebar
+2. Click **Add Device**
+3. Enter a device name (e.g., `laptop-alice`)
+4. The system generates a WireGuard key pair and assigns an IP
+5. Click **Approve** to activate the device
+6. Click **Download Config** to get the `.conf` file
 
-Скачанный файл конфигурации выглядит так:
+The downloaded configuration file looks like this:
 
 ```ini
 [Interface]
-PrivateKey = <сгенерированный-приватный-ключ>
+PrivateKey = <generated-private-key>
 Address = 10.10.0.2/16
 DNS = 1.1.1.1, 8.8.8.8
 
 [Peer]
-PublicKey = <публичный-ключ-шлюза>
+PublicKey = <gateway-public-key>
 Endpoint = vpn.example.com:51820
 AllowedIPs = 10.10.0.0/16
 PersistentKeepalive = 25
 ```
 
-> **Split tunneling:** `AllowedIPs` содержит CIDR вашей VPN-сети (например `10.10.0.0/16`), а не `0.0.0.0/0`. Это означает, что только VPN-трафик идёт через туннель, а интернет работает напрямую. Если нужно направить весь трафик через VPN, настройте ACL группы с `allowed_ips: ["0.0.0.0/0"]`.
+> **Split tunneling:** `AllowedIPs` contains your VPN network CIDR (e.g., `10.10.0.0/16`), not `0.0.0.0/0`. This means only VPN traffic goes through the tunnel, while internet traffic goes direct. If you need to route all traffic through the VPN, configure a group ACL with `allowed_ips: ["0.0.0.0/0"]`.
 
-Импортируйте этот файл в любой WireGuard-клиент:
+Import this file into any WireGuard client:
 - **Linux:** `wg-quick up ./outpost.conf`
-- **macOS/Windows:** Импорт через WireGuard GUI
-- **iOS/Android:** Сканирование QR-кода или импорт файла
-- **Outpost Client:** `outpost-client up` (после `login` и `enroll`)
+- **macOS/Windows:** Import via WireGuard GUI
+- **iOS/Android:** Scan QR code or import file
+- **Outpost Client:** `outpost-client up` (after `login` and `enroll`)
 
-## Как пользователи подключаются к сетям
+## How Users Connect to Networks
 
-В Outpost пользователи привязываются к сетям **через устройства**:
+In Outpost, users are linked to networks **through devices**:
 
 ```
-Пользователь (1) → (N) Устройства → (1) Сеть
+User (1) → (N) Devices → (1) Network
 ```
 
-Один пользователь может иметь несколько устройств в разных сетях.
+A single user can have multiple devices across different networks.
 
-**Пошаговый процесс:**
-1. Создайте **сеть** (Networks → Создать сеть, укажите CIDR и DNS)
-2. Создайте **шлюз** для сети (Gateways → Создать, привяжите к сети)
-3. Создайте **устройство** для пользователя (Devices → Добавить) — оно автоматически получит IP из активной сети
-4. **Одобрите** устройство (кнопка Approve)
-5. **Скачайте конфиг** (кнопка Download) — файл `.conf` готов к импорту в WireGuard
+**Step-by-step process:**
+1. Create a **network** (Networks > Create Network, specify CIDR and DNS)
+2. Create a **gateway** for the network (Gateways > Create, link to network)
+3. Create a **device** for the user (Devices > Add) — it automatically gets an IP from the active network
+4. **Approve** the device (Approve button)
+5. **Download the config** (Download button) — the `.conf` file is ready to import into WireGuard
 
-### Подключение через CLI-клиент
+### Connecting via CLI Client
 
 ```bash
-# Авторизация
-outpost-client login --server https://vpn.example.com --username ivan
+# Authenticate
+outpost-client login --server https://vpn.example.com --username alice
 
-# Регистрация устройства (автоматически получает конфиг)
+# Enroll device (automatically receives config)
 outpost-client enroll --name "my-laptop"
 
-# Поднять туннель
+# Bring up the tunnel
 outpost-client up
 
-# Опустить туннель
+# Bring down the tunnel
 outpost-client down
 ```
 
-### Контроль доступа
+### Access Control
 
-- **Группы + ACL:** Создайте группу → добавьте пользователей → настройте ACL с разрешёнными подсетями
-- **ZTNA-политики:** Автоматический контроль на основе posture checks (шифрование диска, антивирус, версия ОС)
+- **Groups + ACL:** Create a group > add users > configure ACL with allowed subnets
+- **ZTNA policies:** Automatic control based on posture checks (disk encryption, antivirus, OS version)
 
-## Настройка S2S-туннелей (Site-to-Site)
+## Setting Up S2S Tunnels (Site-to-Site)
 
-S2S-туннели соединяют ваши офисы/ЦОД через WireGuard. Всё делается за 4 шага.
+S2S tunnels connect your offices/data centers via WireGuard. Everything is done in 4 steps.
 
-### Шаг 1: Создайте шлюзы в каждом офисе
+### Step 1: Create Gateways at Each Site
 
-У каждого офиса должен быть свой шлюз, привязанный к своей сети:
+Each site should have its own gateway linked to its own network:
 
 ```bash
-# Офис Москва
+# Office A
 POST /api/v1/networks
-{"name": "moscow", "address": "10.1.0.0/24", "dns": ["1.1.1.1"], "port": 51820}
+{"name": "office-a", "address": "10.1.0.0/24", "dns": ["1.1.1.1"], "port": 51820}
 
 POST /api/v1/gateways
-{"name": "gw-moscow", "network_id": "<moscow-network-id>", "endpoint": "moscow.vpn.company.com:51820"}
+{"name": "gw-office-a", "network_id": "<office-a-network-id>", "endpoint": "office-a.vpn.company.com:51820"}
 
-# Офис СПб
+# Office B
 POST /api/v1/networks
-{"name": "spb", "address": "10.2.0.0/24", "dns": ["1.1.1.1"], "port": 51820}
+{"name": "office-b", "address": "10.2.0.0/24", "dns": ["1.1.1.1"], "port": 51820}
 
 POST /api/v1/gateways
-{"name": "gw-spb", "network_id": "<spb-network-id>", "endpoint": "spb.vpn.company.com:51820"}
+{"name": "gw-office-b", "network_id": "<office-b-network-id>", "endpoint": "office-b.vpn.company.com:51820"}
 ```
 
-Или через UI: **Сети → Создать сеть**, затем **Шлюзы → Создать шлюз**.
+Or via the UI: **Networks > Create Network**, then **Gateways > Create Gateway**.
 
-### Шаг 2: Создайте S2S-туннель
+### Step 2: Create an S2S Tunnel
 
 ```bash
 POST /api/v1/s2s-tunnels
-{"name": "office-mesh", "topology": "mesh", "description": "Mesh офисов"}
+{"name": "office-mesh", "topology": "mesh", "description": "Office mesh network"}
 ```
 
-Или через UI: **S2S → Новый туннель**, выберите топологию:
-- **Mesh** — все шлюзы напрямую соединены друг с другом
-- **Hub & Spoke** — все шлюзы подключены через один центральный (hub)
+Or via the UI: **S2S > New Tunnel**, select topology:
+- **Mesh** — all gateways directly connected to each other
+- **Hub & Spoke** — all gateways connected through a single central (hub) gateway
 
-### Шаг 3: Добавьте шлюзы как участников
+### Step 3: Add Gateways as Members
 
 ```bash
 POST /api/v1/s2s-tunnels/<tunnel-id>/members
-{"gateway_id": "<gw-moscow-id>", "local_subnets": ["10.1.0.0/24"]}
+{"gateway_id": "<gw-office-a-id>", "local_subnets": ["10.1.0.0/24"]}
 
 POST /api/v1/s2s-tunnels/<tunnel-id>/members
-{"gateway_id": "<gw-spb-id>", "local_subnets": ["10.2.0.0/24"]}
+{"gateway_id": "<gw-office-b-id>", "local_subnets": ["10.2.0.0/24"]}
 ```
 
-Или через UI: в деталях туннеля, секция **Участники** → выберите шлюз → **Создать**.
+Or via the UI: in tunnel details, **Members** section > select gateway > **Create**.
 
-### Шаг 4: Добавьте маршруты
+### Step 4: Add Routes
 
 ```bash
 POST /api/v1/s2s-tunnels/<tunnel-id>/routes
-{"destination": "10.2.0.0/24", "via_gateway": "<gw-spb-id>", "metric": 100}
+{"destination": "10.2.0.0/24", "via_gateway": "<gw-office-b-id>", "metric": 100}
 
 POST /api/v1/s2s-tunnels/<tunnel-id>/routes
-{"destination": "10.1.0.0/24", "via_gateway": "<gw-moscow-id>", "metric": 100}
+{"destination": "10.1.0.0/24", "via_gateway": "<gw-office-a-id>", "metric": 100}
 ```
 
-Или через UI: секция **Маршруты** → укажите CIDR, выберите шлюз → **Создать**.
+Or via the UI: **Routes** section > specify CIDR, select gateway > **Create**.
 
-### Готово!
+### Done!
 
-Скачайте WireGuard-конфиг для каждого шлюза:
+Download the WireGuard config for each gateway:
 
 ```bash
 GET /api/v1/s2s-tunnels/<tunnel-id>/config/<gateway-id>
 ```
 
-Или через UI: нажмите иконку 📥 у участника в деталях туннеля.
+Or via the UI: click the download icon next to a member in the tunnel details.
 
-Конфиг содержит `[Interface]` с приватным ключом и `[Peer]` секции для каждого другого шлюза с правильными `AllowedIPs` и `Endpoint`.
+The config contains an `[Interface]` with the private key and `[Peer]` sections for each other gateway with the correct `AllowedIPs` and `Endpoint`.
 
-## Сборка из исходников
+## Building from Source
 
-### Бэкенд
+### Backend
 
 ```bash
-# Сборка всех бинарных файлов
+# Build all binaries
 make build
 
-# Или сборка отдельных компонентов
+# Or build individual components
 make build-core
 make build-gateway
 make build-proxy
 make build-client
 make build-ctl
 
-# Бинарные файлы в директории bin/
+# Binaries are in the bin/ directory
 ls bin/
 # outpost-core  outpost-gateway  outpost-proxy  outpost-client  outpostctl
 ```
 
-### Фронтенд
+### Frontend
 
 ```bash
 cd web-ui
 pnpm install
-pnpm build    # продакшен-сборка (результат встраивается в бинарный файл core)
-pnpm dev      # dev-сервер с HMR
+pnpm build    # production build (output is embedded into the core binary)
+pnpm dev      # dev server with HMR
 ```
 
-### Настройка базы данных (для разработки)
+### Database Setup (for Development)
 
 ```bash
-# Запуск только PostgreSQL
+# Start only PostgreSQL
 docker compose -f deploy/docker/docker-compose.yml up -d postgres
 
-# Ручной запуск миграций (если не используется авто-миграция core)
+# Run migrations manually (if not using core's auto-migration)
 export DATABASE_URL="postgres://outpost:outpost-dev-password@localhost:5432/outpost?sslmode=disable"
 make migrate-up
 ```
 
-### Локальный запуск
+### Running Locally
 
 ```bash
-# Запуск зависимостей
+# Start dependencies
 docker compose -f deploy/docker/docker-compose.yml up -d postgres redis
 
-# Запуск core (миграции выполняются автоматически)
+# Start core (migrations run automatically)
 export OUTPOST_DB_HOST=localhost
 export OUTPOST_DB_PASSWORD=outpost-dev-password
 export OUTPOST_REDIS_ADDR=localhost:6379
@@ -343,31 +343,31 @@ export OUTPOST_REDIS_PASSWORD=outpost-dev-password
 export OUTPOST_JWT_SECRET=$(openssl rand -hex 32)
 ./bin/outpost-core
 
-# В другом терминале запустите dev-сервер фронтенда
+# In another terminal, start the frontend dev server
 cd web-ui && pnpm dev
 ```
 
-## Полезные Make-таргеты
+## Useful Make Targets
 
-| Команда | Описание |
+| Command | Description |
 |---------|-------------|
-| `make build` | Сборка всех бинарных файлов |
-| `make test` | Запуск всех Go-тестов с детектором гонок |
-| `make lint` | Запуск golangci-lint |
-| `make fmt` | Форматирование Go-кода |
-| `make proto` | Генерация protobuf-кода (требуется Buf) |
-| `make sqlc` | Генерация типобезопасного SQL-кода |
-| `make docker-up` | Запуск полного стека через Docker Compose |
-| `make docker-down` | Остановка стека Docker Compose |
-| `make docker-logs` | Просмотр логов всех сервисов |
-| `make migrate-up` | Применение всех ожидающих миграций |
-| `make migrate-down` | Откат одной миграции |
-| `make build-client-all` | Кросс-компиляция клиента для Linux, macOS, Windows |
+| `make build` | Build all binaries |
+| `make test` | Run all Go tests with race detector |
+| `make lint` | Run golangci-lint |
+| `make fmt` | Format Go code |
+| `make proto` | Generate protobuf code (requires Buf) |
+| `make sqlc` | Generate type-safe SQL code |
+| `make docker-up` | Start the full stack via Docker Compose |
+| `make docker-down` | Stop the Docker Compose stack |
+| `make docker-logs` | View logs for all services |
+| `make migrate-up` | Apply all pending migrations |
+| `make migrate-down` | Roll back one migration |
+| `make build-client-all` | Cross-compile the client for Linux, macOS, Windows |
 
-## Дальнейшие шаги
+## Next Steps
 
-- [Обзор архитектуры](architecture.md) -- как компоненты работают вместе
-- [Справочник по конфигурации](configuration.md) -- все переменные окружения
-- [Руководство по развёртыванию](deployment.md) -- варианты продуктивного развёртывания
-- [Справочник по API](API.md) -- полная документация REST API
-- [Руководство по возможностям](features.md) -- ZTNA, S2S-туннели, Smart Routes и другое
+- [Architecture Overview](architecture.md) — how components work together
+- [Configuration Reference](configuration.md) — all environment variables
+- [Deployment Guide](deployment.md) — production deployment options
+- [API Reference](API.md) — full REST API documentation
+- [Features Guide](features.md) — ZTNA, S2S tunnels, Smart Routes, and more

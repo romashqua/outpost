@@ -306,15 +306,28 @@ func (s *gatewayService) handlePeerStats(ctx context.Context, gatewayID string, 
 }
 
 func (s *gatewayService) Heartbeat(ctx context.Context, req *gatewayv1.HeartbeatRequest) (*emptypb.Empty, error) {
-	gwID := req.GetGatewayId()
-	s.logger.Debug("gateway heartbeat", "gateway_id", gwID)
+	// Authenticate gateway via token in gRPC metadata.
+	authenticatedGwID, err := s.authenticateStream(ctx)
+	if err != nil {
+		s.logger.Warn("gateway heartbeat auth failed", "error", err)
+		return nil, status.Error(codes.Unauthenticated, "invalid gateway token")
+	}
 
-	// Update gateway last_seen.
-	if gwID != "" {
-		if _, err := s.pool.Exec(ctx,
-			`UPDATE gateways SET last_seen = now() WHERE id::text = $1`, gwID); err != nil {
-			s.logger.Error("failed to update gateway last_seen", "gateway_id", gwID, "error", err)
-		}
+	gwID := req.GetGatewayId()
+
+	// Verify the requested gateway_id matches the authenticated gateway.
+	if gwID != "" && gwID != authenticatedGwID {
+		s.logger.Warn("gateway heartbeat id mismatch",
+			"requested", gwID, "authenticated", authenticatedGwID)
+		return nil, status.Error(codes.PermissionDenied, "gateway_id does not match authenticated gateway")
+	}
+
+	// Use the authenticated gateway ID for the update.
+	s.logger.Debug("gateway heartbeat", "gateway_id", authenticatedGwID)
+
+	if _, err := s.pool.Exec(ctx,
+		`UPDATE gateways SET last_seen = now() WHERE id::text = $1`, authenticatedGwID); err != nil {
+		s.logger.Error("failed to update gateway last_seen", "gateway_id", authenticatedGwID, "error", err)
 	}
 
 	return &emptypb.Empty{}, nil

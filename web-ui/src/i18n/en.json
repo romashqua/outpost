@@ -206,7 +206,9 @@
     "hoursAgo": "h ago",
     "daysAgo": "d ago",
     "gatewayCreated": "Gateway created",
+    "gatewayUpdated": "Gateway updated",
     "gatewayDeleted": "Gateway deleted",
+    "editGateway": "Edit Gateway",
     "selectNetwork": "Select a network...",
     "noNetworks": "No networks available"
   },
@@ -796,6 +798,26 @@
       "remediation": {
         "title": "Remediation Guides",
         "content": "Each compliance check includes a remediation guide. Click **Fix** on any failed check to see step-by-step instructions.\n\n### Common remediations\n\n- **MFA not enforced** — Go to Settings > Authentication and enable \"Require MFA\". Notify users to set up TOTP or register a security key.\n- **Low device posture** — Ensure devices have: updated OS, enabled firewall, disk encryption (FileVault/BitLocker/LUKS), and active antivirus.\n- **Missing audit entries** — Check that the API server is running and database connections are healthy. Audit logging is automatic.\n- **Insufficient RBAC** — Configure at least admin, user, and viewer roles. Assign users to appropriate roles."
+      }
+    },
+
+    "tenants": {
+      "title": "Multi-Tenancy",
+      "overview": {
+        "title": "Overview",
+        "content": "Outpost supports **multi-tenant architecture** for MSP and enterprise deployments. Each tenant is an isolated organization with its own users, networks, gateways, and device limits.\n\n- **Isolated data** — each tenant's resources are fully separated\n- **Plan-based limits** — Free, Pro, Enterprise tiers with configurable user/device/network quotas\n- **Subdomain routing** — tenants can be identified by `X-Tenant-ID` header or hostname subdomain\n- **Admin management** — global admins manage all tenants from a single dashboard"
+      },
+      "creation": {
+        "title": "Creating Tenants",
+        "content": "Navigate to **Tenants** in the sidebar and click **Create Tenant**.\n\n- **Name** — display name for the organization\n- **Slug** — URL-friendly identifier (used for subdomain routing)\n- **Plan** — choose Free, Pro, or Enterprise (sets default limits)\n- **Limits** — max users, devices, and networks can be customized\n\n[code:bash]curl -X POST /api/v1/tenants \\\n  -H 'Authorization: Bearer <token>' \\\n  -d '{\"name\": \"Acme Corp\", \"slug\": \"acme\", \"plan\": \"pro\"}'[/code]"
+      },
+      "resources": {
+        "title": "Managing Resources",
+        "content": "After creating a tenant, assign resources (users, networks, gateways) to it:\n\n- Click on a tenant name to open the detail view\n- Use the **Users**, **Networks**, **Gateways** tabs to see assigned resources\n- Click **Assign Resource** to add existing resources to the tenant\n- Click the unlink icon to remove a resource from the tenant\n\n[code:bash]# Assign a user to a tenant\ncurl -X POST /api/v1/tenants/{id}/users/{userId} \\\n  -H 'Authorization: Bearer <token>'\n\n# Assign a network\ncurl -X POST /api/v1/tenants/{id}/networks/{networkId} \\\n  -H 'Authorization: Bearer <token>'[/code]"
+      },
+      "plans": {
+        "title": "Plans & Limits",
+        "content": "Each plan has default resource limits:\n\n### Free Plan\n- 10 users, 20 devices, 2 networks\n\n### Pro Plan\n- 100 users, 500 devices, 20 networks\n\n### Enterprise Plan\n- 10,000 users, 50,000 devices, 200 networks\n\nLimits can be customized per-tenant via the edit dialog or API:\n\n[code:bash]curl -X PUT /api/v1/tenants/{id} \\\n  -H 'Authorization: Bearer <token>' \\\n  -d '{\"max_users\": 500, \"max_devices\": 2000}'[/code]"
       }
     },
 

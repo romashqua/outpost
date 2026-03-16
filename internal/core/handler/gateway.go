@@ -161,6 +161,10 @@ func (h *GatewayHandler) create(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "endpoint is required")
 		return
 	}
+	// Add default WireGuard port if not specified
+	if !strings.Contains(req.Endpoint, ":") {
+		req.Endpoint = req.Endpoint + ":51820"
+	}
 
 	networkID, err := uuid.Parse(req.NetworkID)
 	if err != nil {

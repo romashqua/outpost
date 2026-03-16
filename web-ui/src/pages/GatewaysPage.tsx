@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2, Copy, Check } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Check } from 'lucide-react'
 import { api } from '@/api/client'
 import { useToastStore } from '@/store/toast'
 import Table from '@/components/ui/Table'
@@ -42,13 +42,20 @@ export default function GatewaysPage() {
   const [showToken, setShowToken] = useState<string | null>(null)
   const [copiedToken, setCopiedToken] = useState(false)
   const [deleteId, setDeleteId] = useState<string | null>(null)
+  const [editTarget, setEditTarget] = useState<Gateway | null>(null)
 
-  // Form state
+  // Form state (create)
   const [formName, setFormName] = useState('')
   const [formNetworkId, setFormNetworkId] = useState('')
   const [formEndpoint, setFormEndpoint] = useState('')
   const [formPublicIp, setFormPublicIp] = useState('')
   const [formPriority, setFormPriority] = useState('')
+
+  // Form state (edit)
+  const [editName, setEditName] = useState('')
+  const [editEndpoint, setEditEndpoint] = useState('')
+  const [editPublicIp, setEditPublicIp] = useState('')
+  const [editPriority, setEditPriority] = useState('')
 
   const { data: gatewaysData, isLoading, error } = useQuery({
     queryKey: ['gateways'],
@@ -77,6 +84,21 @@ export default function GatewaysPage() {
     },
   })
 
+  const updateMutation = useMutation({
+    mutationFn: (body: { id: string; name?: string; endpoint?: string; public_ip?: string | null; priority?: number }) => {
+      const { id, ...rest } = body
+      return api.put(`/gateways/${id}`, rest)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['gateways'] })
+      setEditTarget(null)
+      addToast(t('gateways.gatewayUpdated', 'Gateway updated'), 'success')
+    },
+    onError: (err) => {
+      addToast((err as Error).message, 'error')
+    },
+  })
+
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.delete(`/gateways/${id}`),
     onSuccess: () => {
@@ -99,10 +121,15 @@ export default function GatewaysPage() {
 
   function handleCreate(e: React.FormEvent) {
     e.preventDefault()
+    let endpoint = formEndpoint.trim()
+    // Add default WireGuard port if no port specified
+    if (endpoint && !endpoint.includes(':')) {
+      endpoint = `${endpoint}:51820`
+    }
     createMutation.mutate({
       name: formName,
       network_id: formNetworkId,
-      endpoint: formEndpoint,
+      endpoint,
       ...(formPublicIp ? { public_ip: formPublicIp } : {}),
       ...(formPriority ? { priority: parseInt(formPriority, 10) } : {}),
     })
@@ -206,13 +233,30 @@ export default function GatewaysPage() {
       key: 'actions',
       header: '',
       render: (row: Gateway) => (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={(e) => { e.stopPropagation(); deleteMutation.reset(); setDeleteId(row.id) }}
-        >
-          <Trash2 size={14} className="text-[var(--danger)]" />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation()
+              updateMutation.reset()
+              setEditName(row.name)
+              setEditEndpoint(row.endpoint)
+              setEditPublicIp(row.public_ip || '')
+              setEditPriority(row.priority.toString())
+              setEditTarget(row)
+            }}
+          >
+            <Pencil size={14} className="text-[var(--accent)]" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={(e) => { e.stopPropagation(); deleteMutation.reset(); setDeleteId(row.id) }}
+          >
+            <Trash2 size={14} className="text-[var(--danger)]" />
+          </Button>
+        </div>
       ),
     },
   ]
@@ -340,6 +384,65 @@ export default function GatewaysPage() {
             </Button>
           </div>
         </div>
+      </Modal>
+
+      {/* Edit Modal */}
+      <Modal open={editTarget !== null} onClose={() => setEditTarget(null)} title={t('gateways.editGateway', 'Edit Gateway')}>
+        <form className="flex flex-col gap-4" onSubmit={(e) => {
+          e.preventDefault()
+          if (!editTarget) return
+          let endpoint = editEndpoint.trim()
+          if (endpoint && !endpoint.includes(':')) {
+            endpoint = `${endpoint}:51820`
+          }
+          updateMutation.mutate({
+            id: editTarget.id,
+            name: editName,
+            endpoint,
+            public_ip: editPublicIp || null,
+            priority: editPriority ? parseInt(editPriority, 10) : 0,
+          })
+        }}>
+          <Input
+            label={t('gateways.name')}
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            required
+          />
+          <Input
+            label={t('gateways.endpoint')}
+            placeholder="185.12.34.10:51820"
+            value={editEndpoint}
+            onChange={(e) => setEditEndpoint(e.target.value)}
+            required
+          />
+          <Input
+            label={t('gateways.publicIp')}
+            placeholder="185.12.34.10 (optional)"
+            value={editPublicIp}
+            onChange={(e) => setEditPublicIp(e.target.value)}
+          />
+          <Input
+            label={t('gateways.priority')}
+            placeholder="0"
+            type="number"
+            value={editPriority}
+            onChange={(e) => setEditPriority(e.target.value)}
+          />
+          {updateMutation.isError && (
+            <div className="text-xs text-[var(--danger)]">
+              {(updateMutation.error as Error).message}
+            </div>
+          )}
+          <div className="flex gap-3 justify-end mt-2">
+            <Button variant="secondary" type="button" onClick={() => setEditTarget(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button type="submit" disabled={updateMutation.isPending}>
+              {updateMutation.isPending ? t('common.saving', 'Saving...') : t('common.save')}
+            </Button>
+          </div>
+        </form>
       </Modal>
 
       {/* Delete Confirmation Modal */}

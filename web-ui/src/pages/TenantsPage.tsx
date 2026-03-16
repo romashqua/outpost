@@ -511,9 +511,9 @@ export default function TenantsPage() {
   const list = tenants ?? []
   const filtered = list.filter(
     (t) =>
-      t.name.toLowerCase().includes(search.toLowerCase()) ||
-      t.slug.toLowerCase().includes(search.toLowerCase()) ||
-      t.plan.toLowerCase().includes(search.toLowerCase()),
+      (t.name || '').toLowerCase().includes(search.toLowerCase()) ||
+      (t.slug || '').toLowerCase().includes(search.toLowerCase()) ||
+      (t.plan || '').toLowerCase().includes(search.toLowerCase()),
   )
 
   const handleCreateSubmit = (e: React.FormEvent) => {

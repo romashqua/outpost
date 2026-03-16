@@ -58,7 +58,7 @@ func TestParseBody(t *testing.T) {
 		{"valid", `{"name":"test"}`, false},
 		{"empty body", "", true},
 		{"invalid json", `{bad`, true},
-		{"unknown field", `{"name":"test","unknown":"field"}`, true},
+		{"unknown field ignored for forward compat", `{"name":"test","unknown":"field"}`, false},
 	}
 
 	for _, tt := range tests {

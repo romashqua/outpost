@@ -1,30 +1,30 @@
-# Обзор архитектуры
+# Architecture Overview
 
-Outpost VPN -- это монорепозиторий с единым Go-модулем. Он состоит из четырёх основных бинарных файлов, CLI-инструмента, React-фронтенда и общих библиотек.
+Outpost VPN is a monorepo with a single Go module. It consists of four main binaries, a CLI tool, a React frontend, and shared libraries.
 
-## Диаграмма компонентов
+## Component Diagram
 
 ```
-                        Интернет / DMZ
+                        Internet / DMZ
   ┌──────────────────────────────────────────────────────────┐
   │                                                          │
   │   ┌────────────────┐           ┌────────────────┐       │
-  │   │  outpost-proxy │           │  VPN-клиенты   │       │
+  │   │  outpost-proxy │           │  VPN clients   │       │
   │   │     :8081      │           │  (WireGuard)   │       │
   │   └───────┬────────┘           └───────┬────────┘       │
   │           │                            │                │
   └───────────┼────────────────────────────┼────────────────┘
               │ gRPC                       │ UDP :51820
   ┌───────────┼────────────────────────────┼────────────────┐
-  │           │      Внутренняя сеть       │                │
+  │           │      Internal Network      │                │
   │   ┌───────▼────────┐          ┌────────▼───────┐       │
   │   │  outpost-core  │◄────────►│ outpost-gateway│       │
   │   │ :8080    :50051│  gRPC    │   :51820/udp   │       │
-  │   │                │  двунапр.│                │       │
-  │   │  HTTP API      │  стрим   │  WireGuard     │       │
-  │   │  Панель админа │          │  Файрвол       │       │
-  │   │  OIDC-провайдер│          │  S2S-туннели   │       │
-  │   │  gRPC-хаб      │          │                │       │
+  │   │                │  bidir.  │                │       │
+  │   │  HTTP API      │  stream  │  WireGuard     │       │
+  │   │  Admin panel   │          │  Firewall      │       │
+  │   │  OIDC provider │          │  S2S tunnels   │       │
+  │   │  gRPC hub      │          │                │       │
   │   └───────┬────────┘          └────────────────┘       │
   │           │                                             │
   │   ┌───────▼──────┐    ┌──────────┐                     │
@@ -34,232 +34,232 @@ Outpost VPN -- это монорепозиторий с единым Go-моду
   └─────────────────────────────────────────────────────────┘
 ```
 
-## Бинарные файлы
+## Binaries
 
 ### outpost-core
 
-Центральный control plane. Запускает HTTP REST API (роутер Chi), отдаёт встроенный React-фронтенд, предоставляет встроенный OIDC-провайдер идентификации и хостит gRPC-хаб, к которому подключаются шлюзы.
+The central control plane. Runs the HTTP REST API (Chi router), serves the embedded React frontend, provides a built-in OIDC identity provider, and hosts the gRPC hub that gateways connect to.
 
-**Обязанности:**
-- HTTP API для всех операций управления (пользователи, устройства, сети, шлюзы и т.д.)
-- JWT-аутентификация с поддержкой MFA (TOTP, WebAuthn, резервные коды)
-- OIDC-провайдер, SAML 2.0 SP, синхронизация LDAP/AD, провижининг SCIM 2.0
-- gRPC-сервер для связи со шлюзами (двунаправленный стриминг)
-- StreamHub для трансляции обновлений пиров на все подключённые шлюзы
-- Встроенные миграции базы данных (авто-запуск при старте через `go:embed`)
-- Встроенный React-фронтенд (SPA из `go:embed`)
-- Метрики Prometheus по адресу `/metrics`
-- Аудиторское логирование всех изменяющих операций
+**Responsibilities:**
+- HTTP API for all management operations (users, devices, networks, gateways, etc.)
+- JWT authentication with MFA support (TOTP, WebAuthn, backup codes)
+- OIDC provider, SAML 2.0 SP, LDAP/AD sync, SCIM 2.0 provisioning
+- gRPC server for gateway communication (bidirectional streaming)
+- StreamHub for broadcasting peer updates to all connected gateways
+- Embedded database migrations (auto-run on startup via `go:embed`)
+- Embedded React frontend (SPA via `go:embed`)
+- Prometheus metrics at `/metrics`
+- Audit logging of all mutating operations
 
-**Исходники:** `cmd/outpost-core/main.go` + `internal/core/`
+**Source:** `cmd/outpost-core/main.go` + `internal/core/`
 
 ### outpost-gateway
 
-Агент WireGuard data plane. Работает на машинах с поддержкой WireGuard и управляет WireGuard-интерфейсами, конфигурациями пиров и правилами файрвола.
+The WireGuard data plane agent. Runs on machines with WireGuard support and manages WireGuard interfaces, peer configurations, and firewall rules.
 
-**Обязанности:**
-- Поддерживает постоянный двунаправленный gRPC-стрим к outpost-core
-- Применяет конфигурации пиров, полученные от core (добавление/удаление/обновление WireGuard-пиров)
-- Управляет двумя WireGuard-интерфейсами: `wg0` для клиентского трафика, `wg1` для S2S-туннелей
-- Отправляет статистику пиров (rx/tx байты, время хендшейка) обратно в core
-- Выполняет правила файрвола и NAT-конфигурации
-- Управление site-to-site туннелями с обменом маршрутами
+**Responsibilities:**
+- Maintains a persistent bidirectional gRPC stream to outpost-core
+- Applies peer configurations received from core (add/remove/update WireGuard peers)
+- Manages two WireGuard interfaces: `wg0` for client traffic, `wg1` for S2S tunnels
+- Sends peer statistics (rx/tx bytes, handshake time) back to core
+- Enforces firewall rules and NAT configurations
+- Site-to-site tunnel management with route exchange
 
-**Исходники:** `cmd/outpost-gateway/main.go` + `internal/gateway/`
+**Source:** `cmd/outpost-gateway/main.go` + `internal/gateway/`
 
 ### outpost-proxy
 
-Легковесный прокси для DMZ, безопасный для развёртывания. Предназначен для регистрации устройств и аутентификации. Спроектирован для выставления в интернет при размещении outpost-core во внутренней сети.
+A lightweight DMZ-safe proxy. Designed for device enrollment and authentication. Intended to be exposed to the internet while outpost-core stays in the internal network.
 
-**Обязанности:**
-- Проксирует запросы регистрации и аутентификации к core через gRPC
-- Без состояния: нет соединений с базой данных или Redis
-- Минимальная поверхность атаки для развёртывания в DMZ
+**Responsibilities:**
+- Proxies enrollment and authentication requests to core via gRPC
+- Stateless: no database or Redis connections
+- Minimal attack surface for DMZ deployment
 
-**Исходники:** `cmd/outpost-proxy/main.go` + `internal/proxy/`
+**Source:** `cmd/outpost-proxy/main.go` + `internal/proxy/`
 
 ### outpost-client
 
-VPN-клиент. Кроссплатформенный (Linux, macOS, Windows) с поддержкой MFA, отчётами о состоянии устройства и управлением туннелями.
+The VPN client. Cross-platform (Linux, macOS, Windows) with MFA support, device posture reporting, and tunnel management.
 
-**Обязанности:**
-- Аутентификация с core (JWT + MFA-поток)
-- Установка WireGuard-туннелей
-- Отчёт о состоянии устройства (версия ОС, шифрование диска, антивирус, блокировка экрана)
-- Управление жизненным циклом туннеля (подключение, отключение, переподключение)
+**Responsibilities:**
+- Authentication with core (JWT + MFA flow)
+- Establishing WireGuard tunnels
+- Device posture reporting (OS version, disk encryption, antivirus, screen lock)
+- Tunnel lifecycle management (connect, disconnect, reconnect)
 
-**Исходники:** `cmd/outpost-client/main.go` + `internal/client/`
+**Source:** `cmd/outpost-client/main.go` + `internal/client/`
 
 ### outpostctl
 
-CLI-инструмент для административных операций без веб-интерфейса.
+CLI tool for administrative operations without the web interface.
 
-**Исходники:** `cmd/outpostctl/main.go`
+**Source:** `cmd/outpostctl/main.go`
 
-## Структура внутренних пакетов
+## Internal Package Structure
 
 ```
 internal/
-├── analytics/      Аналитика трафика: записи потоков, пропускная способность, топ пользователей, тепловые карты
-├── auth/           Подсистема аутентификации
-│   ├── mfa/        TOTP, WebAuthn/FIDO2, резервные коды
-│   ├── oidc/       Встроенный OpenID Connect провайдер
+├── analytics/      Traffic analytics: flow records, bandwidth, top users, heatmaps
+├── auth/           Authentication subsystem
+│   ├── mfa/        TOTP, WebAuthn/FIDO2, backup codes
+│   ├── oidc/       Built-in OpenID Connect provider
 │   ├── saml/       SAML 2.0 Service Provider
-│   └── scim/       SCIM 2.0 провижининг пользователей/групп
-├── client/         VPN-клиентская библиотека (кроссплатформенная)
-├── compliance/     Проверки готовности к SOC2, ISO27001, GDPR
-├── config/         Конфигурация из переменных окружения
-├── core/           HTTP-обработчики, gRPC-реализация, StreamHub
-│   └── handler/    REST API обработчики (Chi)
-├── db/             Пул соединений PostgreSQL (pgx/v5), sqlc-запросы
-├── gateway/        Управление WireGuard-интерфейсами, файрвол, S2S
-├── mail/           Email-уведомления с i18n-шаблонами
-├── nat/            NAT traversal (управление STUN/TURN relay)
-├── observability/  Метрики Prometheus, аудиторское логирование, интеграция с SIEM
-├── pki/            Встроенная PKI: ротация ключей, жизненный цикл сертификатов
-├── proxy/          Логика прокси для регистрации/авторизации
-├── s2s/            Site-to-site: mesh, hub-spoke, обмен маршрутами
-├── session/        Управление сессиями
-├── tenant/         Мультитенантная платформа (MSP/реселлер-режим)
-├── webhook/        Диспетчер вебхуков
-├── wireguard/      Абстракция WireGuard: ядро + userspace
-└── ztna/           Zero-Trust: проверка состояния устройств, непрерывная верификация
+│   └── scim/       SCIM 2.0 user/group provisioning
+├── client/         VPN client library (cross-platform)
+├── compliance/     SOC2, ISO27001, GDPR readiness checks
+├── config/         Configuration from environment variables
+├── core/           HTTP handlers, gRPC implementation, StreamHub
+│   └── handler/    REST API handlers (Chi)
+├── db/             PostgreSQL connection pool (pgx/v5), sqlc queries
+├── gateway/        WireGuard interface management, firewall, S2S
+├── mail/           Email notifications with i18n templates
+├── nat/            NAT traversal (STUN/TURN relay management)
+├── observability/  Prometheus metrics, audit logging, SIEM integration
+├── pki/            Built-in PKI: key rotation, certificate lifecycle
+├── proxy/          Enrollment/auth proxy logic
+├── s2s/            Site-to-site: mesh, hub-spoke, route exchange
+├── session/        Session management
+├── tenant/         Multi-tenant platform (MSP/reseller mode)
+├── webhook/        Webhook dispatcher
+├── wireguard/      WireGuard abstraction: kernel + userspace
+└── ztna/           Zero-Trust: device posture checks, continuous verification
 ```
 
-## Коммуникация: двунаправленный gRPC-стриминг
+## Communication: Bidirectional gRPC Streaming
 
-Связь core-шлюз использует двунаправленный gRPC-стриминг, обеспечивающий обновления в реальном времени с низкой задержкой в обоих направлениях.
+Core-gateway communication uses bidirectional gRPC streaming, providing real-time, low-latency updates in both directions.
 
 ```
 outpost-core                        outpost-gateway
      │                                    │
-     │◄── GatewayEvent (стрим) ──────────│  (статистика, здоровье, объявления маршрутов)
+     │◄── GatewayEvent (stream) ─────────│  (stats, health, route advertisements)
      │                                    │
-     │────── CoreEvent (стрим) ──────────►│  (обновления пиров, изменения конфигурации)
+     │────── CoreEvent (stream) ─────────►│  (peer updates, config changes)
      │                                    │
 ```
 
-**GatewayEvent** (шлюз -> core):
-- Статистика пиров (rx/tx байты, последний хендшейк)
-- Отчёты о состоянии здоровья
-- Объявления S2S-маршрутов (`local_subnets`)
+**GatewayEvent** (gateway -> core):
+- Peer statistics (rx/tx bytes, last handshake)
+- Health reports
+- S2S route advertisements (`local_subnets`)
 
-**CoreEvent** (core -> шлюз):
-- Обновления пиров (добавление/удаление/изменение WireGuard-пиров)
-- Изменения конфигурации
-- Таблицы S2S-маршрутов (вычисленные движком топологии)
+**CoreEvent** (core -> gateway):
+- Peer updates (add/remove/modify WireGuard peers)
+- Configuration changes
+- S2S route tables (computed by the topology engine)
 
-### Паттерн StreamHub для трансляции
+### StreamHub Broadcasting Pattern
 
-`StreamHub` (`internal/core/stream_hub.go`) управляет всеми активными gRPC-стримами шлюзов:
+`StreamHub` (`internal/core/stream_hub.go`) manages all active gateway gRPC streams:
 
 ```go
 type StreamHub struct {
-    streams map[string]streamSender  // ключ -- ID шлюза
+    streams map[string]streamSender  // key is gateway ID
 }
 ```
 
-Когда API-действие требует отправки изменений на шлюзы (например, одобрение устройства), обработчик вызывает `StreamHub.BroadcastPeerUpdate()`, который отправляет событие на все подключённые шлюзы одновременно. Для адресных обновлений `StreamHub.SendTo(gatewayID, event)` отправляет на конкретный шлюз.
+When an API action requires sending changes to gateways (e.g., approving a device), the handler calls `StreamHub.BroadcastPeerUpdate()`, which sends the event to all connected gateways simultaneously. For targeted updates, `StreamHub.SendTo(gatewayID, event)` sends to a specific gateway.
 
-**Поток: одобрение устройства запускает синхронизацию пиров**
+**Flow: device approval triggers peer sync**
 ```
-Администратор одобряет устройство через API
+Admin approves device via API
         │
         ▼
-DeviceHandler обновляет БД (is_approved=true)
+DeviceHandler updates DB (is_approved=true)
         │
         ▼
-DeviceHandler вызывает StreamHub.BroadcastPeerUpdate()
+DeviceHandler calls StreamHub.BroadcastPeerUpdate()
         │
         ▼
-StreamHub перебирает все подключённые стримы шлюзов
+StreamHub iterates over all connected gateway streams
         │
         ▼
-Каждый шлюз получает PeerUpdate, применяет конфигурацию WireGuard
+Each gateway receives PeerUpdate, applies WireGuard configuration
 ```
 
-## Обзор схемы базы данных
+## Database Schema Overview
 
-PostgreSQL 17 с расширением `pgcrypto`. Все ID -- UUID. Временные метки -- `TIMESTAMPTZ`.
+PostgreSQL 17 with the `pgcrypto` extension. All IDs are UUIDs. Timestamps are `TIMESTAMPTZ`.
 
-### Основные таблицы
+### Core Tables
 
-| Таблица | Назначение |
+| Table | Purpose |
 |-------|---------|
-| `users` | Аккаунты пользователей (логин, email, хэш пароля, статус MFA, связи LDAP/SCIM) |
-| `groups` | Группы пользователей (everyone, admins, пользовательские) |
-| `user_groups` | Связь многие-ко-многим пользователь-группа |
-| `roles` | RBAC-роли (admin, user, viewer) с JSON-разрешениями |
-| `user_roles` | Связь многие-ко-многим пользователь-роль |
-| `networks` | WireGuard-сети (CIDR, DNS, порт, keepalive) |
-| `devices` | WireGuard-пиры (публичный ключ, назначенный IP, статус одобрения) |
-| `gateways` | WireGuard-шлюзы (эндпоинт, публичный ключ, хэш токена, последнее обнаружение) |
-| `network_acls` | ACL сетевого доступа на основе групп |
-| `sessions` | Сессии пользователей (индекс по user_id и expires_at) |
-| `settings` | Настройки приложения в формате ключ-значение (JSONB) |
-| `audit_log` | Неизменяемый аудиторский журнал (действие, ресурс, детали, IP) |
+| `users` | User accounts (username, email, password hash, MFA status, LDAP/SCIM links) |
+| `groups` | User groups (everyone, admins, custom) |
+| `user_groups` | User-group many-to-many association |
+| `roles` | RBAC roles (admin, user, viewer) with JSON permissions |
+| `user_roles` | User-role many-to-many association |
+| `networks` | WireGuard networks (CIDR, DNS, port, keepalive) |
+| `devices` | WireGuard peers (public key, assigned IP, approval status) |
+| `gateways` | WireGuard gateways (endpoint, public key, token hash, last seen) |
+| `network_acls` | Group-based network access ACLs |
+| `sessions` | User sessions (indexed by user_id and expires_at) |
+| `settings` | Application settings in key-value format (JSONB) |
+| `audit_log` | Immutable audit log (action, resource, details, IP) |
 
-### Таблицы аутентификации
+### Authentication Tables
 
-| Таблица | Назначение |
+| Table | Purpose |
 |-------|---------|
-| `mfa_totp` | TOTP-секреты (по пользователю, флаг верификации) |
-| `mfa_webauthn` | Учётные данные WebAuthn/FIDO2 (credential_id, public_key, sign_count) |
-| `mfa_backup_codes` | Одноразовые резервные коды (хэшированные, флаг использования) |
-| `oidc_clients` | OIDC relying party клиенты |
-| `oidc_auth_codes` | Коды авторизации OIDC (с поддержкой PKCE) |
-| `enrollment_tokens` | Токены регистрации устройств (хэшированные, срок действия, флаг использования) |
+| `mfa_totp` | TOTP secrets (per user, verification flag) |
+| `mfa_webauthn` | WebAuthn/FIDO2 credentials (credential_id, public_key, sign_count) |
+| `mfa_backup_codes` | One-time backup codes (hashed, used flag) |
+| `oidc_clients` | OIDC relying party clients |
+| `oidc_auth_codes` | OIDC authorization codes (with PKCE support) |
+| `enrollment_tokens` | Device enrollment tokens (hashed, expiry, used flag) |
 
-### Таблицы site-to-site
+### Site-to-Site Tables
 
-| Таблица | Назначение |
+| Table | Purpose |
 |-------|---------|
-| `s2s_tunnels` | Метаданные туннелей (имя, топология: mesh/hub_spoke, hub_gateway_id) |
-| `s2s_tunnel_members` | Членство шлюзов с `local_subnets CIDR[]` |
-| `s2s_routes` | Вычисленные маршруты (CIDR назначения, via_gateway, метрика) |
+| `s2s_tunnels` | Tunnel metadata (name, topology: mesh/hub_spoke, hub_gateway_id) |
+| `s2s_tunnel_members` | Gateway membership with `local_subnets CIDR[]` |
+| `s2s_routes` | Computed routes (destination CIDR, via_gateway, metric) |
 
-### Аналитика и мониторинг
+### Analytics and Monitoring
 
-| Таблица | Назначение |
+| Table | Purpose |
 |-------|---------|
-| `peer_stats` | Статистика трафика WireGuard-пиров (партиционирование по `recorded_at`) |
+| `peer_stats` | WireGuard peer traffic statistics (partitioned by `recorded_at`) |
 
-### Дополнительные таблицы (из последующих миграций)
+### Additional Tables (from later migrations)
 
-| Таблица | Назначение |
+| Table | Purpose |
 |-------|---------|
-| `smart_routes` | Группы селективной прокси-маршрутизации |
-| `smart_route_entries` | Записи маршрутов (domain, CIDR, domain_suffix) с действиями |
-| `proxy_servers` | Upstream прокси-серверы (SOCKS5, HTTP, Shadowsocks, VLESS) |
-| `network_smart_routes` | Связи сеть-smart route |
-| `webhooks` | Конфигурации вебхук-эндпоинтов |
-| `trust_scores` | Оценки доверия устройств ZTNA |
-| `nat_relays` | Relay-серверы NAT traversal |
-| `password_resets` | Токены сброса пароля |
+| `smart_routes` | Selective proxy routing groups |
+| `smart_route_entries` | Route entries (domain, CIDR, domain_suffix) with actions |
+| `proxy_servers` | Upstream proxy servers (SOCKS5, HTTP, Shadowsocks, VLESS) |
+| `network_smart_routes` | Network-smart route associations |
+| `webhooks` | Webhook endpoint configurations |
+| `trust_scores` | ZTNA device trust scores |
+| `nat_relays` | NAT traversal relay servers |
+| `password_resets` | Password reset tokens |
 
-## Модель назначения: Устройство → Сеть
+## Assignment Model: Device → Network
 
-Пользователь получает доступ к VPN-сети **через устройство**:
+A user gains access to a VPN network **through a device**:
 
 ```
-Пользователь (1) ──► (N) Устройства ──► (1) Сеть
-                                              │
-                                         IP из CIDR сети
+User (1) ──► (N) Devices ──► (1) Network
+                                    │
+                               IP from network CIDR
 ```
 
-- Один пользователь может иметь несколько устройств в разных сетях
-- Каждое устройство привязано к одной сети и получает IP-адрес из CIDR этой сети
-- Устройство требует одобрения администратором (`is_approved`)
-- При одобрении устройства core рассылает `PeerUpdate` на все шлюзы через StreamHub
+- A single user can have multiple devices across different networks
+- Each device is bound to one network and receives an IP address from that network's CIDR
+- A device requires admin approval (`is_approved`)
+- When a device is approved, core broadcasts a `PeerUpdate` to all gateways via StreamHub
 
-## Конвейер статистики пропускной способности
+## Bandwidth Statistics Pipeline
 
-Данные о трафике проходят следующий путь от шлюза до дашборда:
+Traffic data flows from gateway to dashboard through the following path:
 
 ```
 outpost-gateway                outpost-core                 PostgreSQL
      │                              │                           │
-     │  GatewayEvent (gRPC стрим)   │                           │
+     │  GatewayEvent (gRPC stream)  │                           │
      │  {peer_stats: [              │                           │
      │    {public_key, rx, tx,      │                           │
      │     last_handshake}          │                           │
@@ -272,7 +272,7 @@ outpost-gateway                outpost-core                 PostgreSQL
      │                              │                           │
      │                              │                           │
                                     │                           │
-     Фронтенд (дашборд)            │                           │
+     Frontend (dashboard)           │                           │
      │                              │                           │
      │  GET /analytics/bandwidth    │                           │
      │─────────────────────────────►│  SELECT ... FROM          │
@@ -285,172 +285,172 @@ outpost-gateway                outpost-core                 PostgreSQL
      │                              │                           │
 ```
 
-1. **Шлюз** периодически отправляет статистику пиров (rx/tx байты, время хендшейка) через gRPC-стрим
-2. **Core** сохраняет статистику в таблицу `peer_stats`, партиционированную по `recorded_at`
-3. **API аналитики** агрегирует данные по запрошенному интервалу (`GET /analytics/bandwidth?interval=1h`)
-4. **Дашборд** отображает данные в виде area chart (Recharts) и мини-графика
+1. **Gateway** periodically sends peer statistics (rx/tx bytes, handshake time) via the gRPC stream
+2. **Core** stores the statistics in the `peer_stats` table, partitioned by `recorded_at`
+3. **Analytics API** aggregates data by the requested interval (`GET /analytics/bandwidth?interval=1h`)
+4. **Dashboard** displays the data as an area chart (Recharts) and a sparkline
 
-Другие аналитические эндпоинты (`/analytics/top-users`, `/analytics/connections-heatmap`, `/analytics/summary`) также работают на основе таблицы `peer_stats`.
+Other analytics endpoints (`/analytics/top-users`, `/analytics/connections-heatmap`, `/analytics/summary`) also operate on the `peer_stats` table.
 
-## Поток аутентификации
+## Authentication Flow
 
-### Вход (JWT + MFA)
+### Login (JWT + MFA)
 
 ```
-Клиент                    outpost-core                    PostgreSQL
+Client                    outpost-core                    PostgreSQL
   │                            │                              │
   │  POST /api/v1/auth/login   │                              │
   │  {username, password}      │                              │
   │───────────────────────────►│                              │
-  │                            │  Проверка пароля (bcrypt)    │
+  │                            │  Verify password (bcrypt)    │
   │                            │─────────────────────────────►│
   │                            │◄─────────────────────────────│
   │                            │                              │
-  │  (если MFA включена)       │                              │
+  │  (if MFA enabled)          │                              │
   │◄── {mfa_required: true} ───│                              │
   │                            │                              │
   │  POST /api/v1/auth/mfa/verify                             │
   │  {code, session_token}     │                              │
   │───────────────────────────►│                              │
-  │                            │  Проверка TOTP/WebAuthn      │
+  │                            │  Verify TOTP/WebAuthn        │
   │                            │─────────────────────────────►│
   │◄── {token: "eyJ..."} ─────│                              │
   │                            │                              │
 ```
 
-**Детали токена:**
-- JWT подписан с помощью `OUTPOST_JWT_SECRET` (HMAC-SHA256)
-- TTL по умолчанию: 15 минут (`OUTPOST_TOKEN_TTL`)
-- TTL сессии: 24 часа (`OUTPOST_SESSION_TTL`)
-- Обновление через `POST /api/v1/auth/refresh`
-- Rate limiting: 10 запросов/минуту на IP для auth-эндпоинтов
+**Token details:**
+- JWT signed with `OUTPOST_JWT_SECRET` (HMAC-SHA256)
+- Default TTL: 15 minutes (`OUTPOST_TOKEN_TTL`)
+- Session TTL: 24 hours (`OUTPOST_SESSION_TTL`)
+- Refresh via `POST /api/v1/auth/refresh`
+- Rate limiting: 10 requests/minute per IP for auth endpoints
 
 ### JWT Middleware
 
-Все защищённые API-маршруты проходят через `auth.JWTMiddleware(secret)`, который:
-1. Извлекает Bearer-токен из заголовка `Authorization`
-2. Проверяет подпись JWT и срок действия
-3. Добавляет claims пользователя в контекст запроса
-4. Маршруты только для администраторов дополнительно проверяют `auth.RequireAdmin`
+All protected API routes pass through `auth.JWTMiddleware(secret)`, which:
+1. Extracts the Bearer token from the `Authorization` header
+2. Validates the JWT signature and expiration
+3. Adds user claims to the request context
+4. Admin-only routes additionally check `auth.RequireAdmin`
 
-## Конвейер VPN-подключения
+## VPN Connection Pipeline
 
-Полный поток от регистрации пользователя до активного VPN-соединения:
-
-```
-1. РЕГИСТРАЦИЯ
-   Администратор создаёт пользователя → Пользователь получает ссылку/токен регистрации
-   Пользователь регистрирует устройство → Устройство генерирует пару ключей WireGuard
-   Устройство отправляет публичный ключ → Core сохраняет устройство (is_approved=false)
-
-2. ОДОБРЕНИЕ
-   Администратор одобряет устройство → Core устанавливает is_approved=true в БД
-   Core вызывает StreamHub.BroadcastPeerUpdate()
-   Все шлюзы получают PeerUpdate с конфигурацией нового пира
-
-3. КОНФИГУРАЦИЯ
-   Пользователь скачивает конфиг WireGuard (GET /api/v1/devices/{id}/config)
-   Конфиг включает: приватный ключ, назначенный IP, эндпоинт шлюза, allowed IPs
-
-4. ПОДКЛЮЧЕНИЕ
-   Пользователь импортирует конфиг в WireGuard-клиент
-   WireGuard-хендшейк со шлюзом
-   Шлюз проверяет публичный ключ пира по своему списку пиров
-
-5. СИНХРОНИЗАЦИЯ ПИРОВ (непрерывно)
-   Шлюз отправляет статистику пиров в core (rx/tx, время хендшейка)
-   Core сохраняет статистику в таблице peer_stats (партиционированная)
-   Дашборд показывает статус соединения в реальном времени
-```
-
-### Истечение сессии и MFA на уровне протокола
-
-Outpost реализует MFA на уровне протокола WireGuard: когда сессия пользователя истекает или повторная верификация MFA не проходит, пир удаляется из конфигурации WireGuard на шлюзе. Это надёжнее, чем MFA на уровне приложения, потому что сам VPN-туннель разрывается, а не только сессия приложения.
+The full flow from user enrollment to an active VPN connection:
 
 ```
-Сессия истекает или оценка доверия падает
+1. ENROLLMENT
+   Admin creates a user → User receives an enrollment link/token
+   User enrolls a device → Device generates a WireGuard key pair
+   Device sends public key → Core saves the device (is_approved=false)
+
+2. APPROVAL
+   Admin approves device → Core sets is_approved=true in the DB
+   Core calls StreamHub.BroadcastPeerUpdate()
+   All gateways receive PeerUpdate with the new peer configuration
+
+3. CONFIGURATION
+   User downloads WireGuard config (GET /api/v1/devices/{id}/config)
+   Config includes: private key, assigned IP, gateway endpoint, allowed IPs
+
+4. CONNECTION
+   User imports config into WireGuard client
+   WireGuard handshake with gateway
+   Gateway verifies the peer's public key against its peer list
+
+5. PEER SYNC (continuous)
+   Gateway sends peer stats to core (rx/tx, handshake time)
+   Core stores stats in the peer_stats table (partitioned)
+   Dashboard shows real-time connection status
+```
+
+### Session Expiry and Protocol-Level MFA
+
+Outpost implements MFA at the WireGuard protocol level: when a user's session expires or MFA re-verification fails, the peer is removed from the WireGuard configuration on the gateway. This is more secure than application-level MFA because the VPN tunnel itself is torn down, not just the application session.
+
+```
+Session expires or trust score drops
         │
         ▼
-Core отправляет PeerUpdate (action=REMOVE) через StreamHub
+Core sends PeerUpdate (action=REMOVE) via StreamHub
         │
         ▼
-Шлюз удаляет пир из WireGuard-интерфейса
+Gateway removes peer from WireGuard interface
         │
         ▼
-Клиент теряет VPN-связность немедленно
+Client loses VPN connectivity immediately
         │
         ▼
-Клиент должен пройти повторную аутентификацию с MFA для переподключения
+Client must re-authenticate with MFA to reconnect
 ```
 
-## Сетевая топология
+## Network Topology
 
-### Сети Docker Compose
+### Docker Compose Networks
 
-Стандартное развёртывание Docker Compose использует две сети:
+The default Docker Compose deployment uses two networks:
 
-- **internal:** Core, шлюз, PostgreSQL, Redis (приватная)
-- **dmz:** Core, прокси (доступна из интернета)
+- **internal:** Core, gateway, PostgreSQL, Redis (private)
+- **dmz:** Core, proxy (accessible from the internet)
 
-Прокси находится в DMZ-сети и связывается с core через gRPC, а шлюз -- во внутренней сети для безопасности.
+The proxy sits in the DMZ network and communicates with core via gRPC, while the gateway is in the internal network for security.
 
-### Мульти-сайтовое развёртывание
+### Multi-Site Deployment
 
 ```
-  Сайт A                   Сайт B                  Сайт C
+  Site A                   Site B                  Site C
   ┌──────────┐            ┌──────────┐            ┌──────────┐
   │ gateway-a│◄──────────►│ gateway-b│◄──────────►│ gateway-c│
   │10.1.0/24 │  S2S (wg1) │10.2.0/24 │  S2S (wg1) │10.3.0/24 │
   │          │            │          │            │          │
   │  wg0:    │            │  wg0:    │            │  wg0:    │
-  │  клиенты │            │  клиенты │            │  клиенты │
+  │  clients │            │  clients │            │  clients │
   └────┬─────┘            └────┬─────┘            └────┬─────┘
        │                       │                       │
   ┌────▼─────┐            ┌────▼─────┐            ┌────▼─────┐
-  │ Клиенты  │            │ Клиенты  │            │ Клиенты  │
+  │ Clients  │            │ Clients  │            │ Clients  │
   └──────────┘            └──────────┘            └──────────┘
 ```
 
-Каждый шлюз работает с двумя WireGuard-интерфейсами:
-- `wg0` (порт 51820) -- клиентский VPN-трафик
-- `wg1` (порт 51821) -- трафик site-to-site туннелей
+Each gateway runs two WireGuard interfaces:
+- `wg0` (port 51820) — client VPN traffic
+- `wg1` (port 51821) — site-to-site tunnel traffic
 
-## Наблюдаемость
+## Observability
 
-### Метрики
+### Metrics
 
-Метрики Prometheus доступны по адресу `/metrics` на HTTP-сервере core (без аутентификации).
+Prometheus metrics are available at `/metrics` on the core HTTP server (no authentication).
 
-Ключевые метрики:
-- `outpost_active_peers` -- текущие подключённые WireGuard-пиры
-- `outpost_bandwidth_bytes_total` -- общий трафик (метки rx/tx)
-- `outpost_gateway_last_seen_seconds` -- здоровье шлюза
-- `outpost_auth_attempts_total` -- попытки аутентификации (метки success/failure)
-- `outpost_s2s_tunnel_status` -- состояние S2S-туннеля
+Key metrics:
+- `outpost_active_peers` — currently connected WireGuard peers
+- `outpost_bandwidth_bytes_total` — total traffic (rx/tx labels)
+- `outpost_gateway_last_seen_seconds` — gateway health
+- `outpost_auth_attempts_total` — authentication attempts (success/failure labels)
+- `outpost_s2s_tunnel_status` — S2S tunnel status
 
-### Аудиторское логирование
+### Audit Logging
 
-Все изменяющие HTTP-запросы (POST, PUT, PATCH, DELETE) логируются в таблицу `audit_log` через `observability.AuditMiddleware`. Каждая запись содержит:
-- Временную метку, ID пользователя, действие, тип ресурса
-- Детали запроса (JSONB)
-- IP-адрес клиента и user agent
+All mutating HTTP requests (POST, PUT, PATCH, DELETE) are logged to the `audit_log` table via `observability.AuditMiddleware`. Each entry contains:
+- Timestamp, user ID, action, resource type
+- Request details (JSONB)
+- Client IP address and user agent
 
-Аудиторские логи доступны через `GET /api/v1/audit` с фильтрацией и возможностью экспорта.
+Audit logs are available via `GET /api/v1/audit` with filtering and export capabilities.
 
-### Структурированное логирование
+### Structured Logging
 
-Все компоненты используют пакет Go `slog` с настраиваемым уровнем и форматом:
-- Уровни: `debug`, `info`, `warn`, `error`
-- Форматы: `json` (продакшен), `text` (разработка)
+All components use the Go `slog` package with configurable level and format:
+- Levels: `debug`, `info`, `warn`, `error`
+- Formats: `json` (production), `text` (development)
 
-## Технологические решения
+## Technology Decisions
 
-| Решение | Выбор | Обоснование |
+| Decision | Choice | Rationale |
 |----------|--------|-----------|
-| HTTP-роутер | Chi | Легковесный, идиоматичный Go, удобные middleware |
-| Драйвер БД | pgx/v5 | Чистый Go, пул соединений, нативные типы PostgreSQL |
-| SQL-кодогенерация | sqlc | Типобезопасные запросы без накладных расходов ORM |
-| gRPC | google.golang.org/grpc | Двунаправленный стриминг для связи со шлюзами в реальном времени |
-| Состояние фронтенда | Zustand + TanStack Query | Zustand для UI-состояния, TanStack для серверного состояния с кэшированием |
-| Стилизация фронтенда | Tailwind CSS 4 | Утилитарный подход, без runtime-затрат CSS-in-JS |
-| Protobuf-инструменты | Buf | Линтинг, обнаружение ломающих изменений, кодогенерация |
+| HTTP router | Chi | Lightweight, idiomatic Go, convenient middleware |
+| DB driver | pgx/v5 | Pure Go, connection pooling, native PostgreSQL types |
+| SQL code generation | sqlc | Type-safe queries without ORM overhead |
+| gRPC | google.golang.org/grpc | Bidirectional streaming for real-time gateway communication |
+| Frontend state | Zustand + TanStack Query | Zustand for UI state, TanStack for server state with caching |
+| Frontend styling | Tailwind CSS 4 | Utility-first approach, no CSS-in-JS runtime cost |
+| Protobuf tooling | Buf | Linting, breaking change detection, code generation |

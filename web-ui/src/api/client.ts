@@ -70,6 +70,15 @@ async function requestText(path: string, options: RequestInit = {}): Promise<str
     headers['Authorization'] = `Bearer ${token}`
   }
   const response = await fetch(`${BASE_URL}${path}`, { ...options, headers })
+  if (response.status === 401) {
+    if (!window.location.pathname.startsWith('/login')) {
+      localStorage.removeItem('outpost-token')
+      localStorage.removeItem('outpost-user')
+      window.dispatchEvent(new Event('auth:logout'))
+    }
+    const body = await response.json().catch(() => ({ message: 'Not authorized' }))
+    throw new Error(body.message || body.error || 'Not authorized')
+  }
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: 'Request failed' }))
     throw new Error(error.message || error.error || `HTTP ${response.status}`)

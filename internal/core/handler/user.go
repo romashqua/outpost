@@ -379,10 +379,21 @@ func (h *UserHandler) delete(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
+	// Use a serializable transaction to atomically check the admin count and
+	// delete the user. This prevents a race condition where two concurrent
+	// admin deletions could both pass the "last admin" check and leave the
+	// system with no admins.
+	tx, err := h.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to delete user")
+		return
+	}
+	defer tx.Rollback(ctx)
+
 	// Check whether the target user is an active admin. If so, ensure they
 	// are not the last one — deleting the last admin would lock everyone out.
 	var isAdmin, isActive bool
-	err = h.pool.QueryRow(ctx,
+	err = tx.QueryRow(ctx,
 		`SELECT is_admin, is_active FROM users WHERE id = $1`, id,
 	).Scan(&isAdmin, &isActive)
 	if err != nil {
@@ -396,7 +407,7 @@ func (h *UserHandler) delete(w http.ResponseWriter, r *http.Request) {
 
 	if isAdmin && isActive {
 		var activeAdminCount int
-		err = h.pool.QueryRow(ctx,
+		err = tx.QueryRow(ctx,
 			`SELECT COUNT(*) FROM users WHERE is_admin = true AND is_active = true`,
 		).Scan(&activeAdminCount)
 		if err != nil {
@@ -409,7 +420,7 @@ func (h *UserHandler) delete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	tag, err := h.pool.Exec(ctx,
+	tag, err := tx.Exec(ctx,
 		`DELETE FROM users WHERE id = $1`, id)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to delete user")
@@ -418,6 +429,11 @@ func (h *UserHandler) delete(w http.ResponseWriter, r *http.Request) {
 
 	if tag.RowsAffected() == 0 {
 		respondError(w, http.StatusNotFound, "user not found")
+		return
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to delete user")
 		return
 	}
 

@@ -41,7 +41,6 @@ func parseBody(r *http.Request, dst any) error {
 	// Limit request body to 1MB to prevent DoS via large payloads.
 	limited := io.LimitReader(r.Body, 1<<20)
 	dec := json.NewDecoder(limited)
-	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		return fmt.Errorf("invalid JSON: %w", err)
 	}

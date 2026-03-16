@@ -169,7 +169,7 @@ func (m *Manager) List(ctx context.Context) ([]Tenant, error) {
 	}
 	defer rows.Close()
 
-	var tenants []Tenant
+	tenants := make([]Tenant, 0)
 	for rows.Next() {
 		var t Tenant
 		if err := rows.Scan(&t.ID, &t.Name, &t.Slug, &t.Plan, &t.MaxUsers, &t.MaxDevices,

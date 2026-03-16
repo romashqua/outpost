@@ -834,24 +834,13 @@ func (h *DeviceHandler) downloadConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		// Fallback: generate a new key pair and update the device record.
-		privateKey, err = wireguard.GeneratePrivateKey()
-		if err != nil {
-			respondError(w, http.StatusInternalServerError, "failed to generate WireGuard key pair")
-			return
-		}
-		publicKey, err = wireguard.PublicKey(privateKey)
-		if err != nil {
-			respondError(w, http.StatusInternalServerError, "failed to derive public key")
-			return
-		}
-		if _, err := h.pool.Exec(r.Context(),
-			`UPDATE devices SET wireguard_pubkey = $1, wireguard_privkey = $2, updated_at = now() WHERE id = $3`,
-			publicKey, privateKey, id); err != nil {
-			h.log.Error("failed to update device keys", "error", err, "device_id", id)
-			respondError(w, http.StatusInternalServerError, "failed to update device keys")
-			return
-		}
+		// Device was enrolled with a user-provided public key — the server
+		// does not have the private key. Config download is only available
+		// for devices with auto-generated keys.
+		respondError(w, http.StatusUnprocessableEntity,
+			"config download unavailable: this device was enrolled with a user-provided key. "+
+				"Re-create the device with auto-generated keys or use your own WireGuard config file.")
+		return
 	}
 
 	clientAddress := fmt.Sprintf("%s/%d", assignedIP, maskLen)
@@ -982,23 +971,9 @@ func (h *DeviceHandler) sendConfig(w http.ResponseWriter, r *http.Request) {
 	if storedPrivKey != nil && *storedPrivKey != "" {
 		privateKey = *storedPrivKey
 	} else {
-		privateKey, err = wireguard.GeneratePrivateKey()
-		if err != nil {
-			respondError(w, http.StatusInternalServerError, "failed to generate key pair")
-			return
-		}
-		pubKey, pubErr := wireguard.PublicKey(privateKey)
-		if pubErr != nil {
-			respondError(w, http.StatusInternalServerError, "failed to derive public key")
-			return
-		}
-		if _, err := h.pool.Exec(r.Context(),
-			`UPDATE devices SET wireguard_pubkey = $1, wireguard_privkey = $2, updated_at = now() WHERE id = $3`,
-			pubKey, privateKey, id); err != nil {
-			h.log.Error("failed to update device keys", "error", err, "device_id", id)
-			respondError(w, http.StatusInternalServerError, "failed to update device keys")
-			return
-		}
+		respondError(w, http.StatusUnprocessableEntity,
+			"config email unavailable: this device was enrolled with a user-provided key")
+		return
 	}
 
 	clientAddress := fmt.Sprintf("%s/%d", assignedIP, maskLen)

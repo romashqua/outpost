@@ -47,9 +47,9 @@ export default function UsersPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<User | null>(null)
   const [editTarget, setEditTarget] = useState<User | null>(null)
-  const [editForm, setEditForm] = useState({ email: '', first_name: '', last_name: '', role: 'user' as 'admin' | 'user' | 'viewer', is_active: true })
+  const [editForm, setEditForm] = useState({ email: '', first_name: '', last_name: '', role: 'user' as 'admin' | 'user', is_active: true })
 
-  const [formRole, setFormRole] = useState<'admin' | 'user' | 'viewer'>('user')
+  const [formRole, setFormRole] = useState<'admin' | 'user'>('user')
   const [formData, setFormData] = useState<Omit<CreateUserPayload, 'is_admin'>>({
     username: '',
     email: '',
@@ -277,12 +277,11 @@ export default function UsersPage() {
             {t('users.role')}
             <select
               value={formRole}
-              onChange={(e) => setFormRole(e.target.value as 'admin' | 'user' | 'viewer')}
+              onChange={(e) => setFormRole(e.target.value as 'admin' | 'user')}
               className="rounded border border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-primary)] px-3 py-2 text-sm"
             >
               <option value="admin">{t('users.admin')}</option>
               <option value="user">{t('users.user')}</option>
-              <option value="viewer">{t('users.viewer')}</option>
             </select>
           </label>
           {createMutation.error && (
@@ -362,12 +361,11 @@ export default function UsersPage() {
             {t('users.role')}
             <select
               value={editForm.role}
-              onChange={(e) => setEditForm({ ...editForm, role: e.target.value as 'admin' | 'user' | 'viewer' })}
+              onChange={(e) => setEditForm({ ...editForm, role: e.target.value as 'admin' | 'user' })}
               className="rounded border border-[var(--border)] bg-[var(--bg-secondary)] text-[var(--text-primary)] px-3 py-2 text-sm"
             >
               <option value="admin">{t('users.admin')}</option>
               <option value="user">{t('users.user')}</option>
-              <option value="viewer">{t('users.viewer')}</option>
             </select>
           </label>
           <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">

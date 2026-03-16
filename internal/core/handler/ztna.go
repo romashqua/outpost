@@ -763,22 +763,20 @@ func (h *ZTNAHandler) reportPosture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Compute a posture score (0-100).
-	score := 100
-	if !req.DiskEncrypted {
-		score -= 25
+	// Compute a posture score (0-100) using configurable trust weights.
+	config := h.loadTrustConfig(r)
+	score := 0
+	if req.DiskEncrypted {
+		score += config.WeightDiskEncryption
 	}
-	if !req.ScreenLockEnabled {
-		score -= 15
+	if req.ScreenLockEnabled {
+		score += config.WeightScreenLock
 	}
-	if !req.AntivirusActive {
-		score -= 20
+	if req.AntivirusActive {
+		score += config.WeightAntivirus
 	}
-	if !req.FirewallEnabled {
-		score -= 15
-	}
-	if score < 0 {
-		score = 0
+	if req.FirewallEnabled {
+		score += config.WeightFirewall
 	}
 
 	// Upsert into device_posture table.
@@ -794,8 +792,7 @@ func (h *ZTNAHandler) reportPosture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Recalculate trust score after posture update.
-	config := h.loadTrustConfig(r)
+	// Recalculate trust score after posture update (reuse config loaded above).
 	calc := ztna.NewTrustScoreCalculator(h.pool, config)
 	result, calcErr := calc.Calculate(r.Context(), deviceID)
 

@@ -23,6 +23,7 @@ import {
   Copy,
   Check,
   ExternalLink,
+  Building2,
 } from 'lucide-react'
 import Card from '@/components/ui/Card'
 
@@ -149,6 +150,17 @@ const docSections: DocSection[] = [
       { id: 'iso27001', titleKey: 'docs.compliance.iso27001.title', contentKey: 'docs.compliance.iso27001.content' },
       { id: 'gdpr', titleKey: 'docs.compliance.gdpr.title', contentKey: 'docs.compliance.gdpr.content' },
       { id: 'remediation', titleKey: 'docs.compliance.remediation.title', contentKey: 'docs.compliance.remediation.content' },
+    ],
+  },
+  {
+    id: 'tenants',
+    titleKey: 'docs.tenants.title',
+    icon: Building2,
+    subsections: [
+      { id: 'tenant-overview', titleKey: 'docs.tenants.overview.title', contentKey: 'docs.tenants.overview.content' },
+      { id: 'tenant-creation', titleKey: 'docs.tenants.creation.title', contentKey: 'docs.tenants.creation.content' },
+      { id: 'tenant-resources', titleKey: 'docs.tenants.resources.title', contentKey: 'docs.tenants.resources.content' },
+      { id: 'tenant-plans', titleKey: 'docs.tenants.plans.title', contentKey: 'docs.tenants.plans.content' },
     ],
   },
   {

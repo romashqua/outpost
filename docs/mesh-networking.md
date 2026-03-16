@@ -1,19 +1,19 @@
-# Outpost VPN — Архитектура Mesh-сетей
+# Outpost VPN — Mesh Networking Architecture
 
-## Обзор
+## Overview
 
-Outpost поддерживает две топологии site-to-site (S2S) туннелей:
-- **Full Mesh** — каждый шлюз напрямую соединяется с каждым другим шлюзом
-- **Hub & Spoke** — все шлюзы соединяются через один центральный (hub) шлюз
+Outpost supports two site-to-site (S2S) tunnel topologies:
+- **Full Mesh** — each gateway connects directly to every other gateway
+- **Hub & Spoke** — all gateways connect through a single central (hub) gateway
 
-Обе топологии используют WireGuard-туннели с отдельными интерфейсами для S2S-трафика, изолированными от клиентского трафика.
+Both topologies use WireGuard tunnels with separate interfaces for S2S traffic, isolated from client traffic.
 
-## Архитектура
+## Architecture
 
 ```
                         ┌──────────────────────┐
                         │    outpost-core       │
-                        │  (Плоскость управления)│
+                        │  (Control Plane)      │
                         │                       │
                         │  ┌─────────────────┐  │
                         │  │ S2S API         │  │
@@ -21,9 +21,9 @@ Outpost поддерживает две топологии site-to-site (S2S) т
                         │  └────────┬────────┘  │
                         │           │           │
                         │  ┌────────▼────────┐  │
-                        │  │ Движок топологии│  │
-                        │  │ Калькулятор     │  │
-                        │  │ маршрутов       │  │
+                        │  │ Topology Engine │  │
+                        │  │ Route           │  │
+                        │  │ Calculator      │  │
                         │  └────────┬────────┘  │
                         │           │           │
                         │  ┌────────▼────────┐  │
@@ -35,46 +35,46 @@ Outpost поддерживает две топологии site-to-site (S2S) т
                  ┌─────────────┘    │    └─────────────┐
                  │                  │                   │
           ┌──────▼──────┐   ┌──────▼──────┐   ┌───────▼─────┐
-          │ gw-moscow   │   │ gw-spb      │   │ gw-nsk      │
+          │ gw-site-a   │   │ gw-site-b   │   │ gw-site-c   │
           │ 10.1.0.0/24 │◄─►│ 10.2.0.0/24 │◄─►│ 10.3.0.0/24 │
           │             │   │             │   │             │
-          │ wg0: клиенты│   │ wg0: клиенты│   │ wg0: клиенты│
+          │ wg0: clients│   │ wg0: clients│   │ wg0: clients│
           │ wg1: s2s    │   │ wg1: s2s    │   │ wg1: s2s    │
           └──────┬──────┘   └──────┬──────┘   └──────┬──────┘
                  │                 │                  │
           ┌──────▼──────┐  ┌──────▼──────┐   ┌──────▼──────┐
-          │   Клиенты   │  │   Клиенты   │   │   Клиенты   │
+          │   Clients   │  │   Clients   │   │   Clients   │
           │ 10.1.0.x    │  │ 10.2.0.x    │   │ 10.3.0.x    │
           └─────────────┘  └─────────────┘   └─────────────┘
 ```
 
-## Компоненты
+## Components
 
 ### 1. S2S API (outpost-core)
 
-REST API для управления S2S-туннелями, участниками и маршрутами.
+REST API for managing S2S tunnels, members, and routes.
 
-**Эндпоинты:**
-| Метод | Путь | Описание |
+**Endpoints:**
+| Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/v1/s2s-tunnels` | Список всех туннелей |
-| POST | `/api/v1/s2s-tunnels` | Создание туннеля (имя, топология, описание) |
-| GET | `/api/v1/s2s-tunnels/{id}` | Получение деталей туннеля |
-| DELETE | `/api/v1/s2s-tunnels/{id}` | Удаление туннеля |
+| GET | `/api/v1/s2s-tunnels` | List all tunnels |
+| POST | `/api/v1/s2s-tunnels` | Create a tunnel (name, topology, description) |
+| GET | `/api/v1/s2s-tunnels/{id}` | Get tunnel details |
+| DELETE | `/api/v1/s2s-tunnels/{id}` | Delete a tunnel |
 
-**Таблицы базы данных:**
-- `s2s_tunnels` — метаданные туннеля (имя, топология, hub_gateway_id, описание)
-- `s2s_tunnel_members` — какие шлюзы участвуют, с `local_subnets CIDR[]`
-- `s2s_routes` — вычисленные маршруты (CIDR назначения, via_gateway, метрика)
+**Database tables:**
+- `s2s_tunnels` — tunnel metadata (name, topology, hub_gateway_id, description)
+- `s2s_tunnel_members` — which gateways participate, with `local_subnets CIDR[]`
+- `s2s_routes` — computed routes (destination CIDR, via_gateway, metric)
 
-### 2. Движок топологии
+### 2. Topology Engine
 
-При создании туннеля или изменении участников движок топологии вычисляет необходимые конфигурации WireGuard-пиров:
+When a tunnel is created or members change, the topology engine computes the required WireGuard peer configurations:
 
 #### Full Mesh
-Каждый шлюз получает запись пира для каждого другого шлюза в туннеле:
+Each gateway gets a peer entry for every other gateway in the tunnel:
 ```
-N шлюзов → N×(N-1)/2 пар WireGuard-пиров
+N gateways → N×(N-1)/2 WireGuard peer pairs
 ```
 
 ```
@@ -87,10 +87,10 @@ N шлюзов → N×(N-1)/2 пар WireGuard-пиров
   gw-C ◄────► gw-D
 ```
 
-`AllowedIPs` каждого пира включает `local_subnets` удалённого шлюза.
+Each peer's `AllowedIPs` includes the remote gateway's `local_subnets`.
 
 #### Hub & Spoke
-Все spoke-шлюзы подключаются только к hub. Трафик между spoke-шлюзами проходит через hub:
+All spoke gateways connect only to the hub. Traffic between spoke gateways is routed through the hub:
 ```
           ┌─────┐
     ┌─────┤ Hub ├─────┐
@@ -100,169 +100,169 @@ N шлюзов → N×(N-1)/2 пар WireGuard-пиров
   Spoke-A  Spoke-B  Spoke-C
 ```
 
-Hub-шлюз получает записи пиров для всех spoke. Каждый spoke получает только одного пира (hub) с `AllowedIPs = 0.0.0.0/0` или объединением всех подсетей других spoke.
+The hub gateway gets peer entries for all spokes. Each spoke gets only one peer (the hub) with `AllowedIPs = 0.0.0.0/0` or the union of all other spoke subnets.
 
-### 3. Обмен маршрутами
+### 3. Route Exchange
 
-Маршруты обмениваются через gRPC-стриминг между core и шлюзами:
+Routes are exchanged via gRPC streaming between core and gateways:
 
 ```
 Gateway → Core: AdvertiseRoutes(local_subnets)
 Core → Gateway: PushRoutes(computed_route_table)
 ```
 
-**Процесс вычисления маршрутов:**
-1. Шлюз регистрирует свои `local_subnets` в core
-2. Core агрегирует все объявленные маршруты от всех участников туннеля
-3. Core вычисляет таблицу маршрутов на основе топологии:
-   - **Mesh**: прямые маршруты между каждой парой шлюзов
-   - **Hub-spoke**: маршруты через hub для трафика между spoke
-4. Core отправляет вычисленную таблицу маршрутов каждому шлюзу через gRPC-стрим
-5. Шлюз применяет маршруты к своему S2S WireGuard-интерфейсу (`wg1`)
+**Route computation process:**
+1. The gateway registers its `local_subnets` with core
+2. Core aggregates all advertised routes from all tunnel members
+3. Core computes the route table based on topology:
+   - **Mesh**: direct routes between each pair of gateways
+   - **Hub-spoke**: routes through the hub for inter-spoke traffic
+4. Core sends the computed route table to each gateway via the gRPC stream
+5. The gateway applies routes to its S2S WireGuard interface (`wg1`)
 
-### 4. Изоляция WireGuard-интерфейсов
+### 4. WireGuard Interface Isolation
 
-Каждый шлюз запускает два WireGuard-интерфейса:
+Each gateway runs two WireGuard interfaces:
 
-| Интерфейс | Назначение | Порт | Пиры |
+| Interface | Purpose | Port | Peers |
 |-----------|---------|------|-------|
-| `wg0` | Клиентский VPN-трафик | 51820/udp | Устройства пользователей |
-| `wg1` | S2S-туннельный трафик | 51821/udp | Другие шлюзы |
+| `wg0` | Client VPN traffic | 51820/udp | User devices |
+| `wg1` | S2S tunnel traffic | 51821/udp | Other gateways |
 
-Эта изоляция обеспечивает:
-- Компрометация ключей S2S не влияет на клиентские подключения
-- Отдельные правила файрвола для каждого интерфейса
-- Независимые настройки MTU/keepalive
-- Отсутствие петель маршрутизации между клиентским и S2S-трафиком
+This isolation provides:
+- S2S key compromise does not affect client connections
+- Separate firewall rules for each interface
+- Independent MTU/keepalive settings
+- No routing loops between client and S2S traffic
 
-### 5. Мониторинг здоровья
+### 5. Health Monitoring
 
-Шлюзы непрерывно мониторят состояние S2S-туннелей:
+Gateways continuously monitor S2S tunnel health:
 
 ```
-Каждые 10с: ICMP echo к каждому IP туннеля S2S-пира
+Every 10s: ICMP echo to each S2S peer's tunnel IP
              │
-             ├── Ответ < 100мс  → HEALTHY (здоров)
-             ├── Ответ > 500мс  → DEGRADED (деградация)
-             └── Нет ответа (3×) → DOWN (недоступен)
+             ├── Response < 100ms  → HEALTHY
+             ├── Response > 500ms  → DEGRADED
+             └── No response (3×)  → DOWN
 ```
 
-Когда шлюз переходит в состояние DOWN:
-1. Core помечает шлюз как нездоровый в таблице маршрутов
-2. Для mesh: маршруты пересчитываются без учёта неработающего шлюза
-3. Для hub-spoke: если hub упал, трафик переключается на резервный hub (если настроен)
-4. Core отправляет обновлённые маршруты всем оставшимся шлюзам
+When a gateway transitions to DOWN:
+1. Core marks the gateway as unhealthy in the route table
+2. For mesh: routes are recalculated excluding the failed gateway
+3. For hub-spoke: if the hub goes down, traffic switches to a backup hub (if configured)
+4. Core sends updated routes to all remaining gateways
 
-## Разрешённые домены (Allowed Domains)
+## Allowed Domains
 
-S2S-туннели поддерживают фильтрацию по доменам. Это позволяет ограничить, к каким ресурсам на удалённой площадке могут обращаться клиенты через S2S-туннель.
+S2S tunnels support domain-based filtering. This allows restricting which resources at a remote site can be accessed by clients through the S2S tunnel.
 
-Конфигурация осуществляется на уровне участника туннеля и работает совместно с DNS-резолвингом на шлюзе.
+Configuration is done at the tunnel member level and works in conjunction with DNS resolution on the gateway.
 
-## Генерация конфигурации
+## Configuration Generation
 
-Для каждого шлюза-участника можно сгенерировать готовый WireGuard-конфиг:
+A ready-to-use WireGuard config can be generated for each tunnel member gateway:
 
 ```bash
 GET /api/v1/s2s-tunnels/{tunnelId}/config/{gatewayId}
 ```
 
-Ответ содержит полный WireGuard-конфиг для интерфейса `wg1`:
+The response contains a full WireGuard config for the `wg1` interface:
 
 ```ini
 [Interface]
-PrivateKey = <приватный-ключ-шлюза>
+PrivateKey = <gateway-private-key>
 Address = 10.255.0.1/24
 ListenPort = 51821
 
 [Peer]
-# gw-spb
-PublicKey = <публичный-ключ-gw-spb>
-Endpoint = spb.vpn.company.com:51821
+# gw-site-b
+PublicKey = <gw-site-b-public-key>
+Endpoint = site-b.vpn.company.com:51821
 AllowedIPs = 10.2.0.0/24
 PersistentKeepalive = 25
 
 [Peer]
-# gw-nsk
-PublicKey = <публичный-ключ-gw-nsk>
-Endpoint = nsk.vpn.company.com:51821
+# gw-site-c
+PublicKey = <gw-site-c-public-key>
+Endpoint = site-c.vpn.company.com:51821
 AllowedIPs = 10.3.0.0/24
 PersistentKeepalive = 25
 ```
 
-Для mesh-топологии `AllowedIPs` каждого пира содержит `local_subnets` удалённого шлюза.
-Для hub-spoke `AllowedIPs` spoke-пира на hub содержит его подсети, а `AllowedIPs` hub-пира на spoke -- объединение подсетей всех участников.
+For mesh topology, each peer's `AllowedIPs` contains the remote gateway's `local_subnets`.
+For hub-spoke, the spoke peer's `AllowedIPs` on the hub contains its subnets, and the hub peer's `AllowedIPs` on each spoke contains the union of all members' subnets.
 
-## Пример конфигурации
+## Configuration Example
 
-### Создание Full Mesh туннеля через API
+### Creating a Full Mesh Tunnel via API
 
 ```bash
-# 1. Создание туннеля
+# 1. Create the tunnel
 curl -X POST http://localhost:8080/api/v1/s2s-tunnels \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "office-mesh",
-    "description": "Mesh офисов Москва, СПб, Новосибирск",
+    "description": "Office mesh: Site A, Site B, Site C",
     "topology": "mesh"
   }'
 
-# 2. Добавление участников-шлюзов
+# 2. Add gateway members
 curl -X POST http://localhost:8080/api/v1/s2s-tunnels/$TUNNEL_ID/members \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"gateway_id": "<gw-moscow-id>", "local_subnets": ["10.1.0.0/24"]}'
+  -d '{"gateway_id": "<gw-site-a-id>", "local_subnets": ["10.1.0.0/24"]}'
 
 curl -X POST http://localhost:8080/api/v1/s2s-tunnels/$TUNNEL_ID/members \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"gateway_id": "<gw-spb-id>", "local_subnets": ["10.2.0.0/24"]}'
+  -d '{"gateway_id": "<gw-site-b-id>", "local_subnets": ["10.2.0.0/24"]}'
 
-# 3. Маршруты вычисляются автоматически
-# 4. Скачивание конфига для шлюза
-curl http://localhost:8080/api/v1/s2s-tunnels/$TUNNEL_ID/config/<gw-moscow-id> \
+# 3. Routes are computed automatically
+# 4. Download config for a gateway
+curl http://localhost:8080/api/v1/s2s-tunnels/$TUNNEL_ID/config/<gw-site-a-id> \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-### Создание Hub & Spoke через панель администратора
+### Creating a Hub & Spoke via the Admin Panel
 
-1. Перейдите на страницу **S2S-туннели**
-2. Нажмите **Новый туннель**
-3. Введите имя и выберите топологию **Hub & Spoke**
-4. Выберите hub-шлюз
-5. Добавьте spoke-шлюзы с их локальными подсетями
-6. Маршруты автоматически вычисляются и отправляются на все шлюзы
+1. Go to the **S2S Tunnels** page
+2. Click **New Tunnel**
+3. Enter a name and select the **Hub & Spoke** topology
+4. Select the hub gateway
+5. Add spoke gateways with their local subnets
+6. Routes are automatically computed and sent to all gateways
 
-## Визуализация сетевой карты
+## Network Map Visualization
 
-Панель администратора показывает топологию S2S в реальном времени в виджете **Dashboard → Топология сети**:
+The admin panel shows the S2S topology in real time in the **Dashboard > Network Topology** widget:
 
-- **Узел Core** (ромб, синий) — центральная плоскость управления
-- **Шлюзы** (квадраты, зелёные) — точки WireGuard
-- **Устройства** (круги) — клиентские пиры, сгруппированные по шлюзам
-- **S2S-связи** (пунктирные синие линии) — активные S2S-туннели между шлюзами
-- **gRPC-связи** (сплошные линии) — подключения плоскости управления
+- **Core node** (diamond, blue) — central control plane
+- **Gateways** (squares, green) — WireGuard endpoints
+- **Devices** (circles) — client peers, grouped by gateway
+- **S2S links** (dashed blue lines) — active S2S tunnels between gateways
+- **gRPC links** (solid lines) — control plane connections
 
-Визуализация получает данные в реальном времени из:
-- `GET /api/v1/gateways` — список шлюзов и статус
-- `GET /api/v1/devices` — список устройств
-- `GET /api/v1/s2s-tunnels` — активные туннели и участники
+The visualization receives real-time data from:
+- `GET /api/v1/gateways` — gateway list and status
+- `GET /api/v1/devices` — device list
+- `GET /api/v1/s2s-tunnels` — active tunnels and members
 
-## Вопросы безопасности
+## Security Considerations
 
-1. **Изоляция ключей**: S2S и клиентский WireGuard используют отдельные пары ключей
-2. **Валидация подсетей**: Core проверяет, что объявленные подсети не пересекаются
-3. **Фильтрация маршрутов**: Шлюзы принимают маршруты только от core, никогда от пиров
-4. **Аутентификация по токенам**: gRPC между шлюзом и core использует HMAC-токены для каждого шлюза
-5. **Журналирование аудита**: Все изменения конфигурации S2S записываются в `audit_log`
+1. **Key isolation**: S2S and client WireGuard use separate key pairs
+2. **Subnet validation**: Core verifies that advertised subnets do not overlap
+3. **Route filtering**: Gateways accept routes only from core, never from peers
+4. **Token-based authentication**: gRPC between gateway and core uses per-gateway HMAC tokens
+5. **Audit logging**: All S2S configuration changes are recorded in `audit_log`
 
-## Масштабирование
+## Scaling
 
-| Топология | Макс. шлюзов | Пар пиров | Примечания |
+| Topology | Max Gateways | Peer Pairs | Notes |
 |----------|-------------|------------|-------|
-| Full Mesh | ~20 | N×(N-1)/2 | Рост O(N²) пиров |
-| Hub & Spoke | ~200 | N-1 | Пропускная способность hub — узкое место |
-| Гибридная | ~50 | Варьируется | Региональные mesh, соединённые через hub |
+| Full Mesh | ~20 | N×(N-1)/2 | O(N^2) peer growth |
+| Hub & Spoke | ~200 | N-1 | Hub bandwidth is the bottleneck |
+| Hybrid | ~50 | Varies | Regional meshes connected via hub |
 
-Для >20 сайтов рекомендуется hub & spoke. Для крупных развёртываний используйте региональные hub, соединённые в mesh (гибридная топология).
+For >20 sites, hub & spoke is recommended. For large deployments, use regional hubs connected in a mesh (hybrid topology).

@@ -328,7 +328,17 @@ func (s *Server) setupHTTPRouter() chi.Router {
 		authRateLimiter := newIPRateLimiter(10, time.Minute)
 		s.authRateLimiter = authRateLimiter
 		tokenBlacklist := auth.NewDBTokenBlacklist(s.pool)
-		authHandler := handler.NewAuthHandler(s.pool, s.cfg.Auth.JWTSecret, handler.WithTokenBlacklist(tokenBlacklist))
+		authOpts := []func(*handler.AuthHandler){
+			handler.WithTokenBlacklist(tokenBlacklist),
+			handler.WithAuthLogger(s.logger),
+		}
+		if s.mailer != nil {
+			authOpts = append(authOpts, handler.WithAuthMailer(s.mailer))
+		}
+		if s.cfg.OIDC.Issuer != "" {
+			authOpts = append(authOpts, handler.WithBaseURL(s.cfg.OIDC.Issuer))
+		}
+		authHandler := handler.NewAuthHandler(s.pool, s.cfg.Auth.JWTSecret, authOpts...)
 		r.With(rateLimitMiddleware(authRateLimiter)).Mount("/auth", authHandler.Routes())
 
 		// Dashboard stats — moved inside protected group below.
