@@ -258,7 +258,7 @@ func (h *AuthHandler) verifyMFA(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify the TOTP/backup code against the database.
-	var totpSecret string
+	var totpSecret []byte
 	err = h.pool.QueryRow(r.Context(),
 		`SELECT secret FROM mfa_totp WHERE user_id = $1`, claims.UserID,
 	).Scan(&totpSecret)
@@ -267,7 +267,7 @@ func (h *AuthHandler) verifyMFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	valid := totp.Validate(req.Code, totpSecret)
+	valid := totp.Validate(req.Code, string(totpSecret))
 
 	// If TOTP failed, try backup code.
 	if !valid && (req.Method == "backup" || len(req.Code) == 8) {
@@ -398,6 +398,13 @@ func (h *AuthHandler) refreshToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Blacklist the old token to prevent reuse (session fixation protection).
+	if h.tokenBlacklist != nil && claims.ExpiresAt != nil {
+		if err := h.tokenBlacklist.Add(r.Context(), tokenStr, claims.ExpiresAt.Time); err != nil {
+			h.log.Error("failed to blacklist old token on refresh", "error", err)
+		}
+	}
+
 	respondJSON(w, http.StatusOK, loginResponse{
 		Token:     newToken,
 		ExpiresAt: expiresAt.Unix(),
@@ -501,7 +508,9 @@ func (h *AuthHandler) forgotPassword(w http.ResponseWriter, r *http.Request) {
 	if h.mailer != nil {
 		resetURL := h.baseURL + "/login?reset_token=" + plainToken
 		go func() {
-			if err := h.mailer.SendPasswordReset(context.Background(), req.Email, resetURL); err != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := h.mailer.SendPasswordReset(ctx, req.Email, resetURL); err != nil {
 				h.log.Error("failed to send password reset email", "email", req.Email, "error", err)
 			}
 		}()

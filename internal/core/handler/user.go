@@ -136,7 +136,10 @@ func (h *UserHandler) list(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var total int
-	_ = h.pool.QueryRow(r.Context(), `SELECT COUNT(*) FROM users`).Scan(&total)
+	if err := h.pool.QueryRow(r.Context(), `SELECT COUNT(*) FROM users`).Scan(&total); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to count users")
+		return
+	}
 
 	respondJSON(w, http.StatusOK, map[string]any{
 		"users":    users,
@@ -224,10 +227,12 @@ func (h *UserHandler) create(w http.ResponseWriter, r *http.Request) {
 		h.log.Error("failed to assign role to user", "user_id", u.ID, "role", roleName, "error", err)
 	}
 
-	// Send welcome email asynchronously (best-effort).
+	// Send welcome email asynchronously (best-effort, 30s timeout).
 	if h.mailer != nil {
 		go func() {
-			if err := h.mailer.SendWelcome(context.Background(), u.Email, u.Username, "Outpost VPN"); err != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := h.mailer.SendWelcome(ctx, u.Email, u.Username, "Outpost VPN"); err != nil {
 				h.log.Error("failed to send welcome email", "user", u.Username, "error", err)
 			}
 		}()

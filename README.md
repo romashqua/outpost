@@ -1,12 +1,10 @@
 <p align="center">
-  <a href="README.md">Русский</a> | <a href="README.en.md">English</a>
+  <a href="README.md">Русский (полный)</a> | <a href="README.ru.md">Русский (краткий)</a>
 </p>
 
 <p align="center">
-  <img src="promo/logo-placeholder.png" alt="Outpost VPN" width="200" />
+  <img src="assets/banner.svg" alt="Outpost VPN" width="700" />
 </p>
-
-<h1 align="center"><code>&gt;_</code> OUTPOST VPN</h1>
 
 <p align="center">
   <strong>Открытая платформа WireGuard VPN и Zero Trust Network Access</strong><br/>
@@ -185,17 +183,9 @@ docker compose -f deploy/docker/docker-compose.yml up -d
 
 ## Скриншоты
 
-<!-- Добавьте скриншоты интерфейса Outpost сюда -->
-
-| Дашборд | Карта сети | Аналитика |
-|---|---|---|
-| ![Дашборд](promo/screenshots/dashboard.png) | ![Карта сети](promo/screenshots/network-map.png) | ![Аналитика](promo/screenshots/analytics.png) |
-
-| Устройства | Соответствие | Smart Routes |
-|---|---|---|
-| ![Устройства](promo/screenshots/devices.png) | ![Соответствие](promo/screenshots/compliance.png) | ![Smart Routes](promo/screenshots/smart-routes.png) |
-
 > Скриншоты скоро появятся. Интерфейс использует тёмную кибер-тему с акцентным цветом `#00ff88` и шрифтом JetBrains Mono.
+>
+> Для предварительного просмотра: `docker compose -f deploy/docker/docker-compose.yml up -d` и откройте http://localhost:8080
 
 ---
 

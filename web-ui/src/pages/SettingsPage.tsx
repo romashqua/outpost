@@ -264,16 +264,18 @@ function IntegrationsTab() {
 
   function toggleEvent(value: string) {
     if (value === '*') {
-      setFormEvents(['*'])
+      setFormEvents((prev) => prev.includes('*') ? [] : ['*'])
       return
     }
     setFormEvents((prev) => {
       const without = prev.filter((e) => e !== '*')
       if (without.includes(value)) {
-        const result = without.filter((e) => e !== value)
-        return result.length === 0 ? ['*'] : result
+        return without.filter((e) => e !== value)
       }
-      return [...without, value]
+      const next = [...without, value]
+      const allIndividual = availableEvents.filter((e) => e.value !== '*')
+      if (next.length === allIndividual.length) return ['*']
+      return next
     })
   }
 
@@ -392,7 +394,6 @@ function IntegrationsTab() {
                   <input
                     type="checkbox"
                     checked={formEvents.includes(evt.value) || (evt.value !== '*' && formEvents.includes('*'))}
-                    disabled={evt.value !== '*' && formEvents.includes('*')}
                     onChange={() => toggleEvent(evt.value)}
                     className="rounded border-[var(--border)]"
                   />
@@ -472,7 +473,7 @@ export default function SettingsPage() {
   })
 
   const smtpTestMutation = useMutation({
-    mutationFn: () => api.post('/settings/smtp/test'),
+    mutationFn: (to: string) => api.post('/settings/smtp/test', { to }),
     onSuccess: () => {
       addToast(t('settings.smtpTestSuccess'), 'success')
     },
@@ -900,8 +901,8 @@ export default function SettingsPage() {
                 <Button
                   type="button"
                   variant="secondary"
-                  disabled={smtpTestMutation.isPending || !settings.smtpHost}
-                  onClick={() => smtpTestMutation.mutate()}
+                  disabled={smtpTestMutation.isPending || !settings.smtpHost || !settings.smtpFrom}
+                  onClick={() => smtpTestMutation.mutate(settings.smtpFrom)}
                 >
                   {smtpTestMutation.isPending ? t('settings.testing') : t('settings.testSmtp')}
                 </Button>

@@ -234,8 +234,8 @@ function TunnelDetailPanel({
                   <button
                     onClick={async () => {
                       try {
-                        const config = await api.get<string>(`/s2s-tunnels/${tunnel.id}/config/${member.gateway_id}`)
-                        const blob = new Blob([typeof config === 'string' ? config : JSON.stringify(config)], { type: 'text/plain' })
+                        const config = await api.getText(`/s2s-tunnels/${tunnel.id}/config/${member.gateway_id}`)
+                        const blob = new Blob([config], { type: 'text/plain' })
                         const url = URL.createObjectURL(blob)
                         const a = document.createElement('a')
                         a.href = url

@@ -55,7 +55,7 @@ export default function App() {
                 <Route path="/ztna" element={<AdminRoute><ZTNAPage /></AdminRoute>} />
                 <Route path="/tenants" element={<AdminRoute><TenantsPage /></AdminRoute>} />
                 <Route path="/docs" element={<DocsPage />} />
-                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/settings" element={<AdminRoute><SettingsPage /></AdminRoute>} />
               </Routes>
             </Layout>
           </ProtectedRoute>

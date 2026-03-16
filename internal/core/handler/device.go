@@ -84,6 +84,8 @@ type deviceResponse struct {
 	AssignedIP      string     `json:"assigned_ip"`
 	IsApproved      bool       `json:"is_approved"`
 	LastHandshake   *time.Time `json:"last_handshake,omitempty"`
+	NetworkID       *uuid.UUID `json:"network_id,omitempty"`
+	NetworkName     *string    `json:"network_name,omitempty"`
 	CreatedAt       time.Time  `json:"created_at"`
 	UpdatedAt       time.Time  `json:"updated_at"`
 }
@@ -137,9 +139,10 @@ func (h *DeviceHandler) list(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.pool.Query(r.Context(),
-		`SELECT id, user_id, name, wireguard_pubkey, host(assigned_ip), is_approved, last_handshake, created_at, updated_at
-		 FROM devices
-		 ORDER BY created_at DESC
+		`SELECT d.id, d.user_id, d.name, d.wireguard_pubkey, host(d.assigned_ip), d.is_approved, d.last_handshake, d.network_id, n.name, d.created_at, d.updated_at
+		 FROM devices d
+		 LEFT JOIN networks n ON n.id = d.network_id
+		 ORDER BY d.created_at DESC
 		 LIMIT $1 OFFSET $2`, perPage, offset)
 	if err != nil {
 		h.log.Error("failed to query devices", "error", err)
@@ -152,7 +155,7 @@ func (h *DeviceHandler) list(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var d deviceResponse
 		if err := rows.Scan(&d.ID, &d.UserID, &d.Name, &d.WireguardPubkey,
-			&d.AssignedIP, &d.IsApproved, &d.LastHandshake, &d.CreatedAt, &d.UpdatedAt); err != nil {
+			&d.AssignedIP, &d.IsApproved, &d.LastHandshake, &d.NetworkID, &d.NetworkName, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			respondError(w, http.StatusInternalServerError, "failed to scan device")
 			return
 		}
@@ -205,10 +208,11 @@ func (h *DeviceHandler) listMy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.pool.Query(r.Context(),
-		`SELECT id, user_id, name, wireguard_pubkey, host(assigned_ip), is_approved, last_handshake, created_at, updated_at
-		 FROM devices
-		 WHERE user_id = $1
-		 ORDER BY created_at DESC
+		`SELECT d.id, d.user_id, d.name, d.wireguard_pubkey, host(d.assigned_ip), d.is_approved, d.last_handshake, d.network_id, n.name, d.created_at, d.updated_at
+		 FROM devices d
+		 LEFT JOIN networks n ON n.id = d.network_id
+		 WHERE d.user_id = $1
+		 ORDER BY d.created_at DESC
 		 LIMIT $2 OFFSET $3`, userID, perPage, offset)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to query devices")
@@ -220,7 +224,7 @@ func (h *DeviceHandler) listMy(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var d deviceResponse
 		if err := rows.Scan(&d.ID, &d.UserID, &d.Name, &d.WireguardPubkey,
-			&d.AssignedIP, &d.IsApproved, &d.LastHandshake, &d.CreatedAt, &d.UpdatedAt); err != nil {
+			&d.AssignedIP, &d.IsApproved, &d.LastHandshake, &d.NetworkID, &d.NetworkName, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			respondError(w, http.StatusInternalServerError, "failed to scan device")
 			return
 		}
@@ -399,10 +403,17 @@ func (h *DeviceHandler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	claims, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	// Combine ownership check into SQL to prevent timing-based device enumeration.
 	var d deviceResponse
 	err = h.pool.QueryRow(r.Context(),
 		`SELECT id, user_id, name, wireguard_pubkey, host(assigned_ip), is_approved, last_handshake, created_at, updated_at
-		 FROM devices WHERE id = $1`, id,
+		 FROM devices WHERE id = $1 AND (user_id = $2 OR $3 = true)`, id, claims.UserID, claims.IsAdmin,
 	).Scan(&d.ID, &d.UserID, &d.Name, &d.WireguardPubkey,
 		&d.AssignedIP, &d.IsApproved, &d.LastHandshake, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
@@ -412,17 +423,6 @@ func (h *DeviceHandler) get(w http.ResponseWriter, r *http.Request) {
 		}
 		h.log.Error("failed to get device", "error", err, "id", id)
 		respondError(w, http.StatusInternalServerError, "failed to get device")
-		return
-	}
-
-	// Non-admins can only view their own devices.
-	claims, ok := auth.GetUserFromContext(r.Context())
-	if !ok {
-		respondError(w, http.StatusUnauthorized, "authentication required")
-		return
-	}
-	if !claims.IsAdmin && claims.UserID != d.UserID.String() {
-		respondError(w, http.StatusForbidden, "you can only view your own devices")
 		return
 	}
 
@@ -455,10 +455,10 @@ func (h *DeviceHandler) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Fetch device owner and pubkey before deleting.
+	// Fetch device owner and pubkey — ownership check in SQL to prevent timing leaks.
 	var ownerID, pubkey string
 	err = h.pool.QueryRow(r.Context(),
-		`SELECT user_id::text, wireguard_pubkey FROM devices WHERE id = $1`, id,
+		`SELECT user_id::text, wireguard_pubkey FROM devices WHERE id = $1 AND (user_id = $2 OR $3 = true)`, id, claims.UserID, claims.IsAdmin,
 	).Scan(&ownerID, &pubkey)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -466,11 +466,6 @@ func (h *DeviceHandler) delete(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		respondError(w, http.StatusInternalServerError, "failed to fetch device")
-		return
-	}
-
-	if !claims.IsAdmin && claims.UserID != ownerID {
-		respondError(w, http.StatusForbidden, "you can only delete your own devices")
 		return
 	}
 

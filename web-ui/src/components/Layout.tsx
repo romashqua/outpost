@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import { useAuthStore } from '@/store/auth'
 import NotificationDropdown from '@/components/NotificationDropdown'
+import OutpostLogo from '@/components/OutpostLogo'
 
 const navItems = [
   { to: '/', icon: LayoutDashboard, labelKey: 'nav.dashboard', adminOnly: false },
@@ -61,9 +62,10 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       {/* Sidebar */}
       <aside className="flex w-56 flex-col border-r border-[var(--border)] bg-[var(--bg-secondary)]">
         {/* Logo */}
-        <div className="flex h-14 items-center px-5 border-b border-[var(--border)]">
+        <div className="flex h-14 items-center gap-2.5 px-4 border-b border-[var(--border)]">
+          <OutpostLogo size={28} />
           <span
-            className="text-xl font-bold font-mono tracking-wider"
+            className="text-lg font-bold font-mono tracking-wider"
             style={{
               color: 'var(--accent)',
               textShadow: '0 0 20px var(--accent-glow)',
@@ -71,7 +73,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
           >
             OUTPOST
           </span>
-          <span className="ml-2 text-xs text-[var(--text-muted)] font-mono">vpn</span>
+          <span className="text-xs text-[var(--text-muted)] font-mono">vpn</span>
         </div>
 
         {/* Navigation */}

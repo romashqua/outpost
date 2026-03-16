@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -37,7 +38,9 @@ func parseBody(r *http.Request, dst any) error {
 	if r.Body == nil {
 		return fmt.Errorf("request body is empty")
 	}
-	dec := json.NewDecoder(r.Body)
+	// Limit request body to 1MB to prevent DoS via large payloads.
+	limited := io.LimitReader(r.Body, 1<<20)
+	dec := json.NewDecoder(limited)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		return fmt.Errorf("invalid JSON: %w", err)

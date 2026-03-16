@@ -1,16 +1,18 @@
 <p align="center">
-  <a href="README.md">English</a> | <a href="README.ru.md">Русский</a>
+  <a href="README.md">Русский</a> | <a href="README.ru.md">Русский (краткий)</a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Go-1.25-00ADD8?style=flat-square&logo=go&logoColor=white" />
+  <img src="assets/banner.svg" alt="Outpost VPN" width="700" />
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Go-1.24+-00ADD8?style=flat-square&logo=go&logoColor=white" />
   <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black" />
   <img src="https://img.shields.io/badge/WireGuard-88171A?style=flat-square&logo=wireguard&logoColor=white" />
   <img src="https://img.shields.io/badge/PostgreSQL-17-4169E1?style=flat-square&logo=postgresql&logoColor=white" />
-  <img src="https://img.shields.io/badge/License-Apache%202.0-green?style=flat-square" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-green?style=flat-square" alt="Лицензия" /></a>
 </p>
-
-<h1 align="center"><code>&gt;_</code> OUTPOST VPN</h1>
 
 <p align="center">
   <strong>Open-Source WireGuard VPN & Zero Trust Network Access</strong><br/>
@@ -116,7 +118,7 @@ docker compose -f deploy/docker/docker-compose.yml up -d
 
 | Слой | Технология |
 |---|---|
-| Backend | Go 1.25, Chi, gRPC, pgx + sqlc |
+| Backend | Go 1.24+, Chi, gRPC, pgx + sqlc |
 | Frontend | React 19, TypeScript, Vite, Tailwind CSS 4, Zustand, TanStack Query |
 | БД | PostgreSQL 17 |
 | Кэш | Redis 7 |

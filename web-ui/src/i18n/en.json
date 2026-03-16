@@ -144,7 +144,15 @@
     "deleting": "Deleting...",
     "failedToLoad": "Failed to load devices",
     "confirmDelete": "Are you sure you want to delete device",
-    "failedToCopy": "Failed to copy"
+    "failedToCopy": "Failed to copy",
+    "networks": "Networks",
+    "networksHint": "Select one or more networks. A separate device will be created for each network.",
+    "noNetworks": "No available networks",
+    "multiNetworkNote": "Will create {{count}} devices (one per network)",
+    "devicesCreated": "{{count}} devices created",
+    "deviceApproved": "Device approved",
+    "deviceRevoked": "Device revoked",
+    "deviceDeleted": "Device deleted"
   },
   "networks": {
     "title": "Network Management",
@@ -247,7 +255,11 @@
     "comingSoon": "This feature is coming soon. The API is not yet available.",
     "gateway": "Gateway",
     "hubGateway": "Hub Gateway",
-    "downloadConfig": "Download WireGuard config"
+    "downloadConfig": "Download WireGuard config",
+    "invalidCidr": "Invalid CIDR format (e.g. 10.0.0.0/24)",
+    "gatewayRequired": "Gateway is required",
+    "routeDestination": "Destination CIDR",
+    "metric": "Metric"
   },
   "analytics": {
     "title": "Traffic Analytics",
@@ -264,7 +276,11 @@
     "noUserData": "No user data available",
     "noConnectionData": "No connection data available",
     "traffic": "Traffic",
-    "connections": "connections"
+    "connections": "connections",
+    "overview": "Overview",
+    "topology": "Topology",
+    "rxTraffic": "RX (Download)",
+    "txTraffic": "TX (Upload)"
   },
   "compliance": {
     "title": "Compliance Dashboard",
@@ -341,7 +357,8 @@
     "entryRemoved": "Entry removed",
     "confirmDeleteProxy": "Are you sure you want to delete this proxy server? This action cannot be undone.",
     "noEntriesClickAdd": "No entries yet. Click + to add one.",
-    "via": "via"
+    "via": "via",
+    "invalidPort": "Port must be between 1 and 65535"
   },
   "ztna": {
     "title": "Zero Trust Network Access",
@@ -392,7 +409,19 @@
     "confirmDeleteDNS": "Are you sure you want to delete this DNS rule?",
     "networks": "Networks",
     "networksHint": "Leave empty to apply to all networks",
-    "network": "Network"
+    "network": "Network",
+    "policyNamePlaceholder": "e.g. Require secure devices",
+    "policyDescPlaceholder": "e.g. Block access from devices without disk encryption",
+    "actionHint": "Allow — grant access, Restrict — limited access, Deny — block access",
+    "priorityHint": "Lower number = higher priority. Policies are evaluated in order.",
+    "conditions": "Conditions",
+    "conditionsHint": "Define device posture requirements for this policy",
+    "minTrustScore": "Minimum Trust Score",
+    "requireDiskEncryption": "Require disk encryption",
+    "requireScreenLock": "Require screen lock",
+    "requireAntivirus": "Require antivirus",
+    "requireFirewall": "Require firewall",
+    "requireMfa": "Require MFA"
   },
   "settings": {
     "title": "Settings",
@@ -525,7 +554,8 @@
     "created": "Created",
     "test": "Test",
     "add": "Add",
-    "close": "Close"
+    "close": "Close",
+    "error": "Error"
   },
   "status": {
     "active": "Active",
@@ -916,7 +946,22 @@
     "tenantCreated": "Tenant created",
     "tenantUpdated": "Tenant updated",
     "tenantDeactivated": "Tenant deactivated",
-    "failedToLoad": "Failed to load tenants"
+    "failedToLoad": "Failed to load tenants",
+    "tabUsers": "Users",
+    "tabNetworks": "Networks",
+    "tabGateways": "Gateways",
+    "assignResource": "Assign Resource",
+    "searchResource": "Search resources...",
+    "manageResources": "Manage Resources",
+    "resourceAssigned": "Resource assigned to tenant",
+    "resourceUnassigned": "Resource removed from tenant",
+    "noUsers": "No users assigned to this tenant",
+    "noNetworks": "No networks assigned to this tenant",
+    "noGateways": "No gateways assigned to this tenant",
+    "noAvailableResources": "No available resources to assign",
+    "assignHint_users": "Select users to assign to this tenant. Assigned users will be scoped to this organization.",
+    "assignHint_networks": "Select networks to assign to this tenant. Each network can belong to one tenant.",
+    "assignHint_gateways": "Select gateways to assign to this tenant. Each gateway can belong to one tenant."
   },
   "notifications": {
     "title": "Notifications",

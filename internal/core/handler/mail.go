@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/romashqua/outpost/internal/auth"
 	"github.com/romashqua/outpost/internal/mail"
 )
 
@@ -23,7 +24,7 @@ func NewMailHandler(mailer *mail.Mailer) *MailHandler {
 // Routes returns a chi.Router with mail endpoints mounted.
 func (h *MailHandler) Routes() chi.Router {
 	r := chi.NewRouter()
-	r.Post("/test", h.testSMTP)
+	r.With(auth.RequireAdmin).Post("/test", h.testSMTP)
 	return r
 }
 

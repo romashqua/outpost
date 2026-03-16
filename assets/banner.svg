@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 300" width="900" height="300">
+  <defs>
+    <linearGradient id="glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00ff88;stop-opacity:0.8"/>
+      <stop offset="100%" style="stop-color:#00cc66;stop-opacity:1"/>
+    </linearGradient>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="0" stdDeviation="6" flood-color="#00ff88" flood-opacity="0.35"/>
+    </filter>
+    <filter id="textGlow">
+      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#00ff88" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+  <!-- Background -->
+  <rect width="900" height="300" rx="16" fill="#0a0a0f"/>
+  <!-- Grid lines for cyber feel -->
+  <line x1="0" y1="60" x2="900" y2="60" stroke="#00ff88" stroke-width="0.5" opacity="0.05"/>
+  <line x1="0" y1="120" x2="900" y2="120" stroke="#00ff88" stroke-width="0.5" opacity="0.05"/>
+  <line x1="0" y1="180" x2="900" y2="180" stroke="#00ff88" stroke-width="0.5" opacity="0.05"/>
+  <line x1="0" y1="240" x2="900" y2="240" stroke="#00ff88" stroke-width="0.5" opacity="0.05"/>
+  <line x1="150" y1="0" x2="150" y2="300" stroke="#00ff88" stroke-width="0.5" opacity="0.05"/>
+  <line x1="300" y1="0" x2="300" y2="300" stroke="#00ff88" stroke-width="0.5" opacity="0.05"/>
+  <line x1="450" y1="0" x2="450" y2="300" stroke="#00ff88" stroke-width="0.5" opacity="0.05"/>
+  <line x1="600" y1="0" x2="600" y2="300" stroke="#00ff88" stroke-width="0.5" opacity="0.05"/>
+  <line x1="750" y1="0" x2="750" y2="300" stroke="#00ff88" stroke-width="0.5" opacity="0.05"/>
+  <!-- Shield logo (same as logo.svg, scaled to fit) -->
+  <g transform="translate(140, 30) scale(0.47)">
+    <!-- Shield outline -->
+    <path d="M256 56 L416 136 L416 280 C416 368 344 440 256 464 C168 440 96 368 96 280 L96 136 Z"
+          fill="none" stroke="url(#glow)" stroke-width="6" filter="url(#shadow)"/>
+    <!-- Inner shield fill -->
+    <path d="M256 76 L400 148 L400 276 C400 356 334 422 256 444 C178 422 112 356 112 276 L112 148 Z"
+          fill="#0a0a0f" fill-opacity="0.9"/>
+    <!-- WireGuard tunnel lines -->
+    <line x1="176" y1="200" x2="336" y2="200" stroke="#00ff88" stroke-width="3" opacity="0.3"/>
+    <line x1="176" y1="240" x2="336" y2="240" stroke="#00ff88" stroke-width="3" opacity="0.5"/>
+    <line x1="176" y1="280" x2="336" y2="280" stroke="#00ff88" stroke-width="3" opacity="0.3"/>
+    <!-- Lock / keyhole -->
+    <circle cx="256" cy="228" r="28" fill="none" stroke="#00ff88" stroke-width="5"/>
+    <rect x="236" y="248" width="40" height="44" rx="4" fill="#00ff88" opacity="0.9"/>
+    <circle cx="256" cy="264" r="6" fill="#0a0a0f"/>
+    <rect x="253" y="264" width="6" height="14" rx="2" fill="#0a0a0f"/>
+  </g>
+  <!-- Title -->
+  <text x="370" y="120" font-family="'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace" font-size="64" font-weight="bold" fill="#00ff88" filter="url(#textGlow)">OUTPOST</text>
+  <!-- Subtitle -->
+  <text x="370" y="160" font-family="'JetBrains Mono', monospace" font-size="18" fill="#8b949e">WireGuard VPN &amp; Zero Trust Network Access</text>
+  <!-- Tags -->
+  <g transform="translate(370, 185)">
+    <rect x="0" y="0" width="90" height="24" rx="4" fill="#00ff88" opacity="0.12"/>
+    <text x="45" y="16" text-anchor="middle" font-family="monospace" font-size="11" fill="#00ff88">Open Source</text>
+    <rect x="100" y="0" width="88" height="24" rx="4" fill="#00ff88" opacity="0.12"/>
+    <text x="144" y="16" text-anchor="middle" font-family="monospace" font-size="11" fill="#00ff88">Apache 2.0</text>
+    <rect x="198" y="0" width="70" height="24" rx="4" fill="#00ff88" opacity="0.12"/>
+    <text x="233" y="16" text-anchor="middle" font-family="monospace" font-size="11" fill="#00ff88">Go + React</text>
+    <rect x="278" y="0" width="55" height="24" rx="4" fill="#00ff88" opacity="0.12"/>
+    <text x="305.5" y="16" text-anchor="middle" font-family="monospace" font-size="11" fill="#00ff88">ZTNA</text>
+    <rect x="343" y="0" width="80" height="24" rx="4" fill="#00ff88" opacity="0.12"/>
+    <text x="383" y="16" text-anchor="middle" font-family="monospace" font-size="11" fill="#00ff88">Multi-tenant</text>
+  </g>
+  <!-- Bottom accent line -->
+  <rect x="140" y="280" width="620" height="2" rx="1" fill="url(#glow)" opacity="0.4"/>
+</svg>

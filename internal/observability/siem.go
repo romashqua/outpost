@@ -11,11 +11,25 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// sanitizeSyslogValue escapes characters that could inject into RFC 5424
+// structured data values (quotes, backslashes, closing brackets, newlines).
+func sanitizeSyslogValue(s string) string {
+	r := strings.NewReplacer(
+		`\`, `\\`,
+		`"`, `\"`,
+		`]`, `\]`,
+		"\n", `\n`,
+		"\r", `\r`,
+	)
+	return r.Replace(s)
+}
 
 // SIEMExporter sends audit events to external SIEM systems via webhook and syslog.
 type SIEMExporter struct {
@@ -161,10 +175,10 @@ func (s *SIEMExporter) ExportToSyslog(entry AuditEntry) error {
 	msg := fmt.Sprintf(
 		"<134>1 %s outpost audit-log - - [audit user_id=\"%s\" action=\"%s\" resource=\"%s\" ip=\"%s\"] %s",
 		entry.Timestamp.UTC().Format(time.RFC3339),
-		userID,
-		entry.Action,
-		entry.Resource,
-		entry.IPAddress,
+		sanitizeSyslogValue(userID),
+		sanitizeSyslogValue(entry.Action),
+		sanitizeSyslogValue(entry.Resource),
+		sanitizeSyslogValue(entry.IPAddress),
 		details,
 	)
 

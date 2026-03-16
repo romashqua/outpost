@@ -2,13 +2,18 @@ package tenant
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/romashqua/outpost/internal/auth"
 )
 
 // Handler provides HTTP endpoints for tenant management.
@@ -33,13 +38,23 @@ func NewHandler(pool *pgxpool.Pool, logger *slog.Logger) *Handler {
 // Routes returns a chi.Router with tenant CRUD endpoints mounted.
 func (h *Handler) Routes() chi.Router {
 	r := chi.NewRouter()
-	r.Get("/", h.list)
-	r.Post("/", h.create)
+	r.With(auth.RequireAdmin).Get("/", h.list)
+	r.With(auth.RequireAdmin).Post("/", h.create)
 	r.Route("/{id}", func(r chi.Router) {
+		r.Use(auth.RequireAdmin)
 		r.Get("/", h.get)
 		r.Put("/", h.update)
 		r.Delete("/", h.deactivate)
 		r.Get("/stats", h.stats)
+		r.Get("/users", h.listUsers)
+		r.Get("/networks", h.listNetworks)
+		r.Get("/gateways", h.listGateways)
+		r.Post("/users/{userId}", h.assignUser)
+		r.Delete("/users/{userId}", h.unassignUser)
+		r.Post("/networks/{networkId}", h.assignNetwork)
+		r.Delete("/networks/{networkId}", h.unassignNetwork)
+		r.Post("/gateways/{gatewayId}", h.assignGateway)
+		r.Delete("/gateways/{gatewayId}", h.unassignGateway)
 	})
 	return r
 }
@@ -160,9 +175,14 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 
 	created, err := h.mgr.Create(r.Context(), t)
 	if err != nil {
-		if strings.Contains(err.Error(), "23505") || strings.Contains(err.Error(), "duplicate") {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			msg := "tenant with this slug already exists"
+			if strings.Contains(pgErr.ConstraintName, "name") {
+				msg = "tenant with this name already exists"
+			}
 			respondJSON(w, http.StatusConflict, map[string]string{
-				"error": "tenant with this slug already exists", "message": "tenant with this slug already exists",
+				"error": msg, "message": msg,
 			})
 			return
 		}
@@ -378,6 +398,196 @@ func (h *Handler) stats(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, s)
 }
 
+// --- Tenant resource management endpoints ---
+
+func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	rows, err := h.pool.Query(r.Context(),
+		`SELECT id, username, email, first_name, last_name, role, is_active, created_at
+		 FROM users WHERE tenant_id = $1 ORDER BY created_at DESC`, id)
+	if err != nil {
+		respondJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to query users", "message": "failed to query users"})
+		return
+	}
+	defer rows.Close()
+
+	type userRow struct {
+		ID        string `json:"id"`
+		Username  string `json:"username"`
+		Email     string `json:"email"`
+		FirstName string `json:"first_name"`
+		LastName  string `json:"last_name"`
+		Role      string `json:"role"`
+		IsActive  bool   `json:"is_active"`
+		CreatedAt string `json:"created_at"`
+	}
+	users := make([]userRow, 0)
+	for rows.Next() {
+		var u userRow
+		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.FirstName, &u.LastName, &u.Role, &u.IsActive, &u.CreatedAt); err != nil {
+			respondJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to scan user", "message": "failed to scan user"})
+			return
+		}
+		users = append(users, u)
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"users": users, "total": len(users)})
+}
+
+func (h *Handler) listNetworks(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	rows, err := h.pool.Query(r.Context(),
+		`SELECT id, name, address::text, dns, port, is_active, created_at
+		 FROM networks WHERE tenant_id = $1 ORDER BY created_at DESC`, id)
+	if err != nil {
+		respondJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to query networks", "message": "failed to query networks"})
+		return
+	}
+	defer rows.Close()
+
+	type networkRow struct {
+		ID        string   `json:"id"`
+		Name      string   `json:"name"`
+		Address   string   `json:"address"`
+		DNS       []string `json:"dns"`
+		Port      int      `json:"port"`
+		IsActive  bool     `json:"is_active"`
+		CreatedAt string   `json:"created_at"`
+	}
+	networks := make([]networkRow, 0)
+	for rows.Next() {
+		var n networkRow
+		if err := rows.Scan(&n.ID, &n.Name, &n.Address, &n.DNS, &n.Port, &n.IsActive, &n.CreatedAt); err != nil {
+			respondJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to scan network", "message": "failed to scan network"})
+			return
+		}
+		networks = append(networks, n)
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"networks": networks, "total": len(networks)})
+}
+
+func (h *Handler) listGateways(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	rows, err := h.pool.Query(r.Context(),
+		`SELECT id, name, endpoint, is_active, created_at
+		 FROM gateways WHERE tenant_id = $1 ORDER BY created_at DESC`, id)
+	if err != nil {
+		respondJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to query gateways", "message": "failed to query gateways"})
+		return
+	}
+	defer rows.Close()
+
+	type gatewayRow struct {
+		ID        string `json:"id"`
+		Name      string `json:"name"`
+		Endpoint  string `json:"endpoint"`
+		IsActive  bool   `json:"is_active"`
+		CreatedAt string `json:"created_at"`
+	}
+	gateways := make([]gatewayRow, 0)
+	for rows.Next() {
+		var g gatewayRow
+		if err := rows.Scan(&g.ID, &g.Name, &g.Endpoint, &g.IsActive, &g.CreatedAt); err != nil {
+			respondJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to scan gateway", "message": "failed to scan gateway"})
+			return
+		}
+		gateways = append(gateways, g)
+	}
+	respondJSON(w, http.StatusOK, map[string]any{"gateways": gateways, "total": len(gateways)})
+}
+
+func (h *Handler) assignUser(w http.ResponseWriter, r *http.Request) {
+	tenantID := chi.URLParam(r, "id")
+	userID := chi.URLParam(r, "userId")
+	tag, err := h.pool.Exec(r.Context(),
+		`UPDATE users SET tenant_id = $1, updated_at = now() WHERE id = $2`, tenantID, userID)
+	if err != nil {
+		respondJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to assign user", "message": "failed to assign user"})
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		respondJSON(w, http.StatusNotFound, map[string]string{"error": "user not found", "message": "user not found"})
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]string{"status": "assigned"})
+}
+
+func (h *Handler) unassignUser(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "userId")
+	tag, err := h.pool.Exec(r.Context(),
+		`UPDATE users SET tenant_id = NULL, updated_at = now() WHERE id = $1`, userID)
+	if err != nil {
+		respondJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to unassign user", "message": "failed to unassign user"})
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		respondJSON(w, http.StatusNotFound, map[string]string{"error": "user not found", "message": "user not found"})
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]string{"status": "unassigned"})
+}
+
+func (h *Handler) assignNetwork(w http.ResponseWriter, r *http.Request) {
+	tenantID := chi.URLParam(r, "id")
+	networkID := chi.URLParam(r, "networkId")
+	tag, err := h.pool.Exec(r.Context(),
+		`UPDATE networks SET tenant_id = $1, updated_at = now() WHERE id = $2`, tenantID, networkID)
+	if err != nil {
+		respondJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to assign network", "message": "failed to assign network"})
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		respondJSON(w, http.StatusNotFound, map[string]string{"error": "network not found", "message": "network not found"})
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]string{"status": "assigned"})
+}
+
+func (h *Handler) unassignNetwork(w http.ResponseWriter, r *http.Request) {
+	networkID := chi.URLParam(r, "networkId")
+	tag, err := h.pool.Exec(r.Context(),
+		`UPDATE networks SET tenant_id = NULL, updated_at = now() WHERE id = $1`, networkID)
+	if err != nil {
+		respondJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to unassign network", "message": "failed to unassign network"})
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		respondJSON(w, http.StatusNotFound, map[string]string{"error": "network not found", "message": "network not found"})
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]string{"status": "unassigned"})
+}
+
+func (h *Handler) assignGateway(w http.ResponseWriter, r *http.Request) {
+	tenantID := chi.URLParam(r, "id")
+	gatewayID := chi.URLParam(r, "gatewayId")
+	tag, err := h.pool.Exec(r.Context(),
+		`UPDATE gateways SET tenant_id = $1, updated_at = now() WHERE id = $2`, tenantID, gatewayID)
+	if err != nil {
+		respondJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to assign gateway", "message": "failed to assign gateway"})
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		respondJSON(w, http.StatusNotFound, map[string]string{"error": "gateway not found", "message": "gateway not found"})
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]string{"status": "assigned"})
+}
+
+func (h *Handler) unassignGateway(w http.ResponseWriter, r *http.Request) {
+	gatewayID := chi.URLParam(r, "gatewayId")
+	tag, err := h.pool.Exec(r.Context(),
+		`UPDATE gateways SET tenant_id = NULL, updated_at = now() WHERE id = $1`, gatewayID)
+	if err != nil {
+		respondJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to unassign gateway", "message": "failed to unassign gateway"})
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		respondJSON(w, http.StatusNotFound, map[string]string{"error": "gateway not found", "message": "gateway not found"})
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]string{"status": "unassigned"})
+}
+
 // respondJSON writes a JSON response with the given status code.
 func respondJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -392,7 +602,8 @@ func parseBody(r *http.Request, dst any) error {
 	if r.Body == nil {
 		return fmt.Errorf("request body is empty")
 	}
-	dec := json.NewDecoder(r.Body)
+	limited := io.LimitReader(r.Body, 1<<20) // 1MB limit
+	dec := json.NewDecoder(limited)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		return fmt.Errorf("invalid JSON: %w", err)

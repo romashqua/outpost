@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Lock, User, Terminal, ShieldCheck, Mail, KeyRound } from 'lucide-react'
+import OutpostLogo from '@/components/OutpostLogo'
 import { useAuthStore } from '@/store/auth'
 import { useToastStore } from '@/store/toast'
 import { api } from '@/api/client'
@@ -340,6 +341,9 @@ export default function LoginPage() {
         <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-card)] p-8 shadow-2xl backdrop-blur-sm">
           {/* Logo */}
           <div className="mb-8 text-center">
+            <div className="flex justify-center mb-4">
+              <OutpostLogo size={72} />
+            </div>
             <h1
               className="text-4xl font-bold font-mono tracking-[0.3em]"
               style={{
@@ -353,13 +357,6 @@ export default function LoginPage() {
               <Terminal size={14} />
               <span className="text-xs font-mono tracking-wider">{t('login.subtitle')}</span>
             </div>
-
-            {/* ASCII decoration */}
-            <pre className="mt-4 text-[10px] text-[var(--accent)] opacity-20 font-mono leading-tight">
-{`  ╔══════════════════════╗
-  ║  SECURE ACCESS POINT ║
-  ╚══════════════════════╝`}
-            </pre>
           </div>
 
           {renderForm()}

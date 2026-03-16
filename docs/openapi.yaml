@@ -59,6 +59,16 @@ tags:
     description: Audit log viewer and export
   - name: ZTNA
     description: Zero-Trust Network Access (device trust scores, access policies, split DNS)
+  - name: Groups
+    description: User group management (CRUD, members, ACLs)
+  - name: Sessions
+    description: User session management
+  - name: Tenants
+    description: Multi-tenant platform management (MSP mode)
+  - name: NAT
+    description: NAT traversal status and relay server management
+  - name: Notifications
+    description: In-app notification feed
 
 paths:
   # ── Health ──────────────────────────────────────────────────────────
@@ -1542,6 +1552,106 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /api/v1/auth/forgot-password:
+    post:
+      operationId: forgotPassword
+      summary: Request a password reset email
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "200":
+          description: Reset email sent (always returns 200 to avoid user enumeration)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusOK"
+
+  /api/v1/auth/reset-password:
+    post:
+      operationId: resetPassword
+      summary: Reset password using token from email
+      tags: [Auth]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, new_password]
+              properties:
+                token:
+                  type: string
+                  description: Password reset token from the email link
+                new_password:
+                  type: string
+                  format: password
+                  minLength: 8
+      responses:
+        "200":
+          description: Password reset successful
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusOK"
+        "400":
+          description: Invalid or expired token
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/auth/change-password:
+    post:
+      operationId: changePassword
+      summary: Change password for authenticated user
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current_password, new_password]
+              properties:
+                current_password:
+                  type: string
+                  format: password
+                new_password:
+                  type: string
+                  format: password
+                  minLength: 8
+      responses:
+        "200":
+          description: Password changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusOK"
+        "400":
+          description: New password too weak or same as current
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Current password incorrect
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   # ── Dashboard ────────────────────────────────────────────────────────
   /api/v1/dashboard/stats:
     get:
@@ -1586,6 +1696,268 @@ paths:
                 $ref: "#/components/schemas/Error"
         "500":
           description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Groups ──────────────────────────────────────────────────────────
+  /api/v1/groups:
+    get:
+      operationId: listGroups
+      summary: List all groups with member counts
+      tags: [Groups]
+      responses:
+        "200":
+          description: Group list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GroupListItem"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: createGroup
+      summary: Create a new group
+      tags: [Groups]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateGroupRequest"
+      responses:
+        "201":
+          description: Group created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupDetail"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Group name already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/groups/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+    get:
+      operationId: getGroup
+      summary: Get group by ID with members and ACLs
+      tags: [Groups]
+      responses:
+        "200":
+          description: Group details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupDetail"
+        "404":
+          description: Group not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    put:
+      operationId: updateGroup
+      summary: Update a group
+      tags: [Groups]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateGroupRequest"
+      responses:
+        "200":
+          description: Group updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupDetail"
+        "404":
+          description: Group not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deleteGroup
+      summary: Delete a group
+      tags: [Groups]
+      responses:
+        "204":
+          description: Group deleted
+        "400":
+          description: Cannot delete system group
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Group not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/groups/{id}/members:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+    get:
+      operationId: listGroupMembers
+      summary: List group members
+      tags: [Groups]
+      responses:
+        "200":
+          description: Member list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GroupMember"
+    post:
+      operationId: addGroupMember
+      summary: Add a user to a group
+      tags: [Groups]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id:
+                  type: string
+                  format: uuid
+      responses:
+        "201":
+          description: Member added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusOK"
+        "409":
+          description: User already a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/groups/{id}/members/{userId}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      operationId: removeGroupMember
+      summary: Remove a user from a group
+      tags: [Groups]
+      responses:
+        "204":
+          description: Member removed
+        "404":
+          description: Member not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/groups/{id}/acls:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+    get:
+      operationId: listGroupACLs
+      summary: List group ACLs (network access rules)
+      tags: [Groups]
+      responses:
+        "200":
+          description: ACL list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GroupACL"
+    post:
+      operationId: addGroupACL
+      summary: Add an ACL to a group
+      tags: [Groups]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [network_id, allowed_ips]
+              properties:
+                network_id:
+                  type: string
+                  format: uuid
+                allowed_ips:
+                  type: array
+                  items:
+                    type: string
+                  description: CIDR ranges allowed for this group on the network
+                  example: ["10.10.0.0/24", "192.168.1.0/24"]
+      responses:
+        "201":
+          description: ACL added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupACL"
+        "400":
+          description: Missing fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: ACL already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/groups/{id}/acls/{aclId}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+      - name: aclId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      operationId: removeGroupACL
+      summary: Remove an ACL from a group
+      tags: [Groups]
+      responses:
+        "204":
+          description: ACL removed
+        "404":
+          description: ACL not found
           content:
             application/json:
               schema:
@@ -1662,6 +2034,48 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+
+  /api/v1/devices/{id}/send-config:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+    post:
+      operationId: sendDeviceConfig
+      summary: Email WireGuard configuration to the device owner
+      tags: [Devices]
+      responses:
+        "200":
+          description: Configuration email sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusOK"
+        "400":
+          description: Invalid UUID or SMTP not configured
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Device not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/networks/my:
+    get:
+      operationId: listMyNetworks
+      summary: List networks accessible to the authenticated user
+      tags: [Networks]
+      responses:
+        "200":
+          description: Network list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Network"
 
   # ── S2S Tunnels ──────────────────────────────────────────────────────
   /api/v1/s2s-tunnels:
@@ -1757,6 +2171,272 @@ paths:
                 $ref: "#/components/schemas/Error"
         "500":
           description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/s2s-tunnels/{id}/members:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+    get:
+      operationId: listS2STunnelMembers
+      summary: List gateway members of a tunnel
+      tags: [S2STunnels]
+      responses:
+        "200":
+          description: Member list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/S2SMember"
+    post:
+      operationId: addS2STunnelMember
+      summary: Add a gateway to a tunnel
+      tags: [S2STunnels]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [gateway_id]
+              properties:
+                gateway_id:
+                  type: string
+                  format: uuid
+                local_subnets:
+                  type: array
+                  items:
+                    type: string
+                  example: ["192.168.1.0/24"]
+      responses:
+        "201":
+          description: Member added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/S2SMember"
+        "400":
+          description: Missing gateway_id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Gateway already a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/s2s-tunnels/{id}/members/{gatewayId}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+      - name: gatewayId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      operationId: removeS2STunnelMember
+      summary: Remove a gateway from a tunnel
+      tags: [S2STunnels]
+      responses:
+        "204":
+          description: Member removed
+        "404":
+          description: Member not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/s2s-tunnels/{id}/routes:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+    get:
+      operationId: listS2STunnelRoutes
+      summary: List routes for a tunnel
+      tags: [S2STunnels]
+      responses:
+        "200":
+          description: Route list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/S2SRoute"
+    post:
+      operationId: addS2STunnelRoute
+      summary: Add a route to a tunnel
+      tags: [S2STunnels]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [destination, via_gateway]
+              properties:
+                destination:
+                  type: string
+                  description: Destination CIDR
+                  example: "10.20.0.0/16"
+                via_gateway:
+                  type: string
+                  format: uuid
+                  description: Gateway UUID to route through
+                metric:
+                  type: integer
+                  default: 100
+      responses:
+        "201":
+          description: Route added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/S2SRoute"
+        "400":
+          description: Missing fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/s2s-tunnels/{id}/routes/{routeId}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+      - name: routeId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      operationId: removeS2STunnelRoute
+      summary: Remove a route from a tunnel
+      tags: [S2STunnels]
+      responses:
+        "204":
+          description: Route removed
+        "404":
+          description: Route not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/s2s-tunnels/{id}/config/{gatewayId}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+      - name: gatewayId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      operationId: getS2STunnelConfig
+      summary: Generate WireGuard config for a gateway in this tunnel
+      tags: [S2STunnels]
+      responses:
+        "200":
+          description: WireGuard configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  config:
+                    type: string
+                    description: WireGuard INI-format configuration
+        "400":
+          description: Invalid UUID or gateway not a member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Tunnel or gateway not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/s2s-tunnels/{id}/domains:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+    get:
+      operationId: listS2STunnelDomains
+      summary: List allowed domains for a tunnel
+      tags: [S2STunnels]
+      responses:
+        "200":
+          description: Domain list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/S2SAllowedDomain"
+    post:
+      operationId: addS2STunnelDomain
+      summary: Add an allowed domain to a tunnel
+      tags: [S2STunnels]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [domain]
+              properties:
+                domain:
+                  type: string
+                  example: "*.corp.example.com"
+      responses:
+        "201":
+          description: Domain added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/S2SAllowedDomain"
+        "400":
+          description: Missing domain
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Domain already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/s2s-tunnels/{id}/domains/{domainId}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+      - name: domainId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      operationId: removeS2STunnelDomain
+      summary: Remove an allowed domain from a tunnel
+      tags: [S2STunnels]
+      responses:
+        "204":
+          description: Domain removed
+        "404":
+          description: Domain not found
           content:
             application/json:
               schema:
@@ -2214,6 +2894,74 @@ paths:
                 $ref: "#/components/schemas/Error"
         "409":
           description: Referenced by route entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/smart-routes/{id}/networks:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+    get:
+      operationId: listSmartRouteNetworks
+      summary: List networks associated with a smart route
+      tags: [SmartRoutes]
+      responses:
+        "200":
+          description: Network associations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NetworkSmartRoute"
+    post:
+      operationId: associateSmartRouteNetwork
+      summary: Associate a network with a smart route
+      tags: [SmartRoutes]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [network_id]
+              properties:
+                network_id:
+                  type: string
+                  format: uuid
+      responses:
+        "201":
+          description: Network associated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NetworkSmartRoute"
+        "409":
+          description: Already associated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/smart-routes/{id}/networks/{networkId}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+      - name: networkId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      operationId: disassociateSmartRouteNetwork
+      summary: Remove a network association from a smart route
+      tags: [SmartRoutes]
+      responses:
+        "204":
+          description: Association removed
+        "404":
+          description: Association not found
           content:
             application/json:
               schema:
@@ -2703,6 +3451,591 @@ paths:
           description: DNS rule deleted
         "404":
           description: Rule not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Sessions ──────────────────────────────────────────────────────────
+  /api/v1/sessions:
+    get:
+      operationId: listSessions
+      summary: List active sessions for the authenticated user
+      tags: [Sessions]
+      responses:
+        "200":
+          description: Session list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Session"
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: revokeAllSessions
+      summary: Revoke all sessions for the authenticated user
+      tags: [Sessions]
+      responses:
+        "204":
+          description: All sessions revoked
+        "401":
+          description: Not authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/sessions/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Session ID (hex string)
+        schema:
+          type: string
+    delete:
+      operationId: revokeSession
+      summary: Revoke a specific session
+      tags: [Sessions]
+      responses:
+        "204":
+          description: Session revoked
+        "403":
+          description: Cannot revoke another user's session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Tenants ──────────────────────────────────────────────────────────
+  /api/v1/tenants:
+    get:
+      operationId: listTenants
+      summary: List all tenants
+      tags: [Tenants]
+      responses:
+        "200":
+          description: Tenant list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Tenant"
+        "500":
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    post:
+      operationId: createTenant
+      summary: Create a new tenant (organization)
+      tags: [Tenants]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTenantRequest"
+      responses:
+        "201":
+          description: Tenant created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "400":
+          description: Validation error (missing name/slug, invalid plan)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Tenant slug already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/tenants/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+    get:
+      operationId: getTenant
+      summary: Get tenant by ID
+      tags: [Tenants]
+      responses:
+        "200":
+          description: Tenant details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "404":
+          description: Tenant not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    put:
+      operationId: updateTenant
+      summary: Update tenant settings
+      tags: [Tenants]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTenantRequest"
+      responses:
+        "200":
+          description: Tenant updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "404":
+          description: Tenant not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: deactivateTenant
+      summary: Deactivate a tenant (soft delete)
+      tags: [Tenants]
+      responses:
+        "200":
+          description: Tenant deactivated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusOK"
+        "404":
+          description: Tenant not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/tenants/{id}/stats:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+    get:
+      operationId: getTenantStats
+      summary: Get tenant resource usage statistics
+      tags: [Tenants]
+      responses:
+        "200":
+          description: Tenant statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TenantStats"
+        "404":
+          description: Tenant not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/tenants/{id}/users:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+    get:
+      operationId: listTenantUsers
+      summary: List users assigned to a tenant
+      tags: [Tenants]
+      responses:
+        "200":
+          description: User list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+
+  /api/v1/tenants/{id}/users/{userId}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: assignTenantUser
+      summary: Assign a user to a tenant
+      tags: [Tenants]
+      responses:
+        "200":
+          description: User assigned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusOK"
+        "409":
+          description: User already assigned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: unassignTenantUser
+      summary: Remove a user from a tenant
+      tags: [Tenants]
+      responses:
+        "204":
+          description: User removed
+        "404":
+          description: Assignment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/tenants/{id}/networks:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+    get:
+      operationId: listTenantNetworks
+      summary: List networks assigned to a tenant
+      tags: [Tenants]
+      responses:
+        "200":
+          description: Network list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Network"
+
+  /api/v1/tenants/{id}/networks/{networkId}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+      - name: networkId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: assignTenantNetwork
+      summary: Assign a network to a tenant
+      tags: [Tenants]
+      responses:
+        "200":
+          description: Network assigned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusOK"
+        "409":
+          description: Network already assigned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: unassignTenantNetwork
+      summary: Remove a network from a tenant
+      tags: [Tenants]
+      responses:
+        "204":
+          description: Network removed
+        "404":
+          description: Assignment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/tenants/{id}/gateways:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+    get:
+      operationId: listTenantGateways
+      summary: List gateways assigned to a tenant
+      tags: [Tenants]
+      responses:
+        "200":
+          description: Gateway list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Gateway"
+
+  /api/v1/tenants/{id}/gateways/{gatewayId}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+      - name: gatewayId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      operationId: assignTenantGateway
+      summary: Assign a gateway to a tenant
+      tags: [Tenants]
+      responses:
+        "200":
+          description: Gateway assigned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusOK"
+        "409":
+          description: Gateway already assigned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      operationId: unassignTenantGateway
+      summary: Remove a gateway from a tenant
+      tags: [Tenants]
+      responses:
+        "204":
+          description: Gateway removed
+        "404":
+          description: Assignment not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── NAT ──────────────────────────────────────────────────────────────
+  /api/v1/nat/status:
+    get:
+      operationId: getNATStatus
+      summary: Get NAT status for a device
+      tags: [NAT]
+      parameters:
+        - name: device_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: NAT status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NATStatus"
+        "400":
+          description: Missing or invalid device_id
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No NAT status found for this device
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/nat/check:
+    post:
+      operationId: triggerNATCheck
+      summary: Trigger NAT type detection for a device
+      tags: [NAT]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NATCheckRequest"
+      responses:
+        "200":
+          description: NAT check result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NATCheckResponse"
+        "400":
+          description: Missing device_id or device not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/nat/relays:
+    get:
+      operationId: listRelayServers
+      summary: List all relay servers
+      tags: [NAT]
+      responses:
+        "200":
+          description: Relay server list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RelayServer"
+    post:
+      operationId: createRelayServer
+      summary: Add a new relay server (admin only)
+      tags: [NAT]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateRelayServerRequest"
+      responses:
+        "201":
+          description: Relay server created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RelayServer"
+        "400":
+          description: Missing fields or invalid protocol
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Relay server already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/nat/relays/{id}:
+    parameters:
+      - $ref: "#/components/parameters/ResourceID"
+    delete:
+      operationId: deleteRelayServer
+      summary: Delete a relay server (admin only)
+      tags: [NAT]
+      responses:
+        "204":
+          description: Relay server deleted
+        "404":
+          description: Relay server not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Relay server is referenced by NAT status entries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  # ── Notifications ────────────────────────────────────────────────────
+  /api/v1/notifications:
+    get:
+      operationId: listNotifications
+      summary: List recent notifications for the authenticated user
+      tags: [Notifications]
+      parameters:
+        - name: limit
+          in: query
+          description: Max notifications to return (1-100, default 30)
+          schema:
+            type: integer
+            default: 30
+            minimum: 1
+            maximum: 100
+      responses:
+        "200":
+          description: Notification list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NotificationItem"
+
+  /api/v1/notifications/unread-count:
+    get:
+      operationId: getUnreadNotificationCount
+      summary: Get count of unread notifications
+      tags: [Notifications]
+      responses:
+        "200":
+          description: Unread count
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [count]
+                properties:
+                  count:
+                    type: integer
+
+  /api/v1/notifications/mark-read:
+    post:
+      operationId: markNotificationsRead
+      summary: Mark notifications as read
+      tags: [Notifications]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ids:
+                  type: array
+                  items:
+                    type: integer
+                    format: int64
+                  description: Notification IDs to mark read (empty = mark all)
+      responses:
+        "200":
+          description: Notifications marked as read
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusOK"
+
+  # ── ZTNA Posture ─────────────────────────────────────────────────────
+  /api/v1/ztna/posture:
+    post:
+      operationId: reportPosture
+      summary: Report device posture data for trust score evaluation
+      tags: [ZTNA]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PostureReport"
+      responses:
+        "200":
+          description: Posture accepted and trust score updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrustScore"
+        "400":
+          description: Missing device_id
           content:
             application/json:
               schema:
@@ -4049,6 +5382,425 @@ components:
         is_active:
           type: boolean
           default: true
+
+    PostureReport:
+      type: object
+      required: [device_id]
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        disk_encryption:
+          type: boolean
+        screen_lock:
+          type: boolean
+        antivirus:
+          type: boolean
+        firewall:
+          type: boolean
+        os_version:
+          type: string
+          example: "macOS 15.2"
+
+    # ── Groups ─────────────────────────────────────────────────────────
+    GroupListItem:
+      type: object
+      required: [id, name, description, is_system, member_count, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        is_system:
+          type: boolean
+        member_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    GroupDetail:
+      type: object
+      required: [id, name, description, is_system, created_at, members, acls]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        is_system:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/GroupMember"
+        acls:
+          type: array
+          items:
+            $ref: "#/components/schemas/GroupACL"
+
+    GroupMember:
+      type: object
+      required: [user_id, username, email]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+
+    GroupACL:
+      type: object
+      required: [id, network_id, network_name, allowed_ips]
+      properties:
+        id:
+          type: string
+          format: uuid
+        network_id:
+          type: string
+          format: uuid
+        network_name:
+          type: string
+        allowed_ips:
+          type: array
+          items:
+            type: string
+          example: ["10.10.0.0/24"]
+
+    CreateGroupRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+
+    UpdateGroupRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+
+    # ── Sessions ───────────────────────────────────────────────────────
+    Session:
+      type: object
+      required: [id, user_id, ip_address, user_agent, created_at, expires_at]
+      properties:
+        id:
+          type: string
+          description: Hex-encoded session ID
+        user_id:
+          type: string
+          format: uuid
+        ip_address:
+          type: string
+        user_agent:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        data:
+          type: object
+          additionalProperties: true
+
+    # ── Tenants ────────────────────────────────────────────────────────
+    Tenant:
+      type: object
+      required: [id, name, slug, plan, max_users, max_devices, max_networks, is_active, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+          description: URL-safe unique identifier
+        plan:
+          type: string
+          enum: [free, pro, enterprise]
+        max_users:
+          type: integer
+        max_devices:
+          type: integer
+        max_networks:
+          type: integer
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateTenantRequest:
+      type: object
+      required: [name, slug]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        slug:
+          type: string
+          minLength: 1
+          description: URL-safe unique identifier
+        plan:
+          type: string
+          enum: [free, pro, enterprise]
+          default: free
+        max_users:
+          type: integer
+          description: Defaults based on plan if not set
+        max_devices:
+          type: integer
+        max_networks:
+          type: integer
+
+    UpdateTenantRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        slug:
+          type: string
+        plan:
+          type: string
+          enum: [free, pro, enterprise]
+        max_users:
+          type: integer
+        max_devices:
+          type: integer
+        max_networks:
+          type: integer
+        is_active:
+          type: boolean
+
+    TenantStats:
+      type: object
+      required: [tenant_id, user_count, device_count, network_count, gateway_count]
+      properties:
+        tenant_id:
+          type: string
+          format: uuid
+        user_count:
+          type: integer
+        device_count:
+          type: integer
+        network_count:
+          type: integer
+        gateway_count:
+          type: integer
+
+    # ── NAT ────────────────────────────────────────────────────────────
+    NATStatus:
+      type: object
+      required: [device_id, nat_type, external_ip, external_port, last_checked, created_at]
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        nat_type:
+          type: string
+          description: "Detected NAT type (e.g. full_cone, restricted_cone, symmetric, open)"
+        external_ip:
+          type: string
+          description: External IP address as seen by STUN
+        external_port:
+          type: integer
+        relay_server_id:
+          type: string
+          format: uuid
+          nullable: true
+        last_checked:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+
+    NATCheckRequest:
+      type: object
+      required: [device_id]
+      properties:
+        device_id:
+          type: string
+          format: uuid
+        stun_server_1:
+          type: string
+          description: "Custom STUN server (default: stun.l.google.com:19302)"
+        stun_server_2:
+          type: string
+          description: "Custom second STUN server (default: stun1.l.google.com:19302)"
+
+    NATCheckResponse:
+      type: object
+      required: [nat_type, external_ip, external_port]
+      properties:
+        nat_type:
+          type: string
+        external_ip:
+          type: string
+        external_port:
+          type: integer
+
+    RelayServer:
+      type: object
+      required: [id, name, address, region, protocol, is_active, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        address:
+          type: string
+        region:
+          type: string
+        protocol:
+          type: string
+          enum: [stun, turn]
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateRelayServerRequest:
+      type: object
+      required: [name, address, protocol]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        address:
+          type: string
+        region:
+          type: string
+        protocol:
+          type: string
+          enum: [stun, turn]
+
+    # ── Notifications ──────────────────────────────────────────────────
+    NotificationItem:
+      type: object
+      required: [id, timestamp, action, resource]
+      properties:
+        id:
+          type: integer
+          format: int64
+        timestamp:
+          type: string
+          format: date-time
+        action:
+          type: string
+        resource:
+          type: string
+        details:
+          description: Arbitrary JSON details
+        user_id:
+          type: string
+          nullable: true
+
+    # ── S2S Sub-resources ──────────────────────────────────────────────
+    S2SMember:
+      type: object
+      required: [tunnel_id, gateway_id, gateway_name, local_subnets]
+      properties:
+        tunnel_id:
+          type: string
+          format: uuid
+        gateway_id:
+          type: string
+          format: uuid
+        gateway_name:
+          type: string
+        local_subnets:
+          type: array
+          items:
+            type: string
+          example: ["192.168.1.0/24"]
+
+    S2SRoute:
+      type: object
+      required: [id, tunnel_id, destination, via_gateway, gateway_name, metric, is_active, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        tunnel_id:
+          type: string
+          format: uuid
+        destination:
+          type: string
+          description: Destination CIDR
+        via_gateway:
+          type: string
+          format: uuid
+        gateway_name:
+          type: string
+        metric:
+          type: integer
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    S2SAllowedDomain:
+      type: object
+      required: [id, tunnel_id, domain, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        tunnel_id:
+          type: string
+          format: uuid
+        domain:
+          type: string
+          example: "*.corp.example.com"
+        created_at:
+          type: string
+          format: date-time
+
+    # ── Smart Route Network Association ────────────────────────────────
+    NetworkSmartRoute:
+      type: object
+      required: [smart_route_id, network_id]
+      properties:
+        smart_route_id:
+          type: string
+          format: uuid
+        network_id:
+          type: string
+          format: uuid
+        network_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
 
 security:
   - BearerAuth: []

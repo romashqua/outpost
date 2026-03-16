@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -236,7 +237,8 @@ func parseSCIMBody(r *http.Request, dst any) error {
 	if r.Body == nil {
 		return fmt.Errorf("request body is empty")
 	}
-	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+	limited := io.LimitReader(r.Body, 1<<20) // 1MB limit
+	if err := json.NewDecoder(limited).Decode(dst); err != nil {
 		return fmt.Errorf("invalid JSON: %w", err)
 	}
 	return nil

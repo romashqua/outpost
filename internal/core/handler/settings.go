@@ -26,9 +26,9 @@ func NewSettingsHandler(pool *pgxpool.Pool, mailer *mail.Mailer) *SettingsHandle
 
 func (h *SettingsHandler) Routes() chi.Router {
 	r := chi.NewRouter()
-	r.Get("/", h.getAll)
+	r.With(auth.RequireAdmin).Get("/", h.getAll)
 	r.With(auth.RequireAdmin).Put("/", h.batchSet)
-	r.Get("/{key}", h.get)
+	r.With(auth.RequireAdmin).Get("/{key}", h.get)
 	r.With(auth.RequireAdmin).Put("/{key}", h.set)
 	r.With(auth.RequireAdmin).Delete("/{key}", h.delete)
 	r.With(auth.RequireAdmin).Post("/smtp/test", h.TestSMTP)

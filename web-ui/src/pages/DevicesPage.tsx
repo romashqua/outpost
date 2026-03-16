@@ -19,6 +19,8 @@ interface Device {
   assigned_ip: string
   is_approved: boolean
   last_handshake: string | null
+  network_id: string | null
+  network_name: string | null
   created_at: string
 }
 
@@ -59,7 +61,7 @@ export default function DevicesPage() {
   const [createForm, setCreateForm] = useState({
     name: '',
     user_id: '',
-    network_id: '',
+    network_ids: [] as string[],
     autoGenerateKey: true,
     wireguard_pubkey: '',
   })
@@ -139,7 +141,7 @@ export default function DevicesPage() {
     mutationFn: (id: string) => api.post(`/devices/${id}/approve`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['devices'] })
-      addToast(t('devices.approve'), 'success')
+      addToast(t('devices.deviceApproved'), 'success')
     },
     onError: (err) => {
       addToast((err as Error).message, 'error')
@@ -150,7 +152,7 @@ export default function DevicesPage() {
     mutationFn: (id: string) => api.post(`/devices/${id}/revoke`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['devices'] })
-      addToast(t('devices.revoke'), 'success')
+      addToast(t('devices.deviceRevoked'), 'success')
     },
     onError: (err) => {
       addToast((err as Error).message, 'error')
@@ -162,7 +164,7 @@ export default function DevicesPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['devices'] })
       setDeleteTarget(null)
-      addToast(t('common.delete'), 'success')
+      addToast(t('devices.deviceDeleted'), 'success')
     },
     onError: (err) => {
       addToast((err as Error).message, 'error')
@@ -172,34 +174,51 @@ export default function DevicesPage() {
   const createMutation = useMutation({
     mutationFn: async (form: typeof createForm) => {
       let pubkey = form.wireguard_pubkey
-
       if (form.autoGenerateKey) {
         pubkey = 'auto-generated'
       }
 
-      const device = await api.post<Device>('/devices', {
-        name: form.name,
-        user_id: form.user_id,
-        wireguard_pubkey: pubkey,
-        ...(form.network_id ? { network_id: form.network_id } : {}),
-      })
+      const networkIds = form.network_ids.length > 0 ? form.network_ids : ['']
+      const results: { device: Device; config: ConfigResponse | null }[] = []
 
-      if (form.autoGenerateKey) {
-        const configResp = await api.get<ConfigResponse>(`/devices/${device.id}/config`)
-        return { device, config: configResp }
+      for (const netId of networkIds) {
+        const suffix = networkIds.length > 1
+          ? `-${networks.find(n => n.id === netId)?.name ?? netId.slice(0, 6)}`
+          : ''
+        const device = await api.post<Device>('/devices', {
+          name: form.name + suffix,
+          user_id: form.user_id,
+          wireguard_pubkey: pubkey,
+          ...(netId ? { network_id: netId } : {}),
+        })
+
+        let config: ConfigResponse | null = null
+        if (form.autoGenerateKey) {
+          config = await api.get<ConfigResponse>(`/devices/${device.id}/config`)
+        }
+        results.push({ device, config })
+        // Each device in WireGuard needs its own key pair
+        pubkey = 'auto-generated'
       }
 
-      return { device, config: null }
+      return results
     },
-    onSuccess: (result) => {
+    onSuccess: (results) => {
       queryClient.invalidateQueries({ queryKey: ['devices'] })
       setShowCreateModal(false)
-      setCreateForm({ name: '', user_id: '', network_id: '', autoGenerateKey: true, wireguard_pubkey: '' })
-      addToast(t('devices.createDevice'), 'success')
+      setCreateForm({ name: '', user_id: '', network_ids: [], autoGenerateKey: true, wireguard_pubkey: '' })
+      addToast(
+        results.length > 1
+          ? t('devices.devicesCreated', { count: results.length }) || `${results.length} devices created`
+          : t('devices.deviceCreated', 'Device created'),
+        'success'
+      )
 
-      if (result.config) {
-        setConfigText(result.config.config)
-        setConfigDeviceId(result.device.id)
+      // Show config for the first device that has one
+      const firstWithConfig = results.find(r => r.config)
+      if (firstWithConfig?.config) {
+        setConfigText(firstWithConfig.config.config)
+        setConfigDeviceId(firstWithConfig.device.id)
         setShowConfigModal(true)
       }
     },
@@ -288,6 +307,15 @@ export default function DevicesPage() {
       ),
     },
     {
+      key: 'network_name',
+      header: t('devices.network'),
+      render: (row: Device) => (
+        <span className="font-mono text-xs text-[var(--accent)]">
+          {row.network_name ?? '-'}
+        </span>
+      ),
+    },
+    {
       key: 'is_approved',
       header: t('devices.status'),
       render: (row: Device) => (
@@ -317,6 +345,7 @@ export default function DevicesPage() {
             disabled={downloadConfigMutation.isPending}
             onClick={(e) => {
               e.stopPropagation()
+              downloadConfigMutation.reset()
               downloadConfigMutation.mutate(row.id)
             }}
           >
@@ -329,6 +358,7 @@ export default function DevicesPage() {
             disabled={sendConfigMutation.isPending}
             onClick={(e) => {
               e.stopPropagation()
+              sendConfigMutation.reset()
               sendConfigMutation.mutate(row.id)
             }}
           >
@@ -419,7 +449,7 @@ export default function DevicesPage() {
           onSubmit={(e) => {
             e.preventDefault()
             const userId = isAdmin ? createForm.user_id : (currentUser?.id ?? '')
-            if (!createForm.name || !userId || !createForm.network_id) return
+            if (!createForm.name || !userId || createForm.network_ids.length === 0) return
             if (!createForm.autoGenerateKey && !createForm.wireguard_pubkey) return
             createMutation.mutate({ ...createForm, user_id: userId })
           }}
@@ -456,21 +486,43 @@ export default function DevicesPage() {
 
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
-                {t('devices.network')}
+                {t('devices.networks')} <span className="text-[var(--danger)]">*</span>
               </label>
-              <select
-                className="w-full rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-sm text-[var(--text-primary)] font-mono glow-focus transition-all duration-150"
-                value={createForm.network_id}
-                onChange={(e) => setCreateForm((f) => ({ ...f, network_id: e.target.value }))}
-                required
-              >
-                <option value="">{t('devices.selectNetwork')}</option>
-                {networks.filter(n => n.is_active).map((n) => (
-                  <option key={n.id} value={n.id}>
-                    {n.name} ({n.address})
-                  </option>
-                ))}
-              </select>
+              <p className="text-xs text-[var(--text-muted)]">
+                {t('devices.networksHint')}
+              </p>
+              <div className="space-y-2 max-h-40 overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3">
+                {networks.filter(n => n.is_active).length === 0 ? (
+                  <p className="text-xs text-[var(--text-muted)]">{t('devices.noNetworks')}</p>
+                ) : (
+                  networks.filter(n => n.is_active).map((n) => (
+                    <label key={n.id} className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={createForm.network_ids.includes(n.id)}
+                        onChange={(e) => {
+                          setCreateForm((f) => ({
+                            ...f,
+                            network_ids: e.target.checked
+                              ? [...f.network_ids, n.id]
+                              : f.network_ids.filter(id => id !== n.id),
+                          }))
+                        }}
+                        className="rounded border-[var(--border)] bg-[var(--bg-tertiary)]"
+                      />
+                      <span className="text-sm font-mono text-[var(--text-primary)]">
+                        {n.name}
+                      </span>
+                      <span className="text-xs text-[var(--text-muted)]">({n.address})</span>
+                    </label>
+                  ))
+                )}
+              </div>
+              {createForm.network_ids.length > 1 && (
+                <p className="text-xs text-[var(--accent)]">
+                  {t('devices.multiNetworkNote', { count: createForm.network_ids.length }) || `Will create ${createForm.network_ids.length} devices (one per network)`}
+                </p>
+              )}
             </div>
 
             <div className="flex items-center gap-2">

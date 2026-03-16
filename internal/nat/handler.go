@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -13,6 +14,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/romashqua/outpost/internal/auth"
 )
 
 // Handler provides HTTP endpoints for NAT traversal status and relay server management.
@@ -32,8 +35,8 @@ func (h *Handler) Routes() chi.Router {
 	r.Get("/status", h.getStatus)
 	r.Post("/check", h.triggerCheck)
 	r.Get("/relays", h.listRelays)
-	r.Post("/relays", h.createRelay)
-	r.Delete("/relays/{id}", h.deleteRelay)
+	r.With(auth.RequireAdmin).Post("/relays", h.createRelay)
+	r.With(auth.RequireAdmin).Delete("/relays/{id}", h.deleteRelay)
 	return r
 }
 
@@ -292,7 +295,8 @@ func parseBody(r *http.Request, dst any) error {
 	if r.Body == nil {
 		return fmt.Errorf("request body is empty")
 	}
-	dec := json.NewDecoder(r.Body)
+	limited := io.LimitReader(r.Body, 1<<20) // 1MB limit
+	dec := json.NewDecoder(limited)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		return fmt.Errorf("invalid JSON: %w", err)

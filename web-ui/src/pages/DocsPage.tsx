@@ -304,15 +304,52 @@ function DocContent({ content }: { content: string }) {
   )
 }
 
-/** Simple inline formatting: **bold**, `code`, [link](url) */
+/** Escape HTML entities to prevent XSS */
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+}
+
+/** Simple inline formatting: **bold**, `code`, [link](url) — with XSS protection */
 function formatInline(text: string): string {
-  return text
-    .replace(/\*\*(.*?)\*\*/g, '<strong class="text-[var(--text-primary)] font-medium">$1</strong>')
-    .replace(/`(.*?)`/g, '<code class="rounded bg-[var(--bg-tertiary)] border border-[var(--border)] px-1.5 py-0.5 text-xs font-mono text-[var(--accent)]">$1</code>')
-    .replace(
-      /\[([^\]]+)\]\(([^)]+)\)/g,
-      '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-[var(--accent)] hover:underline">$1</a>',
-    )
+  // Extract markdown tokens, escape everything else, then re-apply formatting
+  const tokens: { start: number; end: number; replacement: string }[] = []
+
+  // Collect bold tokens
+  for (const m of text.matchAll(/\*\*(.*?)\*\*/g)) {
+    tokens.push({ start: m.index!, end: m.index! + m[0].length, replacement: `<strong class="text-[var(--text-primary)] font-medium">${escapeHtml(m[1])}</strong>` })
+  }
+  // Collect code tokens
+  for (const m of text.matchAll(/`(.*?)`/g)) {
+    if (!tokens.some(t => m.index! >= t.start && m.index! < t.end)) {
+      tokens.push({ start: m.index!, end: m.index! + m[0].length, replacement: `<code class="rounded bg-[var(--bg-tertiary)] border border-[var(--border)] px-1.5 py-0.5 text-xs font-mono text-[var(--accent)]">${escapeHtml(m[1])}</code>` })
+    }
+  }
+  // Collect link tokens — only allow safe URLs (http, https, mailto, /)
+  for (const m of text.matchAll(/\[([^\]]+)\]\(([^)]+)\)/g)) {
+    if (!tokens.some(t => m.index! >= t.start && m.index! < t.end)) {
+      const href = m[2]
+      if (/^(https?:\/\/|mailto:|\/)/i.test(href)) {
+        tokens.push({ start: m.index!, end: m.index! + m[0].length, replacement: `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer" class="text-[var(--accent)] hover:underline">${escapeHtml(m[1])}</a>` })
+      }
+    }
+  }
+
+  // Sort tokens by position and build result
+  tokens.sort((a, b) => a.start - b.start)
+  let result = ''
+  let cursor = 0
+  for (const token of tokens) {
+    result += escapeHtml(text.slice(cursor, token.start))
+    result += token.replacement
+    cursor = token.end
+  }
+  result += escapeHtml(text.slice(cursor))
+  return result
 }
 
 /* ------------------------------------------------------------------ */

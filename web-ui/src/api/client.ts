@@ -60,8 +60,26 @@ async function request<T>(
   return JSON.parse(text)
 }
 
+/** requestText is like request but returns raw text instead of parsing JSON. */
+async function requestText(path: string, options: RequestInit = {}): Promise<string> {
+  const token = getToken()
+  const headers: Record<string, string> = {
+    ...(options.headers as Record<string, string> || {}),
+  }
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+  const response = await fetch(`${BASE_URL}${path}`, { ...options, headers })
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ message: 'Request failed' }))
+    throw new Error(error.message || error.error || `HTTP ${response.status}`)
+  }
+  return response.text()
+}
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
+  getText: (path: string) => requestText(path),
   post: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined }),
   put: <T>(path: string, body?: unknown) =>

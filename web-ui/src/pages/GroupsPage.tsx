@@ -187,6 +187,7 @@ export default function GroupsPage() {
 
   const handleAddMember = () => {
     if (!detailTarget || !addMemberUserId) return
+    addMemberMutation.reset()
     addMemberMutation.mutate({ groupId: detailTarget, user_id: addMemberUserId })
   }
 
@@ -196,6 +197,7 @@ export default function GroupsPage() {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean)
+    addAclMutation.reset()
     addAclMutation.mutate({
       groupId: detailTarget,
       network_id: addAclNetworkId,

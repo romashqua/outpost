@@ -11,6 +11,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/romashqua/outpost/internal/auth"
 )
 
 // AuditEntry represents a single audit log row returned by the API.
@@ -54,9 +56,9 @@ func NewAuditHandler(pool *pgxpool.Pool) *AuditHandler {
 // Routes returns a chi.Router with all audit log endpoints mounted.
 func (h *AuditHandler) Routes() chi.Router {
 	r := chi.NewRouter()
-	r.Get("/", h.listAuditLogs)
-	r.Get("/export", h.exportAuditLogs)
-	r.Get("/stats", h.auditStats)
+	r.With(auth.RequireAdmin).Get("/", h.listAuditLogs)
+	r.With(auth.RequireAdmin).Get("/export", h.exportAuditLogs)
+	r.With(auth.RequireAdmin).Get("/stats", h.auditStats)
 	return r
 }
 
@@ -129,7 +131,8 @@ func (h *AuditHandler) exportAuditLogs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	where, args := buildWhereClause(r)
-	query := "SELECT id, timestamp, user_id, action, resource, details, ip_address, user_agent FROM audit_log" + where + " ORDER BY timestamp DESC"
+	// Limit export to 50,000 rows to prevent OOM on large audit logs.
+	query := "SELECT id, timestamp, user_id, action, resource, details, ip_address, user_agent FROM audit_log" + where + " ORDER BY timestamp DESC LIMIT 50000"
 
 	rows, err := h.pool.Query(ctx, query, args...)
 	if err != nil {

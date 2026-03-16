@@ -82,10 +82,13 @@ export default function AnalyticsPage() {
   ]
 
   const periodCfg = PERIOD_CONFIG[timePeriod]
-  const now = new Date()
-  const fromDate = new Date(now.getTime() - periodCfg.ms)
-  const fromParam = fromDate.toISOString()
-  const toParam = now.toISOString()
+  const { fromParam, toParam } = useMemo(() => {
+    const now = new Date()
+    return {
+      fromParam: new Date(now.getTime() - periodCfg.ms).toISOString(),
+      toParam: now.toISOString(),
+    }
+  }, [periodCfg.ms])
 
   const { data: summary, error: summaryError } = useQuery({
     queryKey: ['analytics', 'summary'],
@@ -93,7 +96,7 @@ export default function AnalyticsPage() {
   })
 
   const { data: bandwidth = [] } = useQuery({
-    queryKey: ['analytics', 'bandwidth', timePeriod],
+    queryKey: ['analytics', 'bandwidth', timePeriod, fromParam, toParam],
     queryFn: () => api.get<BandwidthBucket[]>(`/analytics/bandwidth?from=${fromParam}&to=${toParam}&bucket=${periodCfg.bucket}`),
   })
 

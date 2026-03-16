@@ -4,18 +4,24 @@ import (
 	"bytes"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/romashqua/outpost/internal/auth"
 )
 
 // Event represents an outbound webhook event.
@@ -207,14 +213,53 @@ func matchesEvent(filters []string, eventType string) bool {
 // ---- HTTP Handlers ----------------------------------------------------------
 
 // Routes returns a chi.Router with webhook subscription management endpoints.
+// All mutation routes require admin privileges.
 func (d *Dispatcher) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Get("/", d.listSubscriptions)
-	r.Post("/", d.createSubscription)
+	r.With(auth.RequireAdmin).Post("/", d.createSubscription)
 	r.Get("/{id}", d.getSubscription)
-	r.Delete("/{id}", d.deleteSubscription)
-	r.Post("/{id}/test", d.testSubscription)
+	r.With(auth.RequireAdmin).Delete("/{id}", d.deleteSubscription)
+	r.With(auth.RequireAdmin).Post("/{id}/test", d.testSubscription)
 	return r
+}
+
+// validateWebhookURL checks that the URL is a valid HTTPS/HTTP endpoint and
+// not pointed at internal/private network ranges (SSRF protection).
+func validateWebhookURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if scheme != "https" && scheme != "http" {
+		return fmt.Errorf("URL scheme must be http or https")
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("URL must have a hostname")
+	}
+
+	// Block private/internal IPs to prevent SSRF.
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("cannot resolve hostname: %w", err)
+	}
+	for _, ip := range ips {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			return fmt.Errorf("URL must not point to a private/internal address")
+		}
+	}
+	return nil
+}
+
+// generateSecret creates a cryptographically random 32-byte hex secret.
+func generateSecret() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }
 
 func (d *Dispatcher) listSubscriptions(w http.ResponseWriter, r *http.Request) {
@@ -261,9 +306,17 @@ func (d *Dispatcher) createSubscription(w http.ResponseWriter, r *http.Request) 
 		respondError(w, http.StatusBadRequest, "url is required")
 		return
 	}
-	if req.Secret == "" {
-		respondError(w, http.StatusBadRequest, "secret is required")
+	if err := validateWebhookURL(req.URL); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid webhook URL: "+err.Error())
 		return
+	}
+	if req.Secret == "" || req.Secret == "auto" {
+		generated, err := generateSecret()
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to generate secret")
+			return
+		}
+		req.Secret = generated
 	}
 	if len(req.Events) == 0 {
 		req.Events = []string{"*"}
@@ -285,7 +338,15 @@ func (d *Dispatcher) createSubscription(w http.ResponseWriter, r *http.Request) 
 	// Reload subscriptions cache.
 	_ = d.LoadSubscriptions(r.Context())
 
-	respondJSON(w, http.StatusCreated, sub)
+	// Return the secret only on create (Subscription has json:"-" on Secret).
+	respondJSON(w, http.StatusCreated, map[string]any{
+		"id":         sub.ID,
+		"url":        sub.URL,
+		"secret":     req.Secret, // show generated secret once
+		"events":     sub.Events,
+		"is_active":  sub.IsActive,
+		"created_at": sub.CreatedAt,
+	})
 }
 
 func (d *Dispatcher) getSubscription(w http.ResponseWriter, r *http.Request) {
@@ -361,7 +422,8 @@ func (d *Dispatcher) testSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := d.deliverWebhook(sub, testEvent); err != nil {
-		respondError(w, http.StatusBadGateway, "test delivery failed: "+err.Error())
+		d.logger.Error("webhook test delivery failed", "subscription_id", sub.ID, "error", err)
+		respondError(w, http.StatusBadGateway, "test delivery failed")
 		return
 	}
 

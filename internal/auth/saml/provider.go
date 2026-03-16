@@ -340,9 +340,12 @@ func (sp *ServiceProvider) handleLogout(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	// Also accept name_id as a query parameter.
+	// Also accept name_id as a query parameter — strict validation to prevent injection.
 	if nameID == "" {
-		nameID = r.URL.Query().Get("name_id")
+		candidate := r.URL.Query().Get("name_id")
+		if candidate != "" && len(candidate) <= 256 && isValidNameID(candidate) {
+			nameID = candidate
+		}
 	}
 
 	if nameID == "" {
@@ -373,6 +376,22 @@ func (sp *ServiceProvider) handleLogout(w http.ResponseWriter, r *http.Request) 
 	// Redirect to the IDP's SLO endpoint with the LogoutRequest.
 	redirectURL := logoutReq.Redirect("")
 	http.Redirect(w, r, redirectURL.String(), http.StatusFound)
+}
+
+// isValidNameID checks that a NameID value contains only safe characters.
+// Allowlist approach: alphanumeric, email chars (@._+-), no XML/HTML special chars.
+func isValidNameID(s string) bool {
+	for _, c := range s {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+			continue
+		}
+		switch c {
+		case '@', '.', '_', '+', '-', '=', '/':
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // getIDPSLOLocation extracts the IDP's Single Logout Service URL from metadata.
