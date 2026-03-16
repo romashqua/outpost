@@ -87,6 +87,22 @@ func (a *Agent) Run(ctx context.Context) error {
 		a.wg = wgMgr
 		defer wgMgr.Close()
 
+		// Create/configure the WireGuard interface with private key, listen port, and addresses.
+		privKey := cfg.PrivateKey
+		if privKey == "" {
+			a.logger.Error("no WireGuard private key received from core — cannot configure interface")
+		} else {
+			listenPort := int(cfg.ListenPort)
+			if listenPort == 0 {
+				listenPort = 51820
+			}
+			if err := wgMgr.EnsureInterface(privKey, listenPort, cfg.Addresses); err != nil {
+				a.logger.Error("failed to configure WireGuard interface", "error", err)
+			} else {
+				a.logger.Info("WireGuard interface ready", "iface", ifaceName, "listen_port", listenPort, "addresses", cfg.Addresses)
+			}
+		}
+
 		// Apply initial peers from config.
 		for _, p := range cfg.Peers {
 			if addErr := wgMgr.AddPeer(p.PublicKey, p.AllowedIps, p.Endpoint, int(p.PersistentKeepalive)); addErr != nil {

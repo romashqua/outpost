@@ -278,10 +278,10 @@ func (h *GatewayHandler) create(w http.ResponseWriter, r *http.Request) {
 
 	var g gatewayResponse
 	err = tx.QueryRow(r.Context(),
-		`INSERT INTO gateways (network_id, name, wireguard_pubkey, endpoint, token_hash, public_ip, priority)
-		 VALUES ($1, $2, $3, $4, $5, $6::inet, $7)
+		`INSERT INTO gateways (network_id, name, wireguard_pubkey, wireguard_privkey, endpoint, token_hash, public_ip, priority)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7::inet, $8)
 		 RETURNING id, network_id, name, public_ip::text, wireguard_pubkey, endpoint, is_active, priority, last_seen, created_at, updated_at`,
-		primaryNetworkID, req.Name, pubKey, req.Endpoint, tokenHash, req.PublicIP, priority,
+		primaryNetworkID, req.Name, pubKey, privKey, req.Endpoint, tokenHash, req.PublicIP, priority,
 	).Scan(&g.ID, &g.NetworkID, &g.Name, &g.PublicIP, &g.WireguardPubkey,
 		&g.Endpoint, &g.IsActive, &g.Priority, &g.LastSeen, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {

@@ -51,13 +51,13 @@ func (s *gatewayService) GetConfig(ctx context.Context, req *gatewayv1.ConfigReq
 	tokenHash := hex.EncodeToString(h[:])
 
 	// Look up gateway by token hash.
-	var gwID, gwName string
+	var gwID, gwName, gwPrivKey string
 	err := s.pool.QueryRow(ctx,
-		`SELECT g.id::text, g.name
+		`SELECT g.id::text, g.name, COALESCE(g.wireguard_privkey, '')
 		 FROM gateways g
 		 WHERE g.token_hash = $1 AND g.is_active = true`,
 		tokenHash,
-	).Scan(&gwID, &gwName)
+	).Scan(&gwID, &gwName, &gwPrivKey)
 	if err != nil {
 		s.logger.Warn("gateway config lookup failed", "error", err)
 		return nil, status.Error(codes.Unauthenticated, "invalid or inactive gateway token")
@@ -67,7 +67,7 @@ func (s *gatewayService) GetConfig(ctx context.Context, req *gatewayv1.ConfigReq
 	var listenPort int32
 	var addresses []string
 	netRows, err := s.pool.Query(ctx,
-		`SELECT n.port, host(n.address) || '/' || masklen(n.address)
+		`SELECT n.port, host(n.address::inet + 1) || '/' || masklen(n.address)
 		 FROM gateway_networks gn
 		 JOIN networks n ON n.id = gn.network_id
 		 WHERE gn.gateway_id::text = $1`, gwID)
@@ -87,7 +87,7 @@ func (s *gatewayService) GetConfig(ctx context.Context, req *gatewayv1.ConfigReq
 	// Fallback: try legacy network_id join if gateway_networks is empty.
 	if len(addresses) == 0 {
 		_ = s.pool.QueryRow(ctx,
-			`SELECT n.port, ARRAY[host(n.address) || '/' || masklen(n.address)]
+			`SELECT n.port, ARRAY[host(n.address::inet + 1) || '/' || masklen(n.address)]
 			 FROM gateways g
 			 JOIN networks n ON n.id = g.network_id
 			 WHERE g.id::text = $1`,
@@ -110,6 +110,7 @@ func (s *gatewayService) GetConfig(ctx context.Context, req *gatewayv1.ConfigReq
 	return &gatewayv1.GatewayConfig{
 		GatewayId:   gwID,
 		NetworkName: gwName,
+		PrivateKey:  gwPrivKey,
 		ListenPort:  listenPort,
 		Addresses:   addresses,
 		Peers:       peers,
