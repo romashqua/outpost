@@ -49,8 +49,22 @@ type TunnelManager struct {
 	ifaceName string
 	configDir string
 
+	// In-process wireguard-go device (macOS).
+	wgDevice  wgDeviceCloser
+	tunDevice tunDeviceCloser
+
 	// Callbacks for state changes.
 	onStateChange func(TunnelState)
+}
+
+// wgDeviceCloser is the interface for an in-process wireguard-go device.
+type wgDeviceCloser interface {
+	Close()
+}
+
+// tunDeviceCloser is the interface for a TUN device.
+type tunDeviceCloser interface {
+	Close() error
 }
 
 // NewTunnelManager creates a new tunnel manager.

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Pencil, Trash2, Copy, Check, Search, Link2, Unlink } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Check, Search } from 'lucide-react'
 import { api } from '@/api/client'
 import { useToastStore } from '@/store/toast'
 import Table from '@/components/ui/Table'
@@ -250,49 +250,52 @@ export default function GatewaysPage() {
       n.name.toLowerCase().includes(search.toLowerCase()) ||
       n.address.toLowerCase().includes(search.toLowerCase())
     )
-    const selected = filtered.filter(n => selectedIds.includes(n.id))
-    const available = filtered.filter(n => !selectedIds.includes(n.id))
 
     return (
       <div className="flex flex-col gap-1.5">
         <label className="text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
           {t('gateways.networks')} <span className="text-[var(--danger)]">*</span>
         </label>
-        <Input
-          placeholder={t('gateways.searchNetworks', 'Search networks...')}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          icon={<Search size={14} />}
-        />
+        {activeNetworks.length > 5 && (
+          <Input
+            placeholder={t('gateways.searchNetworks', 'Search networks...')}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            icon={<Search size={14} />}
+          />
+        )}
         <div className="max-h-48 overflow-y-auto space-y-1">
-          {selected.map((n) => (
-            <div
-              key={n.id}
-              className="flex items-center justify-between px-3 py-2 rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/5"
-            >
-              <div>
-                <span className="font-mono text-sm text-[var(--accent)]">{n.name}</span>
-                <span className="ml-2 text-xs text-[var(--text-muted)]">{n.address}</span>
-              </div>
-              <Button size="sm" variant="ghost" onClick={() => onToggle(n.id)}>
-                <Unlink size={14} className="text-[var(--danger)]" />
-              </Button>
-            </div>
-          ))}
-          {available.map((n) => (
-            <div
-              key={n.id}
-              className="flex items-center justify-between px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--bg-tertiary)] hover:border-[var(--accent)] transition-colors"
-            >
-              <div>
+          {filtered.map((n) => {
+            const checked = selectedIds.includes(n.id)
+            return (
+              <label
+                key={n.id}
+                className={`flex items-center gap-3 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${
+                  checked
+                    ? 'border-[var(--accent)]/30 bg-[var(--accent)]/5'
+                    : 'border-[var(--border)] bg-[var(--bg-tertiary)] hover:border-[var(--accent)]/50'
+                }`}
+              >
+                <span
+                  className={`flex-shrink-0 w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${
+                    checked
+                      ? 'border-[var(--accent)] bg-[var(--accent)]'
+                      : 'border-[var(--text-muted)]/40 bg-transparent'
+                  }`}
+                >
+                  {checked && <Check size={10} className="text-[var(--bg-primary)]" strokeWidth={3} />}
+                </span>
+                <input
+                  type="checkbox"
+                  className="sr-only"
+                  checked={checked}
+                  onChange={() => onToggle(n.id)}
+                />
                 <span className="font-mono text-sm text-[var(--text-primary)]">{n.name}</span>
-                <span className="ml-2 text-xs text-[var(--text-muted)]">{n.address}</span>
-              </div>
-              <Button size="sm" variant="ghost" onClick={() => onToggle(n.id)}>
-                <Link2 size={14} className="text-[var(--accent)]" />
-              </Button>
-            </div>
-          ))}
+                <span className="text-xs text-[var(--text-muted)] ml-auto font-mono">{n.address}</span>
+              </label>
+            )
+          })}
           {filtered.length === 0 && (
             <p className="text-center py-4 text-xs text-[var(--text-muted)]">{t('gateways.noNetworks')}</p>
           )}
