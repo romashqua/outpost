@@ -67,7 +67,7 @@ func (s *gatewayService) GetConfig(ctx context.Context, req *gatewayv1.ConfigReq
 	var listenPort int32
 	var addresses []string
 	netRows, err := s.pool.Query(ctx,
-		`SELECT n.port, host(n.address::inet + 1) || '/' || masklen(n.address)
+		`SELECT n.port, host(COALESCE(n.tunnel_cidr, n.address)::inet + 1) || '/' || masklen(COALESCE(n.tunnel_cidr, n.address))
 		 FROM gateway_networks gn
 		 JOIN networks n ON n.id = gn.network_id
 		 WHERE gn.gateway_id::text = $1`, gwID)
@@ -87,7 +87,7 @@ func (s *gatewayService) GetConfig(ctx context.Context, req *gatewayv1.ConfigReq
 	// Fallback: try legacy network_id join if gateway_networks is empty.
 	if len(addresses) == 0 {
 		_ = s.pool.QueryRow(ctx,
-			`SELECT n.port, ARRAY[host(n.address::inet + 1) || '/' || masklen(n.address)]
+			`SELECT n.port, ARRAY[host(COALESCE(n.tunnel_cidr, n.address)::inet + 1) || '/' || masklen(COALESCE(n.tunnel_cidr, n.address))]
 			 FROM gateways g
 			 JOIN networks n ON n.id = g.network_id
 			 WHERE g.id::text = $1`,
@@ -392,10 +392,6 @@ func buildFirewallConfigFromPool(ctx context.Context, pool *pgxpool.Pool, logger
 		deviceACLs[deviceIP] = append(deviceACLs[deviceIP], allowedCIDR)
 	}
 
-	if len(deviceACLs) == 0 {
-		return nil
-	}
-
 	var rules []*commonv1.FirewallRule
 
 	// For each device with ACL entries: ACCEPT allowed, DROP rest.
@@ -414,8 +410,10 @@ func buildFirewallConfigFromPool(ctx context.Context, pool *pgxpool.Pool, logger
 		})
 	}
 
+	// Always return config with NAT enabled so gateway masquerades VPN traffic.
+	// Without masquerade, destination hosts cannot route replies back to VPN clients.
 	return &commonv1.FirewallConfig{
-		Rules:      rules,
+		Rules:        rules,
 		NatEnabled: true,
 	}
 }

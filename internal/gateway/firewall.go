@@ -71,12 +71,19 @@ func (fm *FirewallManager) Apply(config *commonv1.FirewallConfig) error {
 		applied++
 	}
 
-	// Apply NAT if configured.
-	if config.GetNatEnabled() && config.GetNatInterface() != "" {
-		_ = fm.run("-t", "nat", "-C", "POSTROUTING", "-o", config.GetNatInterface(), "-j", "MASQUERADE")
-		// If check fails, add the rule.
-		if err := fm.run("-t", "nat", "-C", "POSTROUTING", "-o", config.GetNatInterface(), "-j", "MASQUERADE"); err != nil {
-			_ = fm.run("-t", "nat", "-A", "POSTROUTING", "-o", config.GetNatInterface(), "-j", "MASQUERADE")
+	// Apply NAT masquerade so destination hosts can route replies back to VPN clients.
+	if config.GetNatEnabled() {
+		natIface := config.GetNatInterface()
+		if natIface == "" {
+			natIface = detectDefaultInterface()
+		}
+		if natIface != "" {
+			if err := fm.run("-t", "nat", "-C", "POSTROUTING", "-o", natIface, "-j", "MASQUERADE"); err != nil {
+				_ = fm.run("-t", "nat", "-A", "POSTROUTING", "-o", natIface, "-j", "MASQUERADE")
+			}
+			fm.logger.Info("NAT masquerade configured", "interface", natIface)
+		} else {
+			fm.logger.Warn("NAT enabled but no outbound interface detected — masquerade skipped")
 		}
 	}
 
@@ -115,6 +122,23 @@ func (fm *FirewallManager) buildRuleArgs(rule *commonv1.FirewallRule) []string {
 	}
 
 	return args
+}
+
+// detectDefaultInterface returns the network interface used for the default route
+// by parsing `ip route show default`. Returns empty string if detection fails.
+func detectDefaultInterface() string {
+	out, err := exec.Command("ip", "route", "show", "default").Output()
+	if err != nil {
+		return ""
+	}
+	// Output format: "default via 172.17.0.1 dev eth0 ..."
+	fields := strings.Fields(strings.TrimSpace(string(out)))
+	for i, f := range fields {
+		if f == "dev" && i+1 < len(fields) {
+			return fields[i+1]
+		}
+	}
+	return ""
 }
 
 // run executes an iptables command.

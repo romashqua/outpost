@@ -239,6 +239,14 @@ func (h *UserHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Auto-add user to the "everyone" group for default network access.
+	if _, err := tx.Exec(r.Context(),
+		`INSERT INTO user_groups (user_id, group_id)
+		 SELECT $1, id FROM groups WHERE name = 'everyone' AND is_system = true
+		 ON CONFLICT DO NOTHING`, u.ID); err != nil {
+		h.log.Warn("failed to add user to everyone group", "user_id", u.ID, "error", err)
+	}
+
 	if err := tx.Commit(r.Context()); err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to commit user creation")
 		return

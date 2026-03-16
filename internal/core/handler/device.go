@@ -713,13 +713,34 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 				h.log.Warn("IP allocation collision during enrollment, retrying", "attempt", attempt+1)
 				continue
 			}
-			msg := "device already exists"
 			if strings.Contains(pgErr.ConstraintName, "pubkey") {
-				msg = "device with this public key already exists"
-			} else if strings.Contains(pgErr.ConstraintName, "name") {
-				msg = "device with this name already exists"
+				// Device with this pubkey already enrolled — return existing config (idempotent re-enroll).
+				var existingID uuid.UUID
+				var existingIP string
+				reErr := h.pool.QueryRow(r.Context(),
+					`SELECT id, host(assigned_ip) FROM devices WHERE wireguard_pubkey = $1`,
+					req.WireguardPubkey,
+				).Scan(&existingID, &existingIP)
+				if reErr != nil {
+					respondError(w, http.StatusInternalServerError, "failed to look up existing device")
+					return
+				}
+				_, allocNet2, _ := net.ParseCIDR(allocCIDR)
+				allocMask2, _ := allocNet2.Mask.Size()
+				resp := enrollResponse{
+					DeviceID:            existingID,
+					Address:             fmt.Sprintf("%s/%d", existingIP, allocMask2),
+					DNS:                 networkDNS,
+					Endpoint:            clientEndpoint,
+					ServerPublicKey:     gatewayPubkey,
+					AllowedIPs:          []string{networkCIDR},
+					PersistentKeepalive: 25,
+				}
+				h.log.Info("device re-enrolled (existing pubkey)", "device_id", existingID, "address", existingIP)
+				respondJSON(w, http.StatusOK, resp)
+				return
 			}
-			respondError(w, http.StatusConflict, msg)
+			respondError(w, http.StatusConflict, "device with this name already exists")
 			return
 		}
 		if errors.Is(err, pgx.ErrNoRows) {
