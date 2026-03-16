@@ -29,7 +29,8 @@ type Agent struct {
 	conn   *grpc.ClientConn
 	client gatewayv1.GatewayServiceClient
 
-	wg *WGManager // nil if WireGuard interface not available (e.g. dev mode)
+	wg *WGManager       // nil if WireGuard interface not available (e.g. dev mode)
+	fw *FirewallManager // nil if iptables not available
 }
 
 func NewAgent(cfg *config.Config, logger *slog.Logger) (*Agent, error) {
@@ -90,6 +91,22 @@ func (a *Agent) Run(ctx context.Context) error {
 		for _, p := range cfg.Peers {
 			if addErr := wgMgr.AddPeer(p.PublicKey, p.AllowedIps, p.Endpoint, int(p.PersistentKeepalive)); addErr != nil {
 				a.logger.Warn("failed to add initial peer", "pubkey", p.PublicKey, "error", addErr)
+			}
+		}
+	}
+
+	// Initialize firewall manager for ACL enforcement.
+	fwMgr := NewFirewallManager(a.logger)
+	if err := fwMgr.Init(); err != nil {
+		a.logger.Warn("firewall manager unavailable — ACL enforcement disabled", "error", err)
+	} else {
+		a.fw = fwMgr
+		defer fwMgr.Cleanup()
+
+		// Apply initial firewall config from GetConfig response.
+		if cfg.Firewall != nil {
+			if fwErr := fwMgr.Apply(cfg.Firewall); fwErr != nil {
+				a.logger.Warn("failed to apply initial firewall config", "error", fwErr)
 			}
 		}
 	}
@@ -415,6 +432,15 @@ func (a *Agent) handleS2SUpdate(update *gatewayv1.S2SUpdate) {
 
 func (a *Agent) handleFirewallUpdate(update *gatewayv1.FirewallUpdate) {
 	a.logger.Info("firewall update", "rules", len(update.Config.GetRules()))
+
+	if a.fw == nil {
+		a.logger.Warn("firewall update ignored: firewall manager not available")
+		return
+	}
+
+	if err := a.fw.Apply(update.Config); err != nil {
+		a.logger.Error("failed to apply firewall update", "error", err)
+	}
 }
 
 func (a *Agent) handleFullResync(resync *gatewayv1.FullResync) {

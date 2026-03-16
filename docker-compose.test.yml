@@ -71,7 +71,7 @@ services:
       dockerfile: deploy/docker/Dockerfile.gateway
     environment:
       OUTPOST_GATEWAY_CORE_ADDR: "core:50051"
-      OUTPOST_GATEWAY_TOKEN: test-gateway-token
+      OUTPOST_GATEWAY_TOKEN: outpost-dev-gateway-token
       OUTPOST_LOG_LEVEL: debug
       OUTPOST_LOG_FORMAT: text
     ports:

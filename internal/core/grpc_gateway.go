@@ -52,21 +52,50 @@ func (s *gatewayService) GetConfig(ctx context.Context, req *gatewayv1.ConfigReq
 
 	// Look up gateway by token hash.
 	var gwID, gwName string
-	var listenPort int32
-	var addresses []string
 	err := s.pool.QueryRow(ctx,
-		`SELECT g.id, g.name, n.port, ARRAY[host(n.address) || '/' || masklen(n.address)]
+		`SELECT g.id::text, g.name
 		 FROM gateways g
-		 JOIN networks n ON n.id = g.network_id
 		 WHERE g.token_hash = $1 AND g.is_active = true`,
 		tokenHash,
-	).Scan(&gwID, &gwName, &listenPort, &addresses)
+	).Scan(&gwID, &gwName)
 	if err != nil {
 		s.logger.Warn("gateway config lookup failed", "error", err)
 		return nil, status.Error(codes.Unauthenticated, "invalid or inactive gateway token")
 	}
 
-	// Fetch all approved device peers for this gateway's network.
+	// Get listen port and addresses from the gateway's networks.
+	var listenPort int32
+	var addresses []string
+	netRows, err := s.pool.Query(ctx,
+		`SELECT n.port, host(n.address) || '/' || masklen(n.address)
+		 FROM gateway_networks gn
+		 JOIN networks n ON n.id = gn.network_id
+		 WHERE gn.gateway_id::text = $1`, gwID)
+	if err == nil {
+		defer netRows.Close()
+		for netRows.Next() {
+			var port int32
+			var addr string
+			if err := netRows.Scan(&port, &addr); err == nil {
+				if listenPort == 0 {
+					listenPort = port
+				}
+				addresses = append(addresses, addr)
+			}
+		}
+	}
+	// Fallback: try legacy network_id join if gateway_networks is empty.
+	if len(addresses) == 0 {
+		_ = s.pool.QueryRow(ctx,
+			`SELECT n.port, ARRAY[host(n.address) || '/' || masklen(n.address)]
+			 FROM gateways g
+			 JOIN networks n ON n.id = g.network_id
+			 WHERE g.id::text = $1`,
+			gwID,
+		).Scan(&listenPort, &addresses)
+	}
+
+	// Fetch all approved device peers for this gateway's networks.
 	peers, err := s.fetchPeers(ctx, gwID)
 	if err != nil {
 		s.logger.Error("failed to fetch peers for config", "error", err, "gateway_id", gwID)
@@ -75,6 +104,9 @@ func (s *gatewayService) GetConfig(ctx context.Context, req *gatewayv1.ConfigReq
 	// Fetch S2S tunnel configs for this gateway.
 	s2sTunnels := s.fetchS2STunnels(ctx, gwID)
 
+	// Build firewall config based on device ACLs.
+	fwConfig := s.buildFirewallConfig(ctx, gwID)
+
 	return &gatewayv1.GatewayConfig{
 		GatewayId:   gwID,
 		NetworkName: gwName,
@@ -82,13 +114,21 @@ func (s *gatewayService) GetConfig(ctx context.Context, req *gatewayv1.ConfigReq
 		Addresses:   addresses,
 		Peers:       peers,
 		S2STunnels:  s2sTunnels,
+		Firewall:    fwConfig,
 	}, nil
 }
 
-// fetchPeers returns approved device peers for the gateway's network.
+// fetchPeers returns approved device peers for all of the gateway's networks.
 func (s *gatewayService) fetchPeers(ctx context.Context, gatewayID string) ([]*commonv1.Peer, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT d.wireguard_pubkey, host(d.assigned_ip) || '/32'
+		`SELECT DISTINCT d.wireguard_pubkey, host(d.assigned_ip) || '/32'
+		 FROM devices d
+		 JOIN gateway_networks gn ON gn.network_id = d.network_id
+		 WHERE gn.gateway_id::text = $1
+		   AND d.is_approved = true
+		   AND d.wireguard_pubkey != ''
+		 UNION
+		 SELECT d.wireguard_pubkey, host(d.assigned_ip) || '/32'
 		 FROM devices d
 		 JOIN gateways g ON g.network_id = d.network_id
 		 WHERE g.id::text = $1
@@ -220,13 +260,15 @@ func (s *gatewayService) Sync(stream grpc.BidiStreamingServer[gatewayv1.GatewayE
 	// Send a full resync with current config so gateway is up to date.
 	peers, err := s.fetchPeers(stream.Context(), gwID)
 	s2sTunnels := s.fetchS2STunnels(stream.Context(), gwID)
-	if err == nil && (len(peers) > 0 || len(s2sTunnels) > 0) {
+	fwConfig := s.buildFirewallConfig(stream.Context(), gwID)
+	if err == nil && (len(peers) > 0 || len(s2sTunnels) > 0 || fwConfig != nil) {
 		_ = stream.Send(&gatewayv1.CoreEvent{
 			Event: &gatewayv1.CoreEvent_FullResync{
 				FullResync: &gatewayv1.FullResync{
 					Config: &gatewayv1.GatewayConfig{
 						Peers:      peers,
 						S2STunnels: s2sTunnels,
+						Firewall:   fwConfig,
 					},
 				},
 			},
@@ -302,6 +344,78 @@ func (s *gatewayService) handlePeerStats(ctx context.Context, gatewayID string, 
 		if err != nil {
 			s.logger.Warn("failed to insert flow_record", "pubkey", pubkey, "error", err)
 		}
+	}
+}
+
+// buildFirewallConfig computes iptables rules for all approved devices on a gateway
+// based on their users' group ACLs. For each device:
+//   - ACCEPT rules for networks the user's groups are allowed to access
+//   - A final DROP rule to block access to all other networks
+//
+// This is a method on gatewayService but the logic is also used by hubPeerNotifier
+// via the exported BuildFirewallConfig wrapper below.
+func (s *gatewayService) buildFirewallConfig(ctx context.Context, gatewayID string) *commonv1.FirewallConfig {
+	return buildFirewallConfigFromPool(ctx, s.pool, s.logger, gatewayID)
+}
+
+// buildFirewallConfigFromPool is the shared implementation used by both
+// gatewayService and hubPeerNotifier.
+func buildFirewallConfigFromPool(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, gatewayID string) *commonv1.FirewallConfig {
+	// Query all approved devices on this gateway with their ACL-allowed networks.
+	rows, err := pool.Query(ctx,
+		`SELECT DISTINCT
+		     host(d.assigned_ip) AS device_ip,
+		     n.address::text AS allowed_cidr
+		 FROM devices d
+		 JOIN gateway_networks gn ON gn.network_id = d.network_id
+		 JOIN user_groups ug ON ug.user_id = d.user_id
+		 JOIN network_acls a ON a.group_id = ug.group_id
+		 JOIN networks n ON n.id = a.network_id AND n.is_active = true
+		 WHERE gn.gateway_id::text = $1
+		   AND d.is_approved = true
+		   AND d.wireguard_pubkey != ''
+		 ORDER BY device_ip, allowed_cidr`, gatewayID)
+	if err != nil {
+		logger.Warn("failed to build firewall config", "error", err)
+		return nil
+	}
+	defer rows.Close()
+
+	// Track which devices have ACL entries so we can add DROP rules.
+	deviceACLs := make(map[string][]string) // device_ip -> []allowed_cidr
+	for rows.Next() {
+		var deviceIP, allowedCIDR string
+		if err := rows.Scan(&deviceIP, &allowedCIDR); err != nil {
+			continue
+		}
+		deviceACLs[deviceIP] = append(deviceACLs[deviceIP], allowedCIDR)
+	}
+
+	if len(deviceACLs) == 0 {
+		return nil
+	}
+
+	var rules []*commonv1.FirewallRule
+
+	// For each device with ACL entries: ACCEPT allowed, DROP rest.
+	for deviceIP, cidrs := range deviceACLs {
+		for _, cidr := range cidrs {
+			rules = append(rules, &commonv1.FirewallRule{
+				Source:      deviceIP + "/32",
+				Destination: cidr,
+				Action:      commonv1.FirewallRule_ACTION_ACCEPT,
+			})
+		}
+		// Default DROP for this device's traffic to other destinations.
+		rules = append(rules, &commonv1.FirewallRule{
+			Source: deviceIP + "/32",
+			Action: commonv1.FirewallRule_ACTION_DROP,
+		})
+	}
+
+	return &commonv1.FirewallConfig{
+		Rules:      rules,
+		NatEnabled: true,
 	}
 }
 

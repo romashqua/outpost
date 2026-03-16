@@ -17,9 +17,15 @@ interface Network {
   is_active: boolean
 }
 
+interface GatewayNetwork {
+  id: string
+  name: string
+  address: string
+}
+
 interface Gateway {
   id: string
-  network_id: string
+  network_id: string | null
   name: string
   public_ip: string | null
   wireguard_pubkey: string
@@ -28,10 +34,18 @@ interface Gateway {
   priority: number
   last_seen: string | null
   created_at: string
+  network_ids: string[]
+  networks: GatewayNetwork[]
 }
 
 interface CreateGatewayResponse extends Gateway {
   token: string
+}
+
+interface FormErrors {
+  name?: string
+  endpoint?: string
+  networks?: string
 }
 
 export default function GatewaysPage() {
@@ -46,16 +60,19 @@ export default function GatewaysPage() {
 
   // Form state (create)
   const [formName, setFormName] = useState('')
-  const [formNetworkId, setFormNetworkId] = useState('')
+  const [formNetworkIds, setFormNetworkIds] = useState<string[]>([])
   const [formEndpoint, setFormEndpoint] = useState('')
   const [formPublicIp, setFormPublicIp] = useState('')
   const [formPriority, setFormPriority] = useState('')
+  const [formErrors, setFormErrors] = useState<FormErrors>({})
 
   // Form state (edit)
   const [editName, setEditName] = useState('')
+  const [editNetworkIds, setEditNetworkIds] = useState<string[]>([])
   const [editEndpoint, setEditEndpoint] = useState('')
   const [editPublicIp, setEditPublicIp] = useState('')
   const [editPriority, setEditPriority] = useState('')
+  const [editErrors, setEditErrors] = useState<FormErrors>({})
 
   const { data: gatewaysData, isLoading, error } = useQuery({
     queryKey: ['gateways'],
@@ -70,7 +87,7 @@ export default function GatewaysPage() {
   const networks = networksData?.networks ?? []
 
   const createMutation = useMutation({
-    mutationFn: (body: { name: string; network_id: string; endpoint: string; public_ip?: string; priority?: number }) =>
+    mutationFn: (body: { name: string; network_ids: string[]; endpoint: string; public_ip?: string; priority?: number }) =>
       api.post<CreateGatewayResponse>('/gateways', body),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['gateways'] })
@@ -85,7 +102,7 @@ export default function GatewaysPage() {
   })
 
   const updateMutation = useMutation({
-    mutationFn: (body: { id: string; name?: string; endpoint?: string; public_ip?: string | null; priority?: number }) => {
+    mutationFn: (body: { id: string; name?: string; endpoint?: string; public_ip?: string | null; priority?: number; network_ids?: string[] }) => {
       const { id, ...rest } = body
       return api.put(`/gateways/${id}`, rest)
     },
@@ -113,26 +130,66 @@ export default function GatewaysPage() {
 
   function resetForm() {
     setFormName('')
-    setFormNetworkId('')
+    setFormNetworkIds([])
     setFormEndpoint('')
     setFormPublicIp('')
     setFormPriority('')
+    setFormErrors({})
+  }
+
+  function validateCreateForm(): boolean {
+    const errors: FormErrors = {}
+    if (!formName.trim()) errors.name = t('gateways.nameRequired')
+    if (!formEndpoint.trim()) errors.endpoint = t('gateways.endpointRequired')
+    if (formNetworkIds.length === 0) errors.networks = t('gateways.networksRequired')
+    setFormErrors(errors)
+    return Object.keys(errors).length === 0
+  }
+
+  function validateEditForm(): boolean {
+    const errors: FormErrors = {}
+    if (!editName.trim()) errors.name = t('gateways.nameRequired')
+    if (!editEndpoint.trim()) errors.endpoint = t('gateways.endpointRequired')
+    if (editNetworkIds.length === 0) errors.networks = t('gateways.networksRequired')
+    setEditErrors(errors)
+    return Object.keys(errors).length === 0
   }
 
   function handleCreate(e: React.FormEvent) {
     e.preventDefault()
+    if (!validateCreateForm()) return
     let endpoint = formEndpoint.trim()
-    // Add default WireGuard port if no port specified
     if (endpoint && !endpoint.includes(':')) {
       endpoint = `${endpoint}:51820`
     }
     createMutation.mutate({
-      name: formName,
-      network_id: formNetworkId,
+      name: formName.trim(),
+      network_ids: formNetworkIds,
       endpoint,
       ...(formPublicIp ? { public_ip: formPublicIp } : {}),
       ...(formPriority ? { priority: parseInt(formPriority, 10) } : {}),
     })
+  }
+
+  function handleEdit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!editTarget || !validateEditForm()) return
+    let endpoint = editEndpoint.trim()
+    if (endpoint && !endpoint.includes(':')) {
+      endpoint = `${endpoint}:51820`
+    }
+    updateMutation.mutate({
+      id: editTarget.id,
+      name: editName.trim(),
+      endpoint,
+      public_ip: editPublicIp || null,
+      priority: editPriority ? parseInt(editPriority, 10) : 0,
+      network_ids: editNetworkIds,
+    })
+  }
+
+  function toggleNetworkId(ids: string[], setIds: (v: string[]) => void, id: string) {
+    setIds(ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id])
   }
 
   function copyToken() {
@@ -178,6 +235,49 @@ export default function GatewaysPage() {
     return t('gateways.daysAgo', { count: days })
   }
 
+  function NetworkCheckboxes({
+    selectedIds,
+    onChange,
+    error,
+  }: {
+    selectedIds: string[]
+    onChange: (id: string) => void
+    error?: string
+  }) {
+    const activeNetworks = networks.filter(n => n.is_active)
+    return (
+      <div className="flex flex-col gap-1.5">
+        <label className="text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
+          {t('gateways.networks')} <span className="text-[var(--danger)]">*</span>
+        </label>
+        <p className="text-xs text-[var(--text-muted)]">
+          {t('gateways.networksHint')}
+        </p>
+        <div className="space-y-2 max-h-40 overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3">
+          {activeNetworks.length === 0 ? (
+            <p className="text-xs text-[var(--text-muted)]">{t('gateways.noNetworks')}</p>
+          ) : (
+            activeNetworks.map((n) => (
+              <label key={n.id} className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={selectedIds.includes(n.id)}
+                  onChange={() => onChange(n.id)}
+                  className="rounded border-[var(--border)] bg-[var(--bg-tertiary)]"
+                />
+                <span className="text-sm font-mono text-[var(--text-primary)]">
+                  {n.name}
+                </span>
+                <span className="text-xs text-[var(--text-muted)]">({n.address})</span>
+              </label>
+            ))
+          )}
+        </div>
+        {error && <p className="text-xs text-[var(--danger)]">{error}</p>}
+      </div>
+    )
+  }
+
   const columns = [
     {
       key: 'name',
@@ -185,6 +285,23 @@ export default function GatewaysPage() {
       sortable: true,
       render: (row: Gateway) => (
         <span className="font-mono text-[var(--accent)]">{row.name}</span>
+      ),
+    },
+    {
+      key: 'networks',
+      header: t('gateways.networkColumn'),
+      render: (row: Gateway) => (
+        <div className="flex flex-wrap gap-1">
+          {(row.networks ?? []).length > 0 ? (
+            row.networks.map((n) => (
+              <span key={n.id} className="inline-flex items-center rounded-full bg-[var(--bg-tertiary)] px-2 py-0.5 text-xs font-mono text-[var(--accent)]">
+                {n.name}
+              </span>
+            ))
+          ) : (
+            <span className="text-xs text-[var(--text-muted)]">--</span>
+          )}
+        </div>
       ),
     },
     {
@@ -244,6 +361,8 @@ export default function GatewaysPage() {
               setEditEndpoint(row.endpoint)
               setEditPublicIp(row.public_ip || '')
               setEditPriority(row.priority.toString())
+              setEditNetworkIds(row.network_ids ?? [])
+              setEditErrors({})
               setEditTarget(row)
             }}
           >
@@ -282,7 +401,7 @@ export default function GatewaysPage() {
           <span className="font-mono text-[var(--accent)] mr-2">&gt;_</span>
           {t('gateways.title')}
         </h1>
-        <Button onClick={() => { createMutation.reset(); setShowCreate(true) }}>
+        <Button onClick={() => { createMutation.reset(); resetForm(); setShowCreate(true) }}>
           <Plus size={16} />
           {t('common.create')}
         </Button>
@@ -297,40 +416,34 @@ export default function GatewaysPage() {
       )}
 
       {/* Create Modal */}
-      <Modal open={showCreate} onClose={() => { setShowCreate(false); resetForm() }} title={t('common.create')}>
+      <Modal open={showCreate} onClose={() => { setShowCreate(false); resetForm() }} title={t('gateways.createGateway')}>
         <form className="flex flex-col gap-4" onSubmit={handleCreate}>
-          <Input
-            label={t('gateways.name')}
-            placeholder="gw-moscow-01"
-            value={formName}
-            onChange={(e) => setFormName(e.target.value)}
-            required
-          />
-          <div className="flex flex-col gap-1">
-            <label className="text-sm font-medium text-[var(--text-secondary)]">
-              {t('gateways.networkId')}
-            </label>
-            <select
-              className="rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-sm text-[var(--text-primary)]"
-              value={formNetworkId}
-              onChange={(e) => setFormNetworkId(e.target.value)}
+          <div>
+            <Input
+              label={t('gateways.name')}
+              placeholder="gw-moscow-01"
+              value={formName}
+              onChange={(e) => { setFormName(e.target.value); setFormErrors(prev => ({ ...prev, name: undefined })) }}
               required
-            >
-              <option value="">{t('gateways.selectNetwork')}</option>
-              {networks.map((net) => (
-                <option key={net.id} value={net.id}>
-                  {net.name} ({net.address})
-                </option>
-              ))}
-            </select>
+            />
+            {formErrors.name && <p className="text-xs text-[var(--danger)] mt-1">{formErrors.name}</p>}
           </div>
-          <Input
-            label={t('gateways.endpoint')}
-            placeholder="185.12.34.10:51820"
-            value={formEndpoint}
-            onChange={(e) => setFormEndpoint(e.target.value)}
-            required
+          <NetworkCheckboxes
+            selectedIds={formNetworkIds}
+            onChange={(id) => { toggleNetworkId(formNetworkIds, setFormNetworkIds, id); setFormErrors(prev => ({ ...prev, networks: undefined })) }}
+            error={formErrors.networks}
           />
+          <div>
+            <Input
+              label={t('gateways.endpoint')}
+              placeholder="185.12.34.10:51820"
+              value={formEndpoint}
+              onChange={(e) => { setFormEndpoint(e.target.value); setFormErrors(prev => ({ ...prev, endpoint: undefined })) }}
+              required
+            />
+            <p className="text-xs text-[var(--text-muted)] mt-1">{t('gateways.endpointHint')}</p>
+            {formErrors.endpoint && <p className="text-xs text-[var(--danger)] mt-1">{formErrors.endpoint}</p>}
+          </div>
           <Input
             label={t('gateways.publicIp')}
             placeholder="185.12.34.10 (optional)"
@@ -387,35 +500,33 @@ export default function GatewaysPage() {
       </Modal>
 
       {/* Edit Modal */}
-      <Modal open={editTarget !== null} onClose={() => setEditTarget(null)} title={t('gateways.editGateway', 'Edit Gateway')}>
-        <form className="flex flex-col gap-4" onSubmit={(e) => {
-          e.preventDefault()
-          if (!editTarget) return
-          let endpoint = editEndpoint.trim()
-          if (endpoint && !endpoint.includes(':')) {
-            endpoint = `${endpoint}:51820`
-          }
-          updateMutation.mutate({
-            id: editTarget.id,
-            name: editName,
-            endpoint,
-            public_ip: editPublicIp || null,
-            priority: editPriority ? parseInt(editPriority, 10) : 0,
-          })
-        }}>
-          <Input
-            label={t('gateways.name')}
-            value={editName}
-            onChange={(e) => setEditName(e.target.value)}
-            required
+      <Modal open={editTarget !== null} onClose={() => setEditTarget(null)} title={t('gateways.editGateway')}>
+        <form className="flex flex-col gap-4" onSubmit={handleEdit}>
+          <div>
+            <Input
+              label={t('gateways.name')}
+              value={editName}
+              onChange={(e) => { setEditName(e.target.value); setEditErrors(prev => ({ ...prev, name: undefined })) }}
+              required
+            />
+            {editErrors.name && <p className="text-xs text-[var(--danger)] mt-1">{editErrors.name}</p>}
+          </div>
+          <NetworkCheckboxes
+            selectedIds={editNetworkIds}
+            onChange={(id) => { toggleNetworkId(editNetworkIds, setEditNetworkIds, id); setEditErrors(prev => ({ ...prev, networks: undefined })) }}
+            error={editErrors.networks}
           />
-          <Input
-            label={t('gateways.endpoint')}
-            placeholder="185.12.34.10:51820"
-            value={editEndpoint}
-            onChange={(e) => setEditEndpoint(e.target.value)}
-            required
-          />
+          <div>
+            <Input
+              label={t('gateways.endpoint')}
+              placeholder="185.12.34.10:51820"
+              value={editEndpoint}
+              onChange={(e) => { setEditEndpoint(e.target.value); setEditErrors(prev => ({ ...prev, endpoint: undefined })) }}
+              required
+            />
+            <p className="text-xs text-[var(--text-muted)] mt-1">{t('gateways.endpointHint')}</p>
+            {editErrors.endpoint && <p className="text-xs text-[var(--danger)] mt-1">{editErrors.endpoint}</p>}
+          </div>
           <Input
             label={t('gateways.publicIp')}
             placeholder="185.12.34.10 (optional)"

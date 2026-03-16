@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -48,18 +49,26 @@ func (h *GatewayHandler) Routes() chi.Router {
 	return r
 }
 
+type gatewayNetworkInfo struct {
+	ID      uuid.UUID `json:"id"`
+	Name    string    `json:"name"`
+	Address string    `json:"address"`
+}
+
 type gatewayResponse struct {
-	ID              uuid.UUID  `json:"id"`
-	NetworkID       uuid.UUID  `json:"network_id"`
-	Name            string     `json:"name"`
-	PublicIP        *string    `json:"public_ip"`
-	WireguardPubkey string     `json:"wireguard_pubkey"`
-	Endpoint        string     `json:"endpoint"`
-	IsActive        bool       `json:"is_active"`
-	Priority        int        `json:"priority"`
-	LastSeen        *time.Time `json:"last_seen,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	ID              uuid.UUID          `json:"id"`
+	NetworkID       *uuid.UUID         `json:"network_id"`
+	Name            string             `json:"name"`
+	PublicIP        *string            `json:"public_ip"`
+	WireguardPubkey string             `json:"wireguard_pubkey"`
+	Endpoint        string             `json:"endpoint"`
+	IsActive        bool               `json:"is_active"`
+	Priority        int                `json:"priority"`
+	LastSeen        *time.Time         `json:"last_seen,omitempty"`
+	CreatedAt       time.Time          `json:"created_at"`
+	UpdatedAt       time.Time          `json:"updated_at"`
+	NetworkIDs      []uuid.UUID        `json:"network_ids"`
+	Networks        []gatewayNetworkInfo `json:"networks"`
 }
 
 type gatewayCreateResponse struct {
@@ -68,11 +77,12 @@ type gatewayCreateResponse struct {
 }
 
 type createGatewayRequest struct {
-	Name      string  `json:"name"`
-	NetworkID string  `json:"network_id"`
-	Endpoint  string  `json:"endpoint"`
-	PublicIP  *string `json:"public_ip,omitempty"`
-	Priority  *int    `json:"priority,omitempty"`
+	Name       string   `json:"name"`
+	NetworkID  string   `json:"network_id"`
+	NetworkIDs []string `json:"network_ids"`
+	Endpoint   string   `json:"endpoint"`
+	PublicIP   *string  `json:"public_ip,omitempty"`
+	Priority   *int     `json:"priority,omitempty"`
 }
 
 // @Summary List gateways
@@ -107,6 +117,7 @@ func (h *GatewayHandler) list(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	gateways := make([]gatewayResponse, 0)
+	gatewayIDs := make([]uuid.UUID, 0)
 	for rows.Next() {
 		var g gatewayResponse
 		if err := rows.Scan(&g.ID, &g.NetworkID, &g.Name, &g.PublicIP, &g.WireguardPubkey,
@@ -114,12 +125,20 @@ func (h *GatewayHandler) list(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusInternalServerError, "failed to scan gateway")
 			return
 		}
+		g.NetworkIDs = []uuid.UUID{}
+		g.Networks = []gatewayNetworkInfo{}
 		gateways = append(gateways, g)
+		gatewayIDs = append(gatewayIDs, g.ID)
 	}
 
 	if err := rows.Err(); err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to iterate gateways")
 		return
+	}
+
+	// Load networks for all gateways
+	if len(gatewayIDs) > 0 {
+		h.loadGatewayNetworks(r.Context(), gateways)
 	}
 
 	respondJSON(w, http.StatusOK, map[string]any{
@@ -128,6 +147,43 @@ func (h *GatewayHandler) list(w http.ResponseWriter, r *http.Request) {
 		"page":     page,
 		"per_page": perPage,
 	})
+}
+
+// loadGatewayNetworks populates NetworkIDs and Networks for each gateway from the junction table.
+func (h *GatewayHandler) loadGatewayNetworks(ctx context.Context, gateways []gatewayResponse) {
+	ids := make([]uuid.UUID, len(gateways))
+	idxMap := make(map[uuid.UUID]int, len(gateways))
+	for i, g := range gateways {
+		ids[i] = g.ID
+		idxMap[g.ID] = i
+	}
+
+	rows, err := h.pool.Query(ctx,
+		`SELECT gn.gateway_id, n.id, n.name, n.address
+		 FROM gateway_networks gn
+		 JOIN networks n ON n.id = gn.network_id
+		 WHERE gn.gateway_id = ANY($1)
+		 ORDER BY n.name`, ids)
+	if err != nil {
+		h.log.Error("failed to load gateway networks", "error", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var gwID, netID uuid.UUID
+		var name, address string
+		if err := rows.Scan(&gwID, &netID, &name, &address); err != nil {
+			h.log.Error("failed to scan gateway network", "error", err)
+			continue
+		}
+		if idx, ok := idxMap[gwID]; ok {
+			gateways[idx].NetworkIDs = append(gateways[idx].NetworkIDs, netID)
+			gateways[idx].Networks = append(gateways[idx].Networks, gatewayNetworkInfo{
+				ID: netID, Name: name, Address: address,
+			})
+		}
+	}
 }
 
 // @Summary Create gateway
@@ -153,10 +209,6 @@ func (h *GatewayHandler) create(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-	if req.NetworkID == "" {
-		respondError(w, http.StatusBadRequest, "network_id is required")
-		return
-	}
 	if req.Endpoint == "" {
 		respondError(w, http.StatusBadRequest, "endpoint is required")
 		return
@@ -166,9 +218,27 @@ func (h *GatewayHandler) create(w http.ResponseWriter, r *http.Request) {
 		req.Endpoint = req.Endpoint + ":51820"
 	}
 
-	networkID, err := uuid.Parse(req.NetworkID)
-	if err != nil {
-		respondError(w, http.StatusBadRequest, "invalid network_id")
+	// Collect network IDs: support both network_ids (new) and network_id (legacy).
+	var networkIDs []uuid.UUID
+	if len(req.NetworkIDs) > 0 {
+		for _, nid := range req.NetworkIDs {
+			parsed, err := uuid.Parse(nid)
+			if err != nil {
+				respondError(w, http.StatusBadRequest, "invalid network_id: "+nid)
+				return
+			}
+			networkIDs = append(networkIDs, parsed)
+		}
+	} else if req.NetworkID != "" {
+		parsed, err := uuid.Parse(req.NetworkID)
+		if err != nil {
+			respondError(w, http.StatusBadRequest, "invalid network_id")
+			return
+		}
+		networkIDs = append(networkIDs, parsed)
+	}
+	if len(networkIDs) == 0 {
+		respondError(w, http.StatusBadRequest, "at least one network is required")
 		return
 	}
 
@@ -196,12 +266,22 @@ func (h *GatewayHandler) create(w http.ResponseWriter, r *http.Request) {
 		priority = *req.Priority
 	}
 
+	// Use first network as legacy network_id for backward compatibility.
+	primaryNetworkID := networkIDs[0]
+
+	tx, err := h.pool.Begin(r.Context())
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to begin transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+
 	var g gatewayResponse
-	err = h.pool.QueryRow(r.Context(),
+	err = tx.QueryRow(r.Context(),
 		`INSERT INTO gateways (network_id, name, wireguard_pubkey, endpoint, token_hash, public_ip, priority)
 		 VALUES ($1, $2, $3, $4, $5, $6::inet, $7)
 		 RETURNING id, network_id, name, public_ip::text, wireguard_pubkey, endpoint, is_active, priority, last_seen, created_at, updated_at`,
-		networkID, req.Name, pubKey, req.Endpoint, tokenHash, req.PublicIP, priority,
+		primaryNetworkID, req.Name, pubKey, req.Endpoint, tokenHash, req.PublicIP, priority,
 	).Scan(&g.ID, &g.NetworkID, &g.Name, &g.PublicIP, &g.WireguardPubkey,
 		&g.Endpoint, &g.IsActive, &g.Priority, &g.LastSeen, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
@@ -220,9 +300,29 @@ func (h *GatewayHandler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return the plaintext token only on creation. It is never stored or
-	// returned again. The private key is intentionally not stored in the
-	// database; the gateway operator must save it from this response.
+	// Insert into junction table.
+	for _, nid := range networkIDs {
+		if _, err := tx.Exec(r.Context(),
+			`INSERT INTO gateway_networks (gateway_id, network_id) VALUES ($1, $2)`,
+			g.ID, nid); err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to assign network to gateway")
+			return
+		}
+	}
+
+	if err := tx.Commit(r.Context()); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to commit transaction")
+		return
+	}
+
+	g.NetworkIDs = networkIDs
+	g.Networks = []gatewayNetworkInfo{}
+	h.loadGatewayNetworks(r.Context(), []gatewayResponse{g})
+	if len(g.Networks) == 0 {
+		// Fallback: populate from IDs we just inserted
+		g.Networks = []gatewayNetworkInfo{}
+	}
+
 	resp := struct {
 		gatewayResponse
 		Token      string `json:"token"`
@@ -233,7 +333,7 @@ func (h *GatewayHandler) create(w http.ResponseWriter, r *http.Request) {
 		PrivateKey:      privKey,
 	}
 
-	h.log.Info("gateway created", "id", g.ID, "name", g.Name, "network_id", g.NetworkID, "endpoint", g.Endpoint)
+	h.log.Info("gateway created", "id", g.ID, "name", g.Name, "networks", len(networkIDs), "endpoint", g.Endpoint)
 	respondJSON(w, http.StatusCreated, resp)
 }
 
@@ -270,15 +370,20 @@ func (h *GatewayHandler) get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	g.NetworkIDs = []uuid.UUID{}
+	g.Networks = []gatewayNetworkInfo{}
+	h.loadGatewayNetworks(r.Context(), []gatewayResponse{g})
+
 	respondJSON(w, http.StatusOK, g)
 }
 
 type updateGatewayRequest struct {
-	Name     *string `json:"name,omitempty"`
-	Endpoint *string `json:"endpoint,omitempty"`
-	PublicIP *string `json:"public_ip,omitempty"`
-	Priority *int    `json:"priority,omitempty"`
-	IsActive *bool   `json:"is_active,omitempty"`
+	Name       *string  `json:"name,omitempty"`
+	Endpoint   *string  `json:"endpoint,omitempty"`
+	PublicIP   *string  `json:"public_ip,omitempty"`
+	Priority   *int     `json:"priority,omitempty"`
+	IsActive   *bool    `json:"is_active,omitempty"`
+	NetworkIDs []string `json:"network_ids,omitempty"`
 }
 
 // @Summary Update gateway
@@ -308,8 +413,15 @@ func (h *GatewayHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tx, err := h.pool.Begin(r.Context())
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to begin transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+
 	var g gatewayResponse
-	err = h.pool.QueryRow(r.Context(),
+	err = tx.QueryRow(r.Context(),
 		`UPDATE gateways
 		 SET name = COALESCE($2, name),
 		     endpoint = COALESCE($3, endpoint),
@@ -335,6 +447,50 @@ func (h *GatewayHandler) update(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
+	// Update networks if provided.
+	if len(req.NetworkIDs) > 0 {
+		var networkIDs []uuid.UUID
+		for _, nid := range req.NetworkIDs {
+			parsed, parseErr := uuid.Parse(nid)
+			if parseErr != nil {
+				respondError(w, http.StatusBadRequest, "invalid network_id: "+nid)
+				return
+			}
+			networkIDs = append(networkIDs, parsed)
+		}
+
+		// Replace all network assignments.
+		if _, err := tx.Exec(r.Context(),
+			`DELETE FROM gateway_networks WHERE gateway_id = $1`, id); err != nil {
+			respondError(w, http.StatusInternalServerError, "failed to update gateway networks")
+			return
+		}
+		for _, nid := range networkIDs {
+			if _, err := tx.Exec(r.Context(),
+				`INSERT INTO gateway_networks (gateway_id, network_id) VALUES ($1, $2)`,
+				id, nid); err != nil {
+				respondError(w, http.StatusInternalServerError, "failed to assign network to gateway")
+				return
+			}
+		}
+
+		// Update legacy network_id to first network.
+		if _, err := tx.Exec(r.Context(),
+			`UPDATE gateways SET network_id = $2 WHERE id = $1`,
+			id, networkIDs[0]); err != nil {
+			h.log.Error("failed to update legacy network_id", "error", err)
+		}
+	}
+
+	if err := tx.Commit(r.Context()); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to commit transaction")
+		return
+	}
+
+	g.NetworkIDs = []uuid.UUID{}
+	g.Networks = []gatewayNetworkInfo{}
+	h.loadGatewayNetworks(r.Context(), []gatewayResponse{g})
 
 	h.log.Info("gateway updated", "id", g.ID, "name", g.Name)
 	respondJSON(w, http.StatusOK, g)

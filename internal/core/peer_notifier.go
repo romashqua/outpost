@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -10,8 +11,12 @@ import (
 )
 
 // hubPeerNotifier adapts StreamHub to the handler.PeerNotifier interface.
+// After each peer change it also recomputes and pushes firewall rules
+// to the affected gateways so that ACL enforcement stays in sync.
 type hubPeerNotifier struct {
-	hub *StreamHub
+	hub    *StreamHub
+	pool   *pgxpool.Pool
+	logger *slog.Logger
 }
 
 func (n *hubPeerNotifier) NotifyPeerAdd(pubkey string, allowedIPs []string) {
@@ -23,15 +28,65 @@ func (n *hubPeerNotifier) NotifyPeerAdd(pubkey string, allowedIPs []string) {
 			PersistentKeepalive: 25,
 		},
 	})
+
+	// Recompute firewall rules for all gateways serving this device.
+	n.refreshFirewallForPeer(pubkey)
 }
 
 func (n *hubPeerNotifier) NotifyPeerRemove(pubkey string) {
+	// Capture gateway IDs before removing the peer (device may still exist).
+	gatewayIDs := n.findGatewaysForPeer(pubkey)
+
 	n.hub.BroadcastPeerUpdate(&gatewayv1.PeerUpdate{
 		Action: gatewayv1.PeerUpdate_ACTION_REMOVE,
 		Peer: &commonv1.Peer{
 			PublicKey: pubkey,
 		},
 	})
+
+	// Recompute firewall rules for affected gateways.
+	ctx := context.Background()
+	for _, gwID := range gatewayIDs {
+		if fwConfig := buildFirewallConfigFromPool(ctx, n.pool, n.logger, gwID); fwConfig != nil {
+			n.hub.SendFirewallUpdate(gwID, fwConfig)
+		}
+	}
+}
+
+// refreshFirewallForPeer finds gateways that serve the device with the given
+// pubkey and pushes updated firewall configs to them.
+func (n *hubPeerNotifier) refreshFirewallForPeer(pubkey string) {
+	gatewayIDs := n.findGatewaysForPeer(pubkey)
+	ctx := context.Background()
+	for _, gwID := range gatewayIDs {
+		if fwConfig := buildFirewallConfigFromPool(ctx, n.pool, n.logger, gwID); fwConfig != nil {
+			n.hub.SendFirewallUpdate(gwID, fwConfig)
+		}
+	}
+}
+
+// findGatewaysForPeer returns gateway IDs that serve the network of the device
+// with the given public key.
+func (n *hubPeerNotifier) findGatewaysForPeer(pubkey string) []string {
+	ctx := context.Background()
+	rows, err := n.pool.Query(ctx,
+		`SELECT DISTINCT gn.gateway_id::text
+		 FROM devices d
+		 JOIN gateway_networks gn ON gn.network_id = d.network_id
+		 WHERE d.wireguard_pubkey = $1`, pubkey)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 // hubS2SNotifier adapts StreamHub to the handler.S2SNotifier interface.

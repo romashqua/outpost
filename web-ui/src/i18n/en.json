@@ -152,7 +152,13 @@
     "devicesCreated": "{{count}} devices created",
     "deviceApproved": "Device approved",
     "deviceRevoked": "Device revoked",
-    "deviceDeleted": "Device deleted"
+    "deviceDeleted": "Device deleted",
+    "deviceCreated": "Device created",
+    "gateway": "Gateway",
+    "selectGateway": "Select a gateway...",
+    "noGateways": "No gateways available",
+    "gatewayHint": "Device will connect through this gateway and access its networks",
+    "gatewayNetworks": "Gateway networks"
   },
   "networks": {
     "title": "Network Management",
@@ -210,7 +216,14 @@
     "gatewayDeleted": "Gateway deleted",
     "editGateway": "Edit Gateway",
     "selectNetwork": "Select a network...",
-    "noNetworks": "No networks available"
+    "noNetworks": "No networks available",
+    "networks": "Networks",
+    "networksHint": "Select one or more networks this gateway will serve",
+    "networksRequired": "At least one network is required",
+    "nameRequired": "Gateway name is required",
+    "endpointRequired": "Endpoint is required",
+    "endpointHint": "IP or hostname with optional port (default: 51820)",
+    "networkColumn": "Networks"
   },
   "s2s": {
     "title": "Site-to-Site Tunnels",

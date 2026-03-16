@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"sync"
 
+	commonv1 "github.com/romashqua/outpost/pkg/pb/outpost/common/v1"
 	gatewayv1 "github.com/romashqua/outpost/pkg/pb/outpost/gateway/v1"
 	"google.golang.org/grpc"
 )
@@ -78,6 +79,17 @@ func (h *StreamHub) SendTo(gatewayID string, event *gatewayv1.CoreEvent) error {
 		return nil // gateway not connected
 	}
 	return s.Send(event)
+}
+
+// SendFirewallUpdate sends a FirewallUpdate event to a specific gateway.
+func (h *StreamHub) SendFirewallUpdate(gatewayID string, config *commonv1.FirewallConfig) {
+	_ = h.SendTo(gatewayID, &gatewayv1.CoreEvent{
+		Event: &gatewayv1.CoreEvent_FirewallUpdate{
+			FirewallUpdate: &gatewayv1.FirewallUpdate{
+				Config: config,
+			},
+		},
+	})
 }
 
 // ConnectedCount returns the number of connected gateways.

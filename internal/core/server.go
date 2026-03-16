@@ -357,7 +357,7 @@ func (s *Server) setupHTTPRouter() chi.Router {
 			r.Mount("/users", handler.NewUserHandler(s.pool, s.logger, userHandlerOpts...).Routes())
 			r.Mount("/groups", handler.NewGroupHandler(s.pool, s.logger).Routes())
 			r.Mount("/networks", handler.NewNetworkHandler(s.pool, s.logger).Routes())
-			devHandler := handler.NewDeviceHandler(s.pool, s.logger).WithNotifier(&hubPeerNotifier{hub: s.streamHub})
+			devHandler := handler.NewDeviceHandler(s.pool, s.logger).WithNotifier(&hubPeerNotifier{hub: s.streamHub, pool: s.pool, logger: s.logger})
 			if s.mailer != nil {
 				devHandler = devHandler.WithMailer(s.mailer)
 			}

@@ -1,0 +1,136 @@
+package gateway
+
+import (
+	"fmt"
+	"log/slog"
+	"os/exec"
+	"strings"
+
+	commonv1 "github.com/romashqua/outpost/pkg/pb/outpost/common/v1"
+)
+
+const (
+	outpostChain = "OUTPOST-FWD"
+	iptablesCmd  = "iptables"
+)
+
+// FirewallManager applies iptables rules based on ACL configuration
+// received from core via gRPC.
+type FirewallManager struct {
+	logger *slog.Logger
+}
+
+// NewFirewallManager creates a new firewall manager.
+func NewFirewallManager(logger *slog.Logger) *FirewallManager {
+	return &FirewallManager{logger: logger}
+}
+
+// Init creates the OUTPOST-FWD chain and hooks it into FORWARD.
+// Safe to call multiple times — uses -N (which fails silently if exists).
+func (fm *FirewallManager) Init() error {
+	// Create chain (ignore error if already exists).
+	_ = fm.run("-N", outpostChain)
+
+	// Check if FORWARD already jumps to our chain.
+	if err := fm.run("-C", "FORWARD", "-j", outpostChain); err != nil {
+		// Not present — insert at the top of FORWARD.
+		if err := fm.run("-I", "FORWARD", "1", "-j", outpostChain); err != nil {
+			return fmt.Errorf("insert OUTPOST-FWD into FORWARD: %w", err)
+		}
+	}
+
+	fm.logger.Info("firewall chain initialized", "chain", outpostChain)
+	return nil
+}
+
+// Apply flushes the OUTPOST-FWD chain and replaces it with the given rules.
+func (fm *FirewallManager) Apply(config *commonv1.FirewallConfig) error {
+	if config == nil {
+		return nil
+	}
+
+	// Flush existing rules in our chain.
+	if err := fm.run("-F", outpostChain); err != nil {
+		return fmt.Errorf("flush chain %s: %w", outpostChain, err)
+	}
+
+	applied := 0
+	for _, rule := range config.GetRules() {
+		args := fm.buildRuleArgs(rule)
+		if args == nil {
+			continue
+		}
+		if err := fm.run(args...); err != nil {
+			fm.logger.Warn("failed to apply firewall rule",
+				"source", rule.GetSource(),
+				"destination", rule.GetDestination(),
+				"action", rule.GetAction().String(),
+				"error", err)
+			continue
+		}
+		applied++
+	}
+
+	// Apply NAT if configured.
+	if config.GetNatEnabled() && config.GetNatInterface() != "" {
+		_ = fm.run("-t", "nat", "-C", "POSTROUTING", "-o", config.GetNatInterface(), "-j", "MASQUERADE")
+		// If check fails, add the rule.
+		if err := fm.run("-t", "nat", "-C", "POSTROUTING", "-o", config.GetNatInterface(), "-j", "MASQUERADE"); err != nil {
+			_ = fm.run("-t", "nat", "-A", "POSTROUTING", "-o", config.GetNatInterface(), "-j", "MASQUERADE")
+		}
+	}
+
+	fm.logger.Info("firewall rules applied", "total", len(config.GetRules()), "applied", applied)
+	return nil
+}
+
+// buildRuleArgs converts a FirewallRule proto to iptables arguments.
+func (fm *FirewallManager) buildRuleArgs(rule *commonv1.FirewallRule) []string {
+	if rule.GetSource() == "" {
+		return nil
+	}
+
+	args := []string{"-A", outpostChain}
+
+	args = append(args, "-s", rule.GetSource())
+
+	if rule.GetDestination() != "" {
+		args = append(args, "-d", rule.GetDestination())
+	}
+
+	if rule.GetProtocol() != "" {
+		args = append(args, "-p", rule.GetProtocol())
+		if rule.GetPort() != "" {
+			args = append(args, "--dport", rule.GetPort())
+		}
+	}
+
+	switch rule.GetAction() {
+	case commonv1.FirewallRule_ACTION_ACCEPT:
+		args = append(args, "-j", "ACCEPT")
+	case commonv1.FirewallRule_ACTION_DROP:
+		args = append(args, "-j", "DROP")
+	default:
+		return nil
+	}
+
+	return args
+}
+
+// run executes an iptables command.
+func (fm *FirewallManager) run(args ...string) error {
+	cmd := exec.Command(iptablesCmd, args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("iptables %s: %w (%s)", strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+	}
+	return nil
+}
+
+// Cleanup removes the OUTPOST-FWD chain and its FORWARD reference.
+func (fm *FirewallManager) Cleanup() {
+	_ = fm.run("-D", "FORWARD", "-j", outpostChain)
+	_ = fm.run("-F", outpostChain)
+	_ = fm.run("-X", outpostChain)
+	fm.logger.Info("firewall chain cleaned up")
+}

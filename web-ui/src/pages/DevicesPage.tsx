@@ -47,6 +47,26 @@ interface ConfigResponse {
   public_key: string
 }
 
+interface GatewayNetwork {
+  id: string
+  name: string
+  address: string
+}
+
+interface Gateway {
+  id: string
+  name: string
+  endpoint: string
+  is_active: boolean
+  network_ids: string[]
+  networks: GatewayNetwork[]
+}
+
+interface GatewaysResponse {
+  gateways: Gateway[]
+  total: number
+}
+
 export default function DevicesPage() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
@@ -61,22 +81,11 @@ export default function DevicesPage() {
   const [createForm, setCreateForm] = useState({
     name: '',
     user_id: '',
-    network_ids: [] as string[],
+    gateway_id: '',
     autoGenerateKey: true,
     wireguard_pubkey: '',
   })
   const [copiedConfig, setCopiedConfig] = useState(false)
-
-  interface Network {
-    id: string
-    name: string
-    address: string
-    is_active: boolean
-  }
-  interface NetworksResponse {
-    networks: Network[]
-    total: number
-  }
 
   interface DevicesResponse {
     devices: Device[]
@@ -100,12 +109,16 @@ export default function DevicesPage() {
 
   const users = usersData?.users ?? []
 
-  const { data: networksData } = useQuery<NetworksResponse>({
-    queryKey: ['networks', isAdmin ? 'all' : 'my'],
-    queryFn: () => api.get(isAdmin ? '/networks' : '/networks/my'),
+  const { data: gatewaysData } = useQuery<GatewaysResponse>({
+    queryKey: ['gateways'],
+    queryFn: () => api.get('/gateways'),
   })
 
-  const networks = networksData?.networks ?? []
+  const gateways = (gatewaysData?.gateways ?? []).filter(g => g.is_active)
+
+  // Derive available networks from selected gateway
+  const selectedGateway = gateways.find(g => g.id === createForm.gateway_id)
+  const gatewayNetworks = selectedGateway?.networks ?? []
 
   function copyToClipboard(text: string) {
     if (navigator.clipboard && window.isSecureContext) {
@@ -173,52 +186,35 @@ export default function DevicesPage() {
 
   const createMutation = useMutation({
     mutationFn: async (form: typeof createForm) => {
-      let pubkey = form.wireguard_pubkey
+      const pubkey = form.autoGenerateKey ? 'auto-generated' : form.wireguard_pubkey
+
+      // Use gateway's primary (first) network for IP assignment
+      const gw = gateways.find(g => g.id === form.gateway_id)
+      const primaryNetworkId = gw?.network_ids?.[0]
+
+      const device = await api.post<Device>('/devices', {
+        name: form.name,
+        user_id: form.user_id,
+        wireguard_pubkey: pubkey,
+        ...(primaryNetworkId ? { network_id: primaryNetworkId } : {}),
+      })
+
+      let config: ConfigResponse | null = null
       if (form.autoGenerateKey) {
-        pubkey = 'auto-generated'
+        config = await api.get<ConfigResponse>(`/devices/${device.id}/config`)
       }
 
-      const networkIds = form.network_ids.length > 0 ? form.network_ids : ['']
-      const results: { device: Device; config: ConfigResponse | null }[] = []
-
-      for (const netId of networkIds) {
-        const suffix = networkIds.length > 1
-          ? `-${networks.find(n => n.id === netId)?.name ?? netId.slice(0, 6)}`
-          : ''
-        const device = await api.post<Device>('/devices', {
-          name: form.name + suffix,
-          user_id: form.user_id,
-          wireguard_pubkey: pubkey,
-          ...(netId ? { network_id: netId } : {}),
-        })
-
-        let config: ConfigResponse | null = null
-        if (form.autoGenerateKey) {
-          config = await api.get<ConfigResponse>(`/devices/${device.id}/config`)
-        }
-        results.push({ device, config })
-        // Each device in WireGuard needs its own key pair
-        pubkey = 'auto-generated'
-      }
-
-      return results
+      return { device, config }
     },
-    onSuccess: (results) => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['devices'] })
       setShowCreateModal(false)
-      setCreateForm({ name: '', user_id: '', network_ids: [], autoGenerateKey: true, wireguard_pubkey: '' })
-      addToast(
-        results.length > 1
-          ? t('devices.devicesCreated', { count: results.length }) || `${results.length} devices created`
-          : t('devices.deviceCreated', 'Device created'),
-        'success'
-      )
+      setCreateForm({ name: '', user_id: '', gateway_id: '', autoGenerateKey: true, wireguard_pubkey: '' })
+      addToast(t('devices.deviceCreated', 'Device created'), 'success')
 
-      // Show config for the first device that has one
-      const firstWithConfig = results.find(r => r.config)
-      if (firstWithConfig?.config) {
-        setConfigText(firstWithConfig.config.config)
-        setConfigDeviceId(firstWithConfig.device.id)
+      if (result.config) {
+        setConfigText(result.config.config)
+        setConfigDeviceId(result.device.id)
         setShowConfigModal(true)
       }
     },
@@ -449,7 +445,7 @@ export default function DevicesPage() {
           onSubmit={(e) => {
             e.preventDefault()
             const userId = isAdmin ? createForm.user_id : (currentUser?.id ?? '')
-            if (!createForm.name || !userId || createForm.network_ids.length === 0) return
+            if (!createForm.name || !userId || !createForm.gateway_id) return
             if (!createForm.autoGenerateKey && !createForm.wireguard_pubkey) return
             createMutation.mutate({ ...createForm, user_id: userId })
           }}
@@ -484,46 +480,50 @@ export default function DevicesPage() {
               </div>
             ) : null}
 
+            {/* Gateway selection */}
             <div className="flex flex-col gap-1.5">
               <label className="text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
-                {t('devices.networks')} <span className="text-[var(--danger)]">*</span>
+                {t('devices.gateway')} <span className="text-[var(--danger)]">*</span>
               </label>
               <p className="text-xs text-[var(--text-muted)]">
-                {t('devices.networksHint')}
+                {t('devices.gatewayHint')}
               </p>
-              <div className="space-y-2 max-h-40 overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3">
-                {networks.filter(n => n.is_active).length === 0 ? (
-                  <p className="text-xs text-[var(--text-muted)]">{t('devices.noNetworks')}</p>
-                ) : (
-                  networks.filter(n => n.is_active).map((n) => (
-                    <label key={n.id} className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={createForm.network_ids.includes(n.id)}
-                        onChange={(e) => {
-                          setCreateForm((f) => ({
-                            ...f,
-                            network_ids: e.target.checked
-                              ? [...f.network_ids, n.id]
-                              : f.network_ids.filter(id => id !== n.id),
-                          }))
-                        }}
-                        className="rounded border-[var(--border)] bg-[var(--bg-tertiary)]"
-                      />
-                      <span className="text-sm font-mono text-[var(--text-primary)]">
-                        {n.name}
-                      </span>
-                      <span className="text-xs text-[var(--text-muted)]">({n.address})</span>
-                    </label>
-                  ))
-                )}
-              </div>
-              {createForm.network_ids.length > 1 && (
-                <p className="text-xs text-[var(--accent)]">
-                  {t('devices.multiNetworkNote', { count: createForm.network_ids.length }) || `Will create ${createForm.network_ids.length} devices (one per network)`}
-                </p>
+              <select
+                className="w-full rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-2 text-sm text-[var(--text-primary)] font-mono glow-focus transition-all duration-150"
+                value={createForm.gateway_id}
+                onChange={(e) => setCreateForm((f) => ({ ...f, gateway_id: e.target.value }))}
+                required
+              >
+                <option value="">{t('devices.selectGateway')}</option>
+                {gateways.map((gw) => (
+                  <option key={gw.id} value={gw.id}>
+                    {gw.name} ({gw.endpoint})
+                  </option>
+                ))}
+              </select>
+              {gateways.length === 0 && (
+                <p className="text-xs text-[var(--text-muted)]">{t('devices.noGateways')}</p>
               )}
             </div>
+
+            {/* Show gateway networks as info (read-only) */}
+            {createForm.gateway_id && gatewayNetworks.length > 0 && (
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
+                  {t('devices.gatewayNetworks')}
+                </label>
+                <div className="flex flex-wrap gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3">
+                  {gatewayNetworks.map((n) => (
+                    <span key={n.id} className="inline-flex items-center rounded-full bg-[var(--bg-tertiary)] px-2.5 py-1 text-xs font-mono text-[var(--accent)]">
+                      {n.name} <span className="text-[var(--text-muted)] ml-1">({n.address})</span>
+                    </span>
+                  ))}
+                </div>
+                <p className="text-xs text-[var(--text-muted)]">
+                  {t('devices.gatewayHint')}
+                </p>
+              </div>
+            )}
 
             <div className="flex items-center gap-2">
               <input

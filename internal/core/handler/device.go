@@ -801,14 +801,25 @@ func (h *DeviceHandler) downloadConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get the gateway endpoint and public key.
+	// Prefer gateway that serves this device's network, fallback to any active gateway.
 	var gatewayEndpoint, gatewayPubkey string
-	err = h.pool.QueryRow(r.Context(),
-		`SELECT g.endpoint, g.wireguard_pubkey
-		 FROM gateways g
-		 JOIN networks n ON n.id = g.network_id
-		 WHERE n.is_active = true AND g.is_active = true
-		 ORDER BY g.priority DESC, g.created_at LIMIT 1`,
-	).Scan(&gatewayEndpoint, &gatewayPubkey)
+	if deviceNetworkID != nil {
+		err = h.pool.QueryRow(r.Context(),
+			`SELECT g.endpoint, g.wireguard_pubkey
+			 FROM gateways g
+			 JOIN gateway_networks gn ON gn.gateway_id = g.id
+			 WHERE gn.network_id = $1 AND g.is_active = true
+			 ORDER BY g.priority DESC, g.created_at LIMIT 1`, *deviceNetworkID,
+		).Scan(&gatewayEndpoint, &gatewayPubkey)
+	}
+	if gatewayEndpoint == "" {
+		err = h.pool.QueryRow(r.Context(),
+			`SELECT g.endpoint, g.wireguard_pubkey
+			 FROM gateways g
+			 WHERE g.is_active = true
+			 ORDER BY g.priority DESC, g.created_at LIMIT 1`,
+		).Scan(&gatewayEndpoint, &gatewayPubkey)
+	}
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			respondError(w, http.StatusUnprocessableEntity, "no active gateway available — create and activate a gateway first")
@@ -845,6 +856,11 @@ func (h *DeviceHandler) downloadConfig(w http.ResponseWriter, r *http.Request) {
 
 	clientAddress := fmt.Sprintf("%s/%d", assignedIP, maskLen)
 
+	// Build AllowedIPs based on user's group ACLs.
+	// If user has ACL entries, only include allowed networks/CIDRs.
+	// If no ACLs defined, fall back to the device's network CIDR.
+	allowedIPs := h.resolveAllowedIPs(r.Context(), ownerID, networkCIDR)
+
 	cfg := wireguard.InterfaceConfig{
 		PrivateKey: privateKey,
 		Address:    clientAddress,
@@ -852,7 +868,7 @@ func (h *DeviceHandler) downloadConfig(w http.ResponseWriter, r *http.Request) {
 		Peers: []wireguard.PeerConfig{
 			{
 				PublicKey:           gatewayPubkey,
-				AllowedIPs:          []string{networkCIDR},
+				AllowedIPs:          allowedIPs,
 				Endpoint:            gatewayEndpoint,
 				PersistentKeepalive: 25,
 			},
@@ -868,6 +884,47 @@ func (h *DeviceHandler) downloadConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, resp)
+}
+
+// resolveAllowedIPs determines which network CIDRs a user's device should be
+// able to reach. It checks the user's group memberships and their network ACLs.
+// If the user has specific ACL entries, only those networks/CIDRs are included.
+// If no ACLs are defined for the user's groups, falls back to the device's
+// network CIDR (full access to own network).
+// This works identically for standard WireGuard clients and outpost-client.
+func (h *DeviceHandler) resolveAllowedIPs(ctx context.Context, userID string, fallbackCIDR string) []string {
+	// Query: get all allowed CIDRs from network_acls for groups the user belongs to.
+	rows, err := h.pool.Query(ctx,
+		`SELECT DISTINCT
+		     CASE WHEN a.allowed_ips = '{0.0.0.0/0}' THEN n.address::text
+		          ELSE unnest(a.allowed_ips)::text
+		     END AS cidr
+		 FROM network_acls a
+		 JOIN user_groups ug ON ug.group_id = a.group_id
+		 JOIN networks n ON n.id = a.network_id
+		 WHERE ug.user_id = $1::uuid
+		   AND n.is_active = true
+		 ORDER BY cidr`, userID)
+	if err != nil {
+		h.log.Error("failed to resolve ACL allowed IPs", "error", err, "user_id", userID)
+		return []string{fallbackCIDR}
+	}
+	defer rows.Close()
+
+	var cidrs []string
+	for rows.Next() {
+		var cidr string
+		if err := rows.Scan(&cidr); err != nil {
+			continue
+		}
+		cidrs = append(cidrs, cidr)
+	}
+
+	// No ACL entries → fallback to device's network CIDR.
+	if len(cidrs) == 0 {
+		return []string{fallbackCIDR}
+	}
+	return cidrs
 }
 
 // @Summary Send device config via email
