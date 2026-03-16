@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Pencil, Trash2, Copy, Check } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Check, Search, Link2, Unlink } from 'lucide-react'
 import { api } from '@/api/client'
 import { useToastStore } from '@/store/toast'
 import Table from '@/components/ui/Table'
@@ -235,42 +235,66 @@ export default function GatewaysPage() {
     return t('gateways.daysAgo', { count: days })
   }
 
-  function NetworkCheckboxes({
+  function NetworkPicker({
     selectedIds,
-    onChange,
+    onToggle,
     error,
   }: {
     selectedIds: string[]
-    onChange: (id: string) => void
+    onToggle: (id: string) => void
     error?: string
   }) {
+    const [search, setSearch] = useState('')
     const activeNetworks = networks.filter(n => n.is_active)
+    const filtered = activeNetworks.filter(n =>
+      n.name.toLowerCase().includes(search.toLowerCase()) ||
+      n.address.toLowerCase().includes(search.toLowerCase())
+    )
+    const selected = filtered.filter(n => selectedIds.includes(n.id))
+    const available = filtered.filter(n => !selectedIds.includes(n.id))
+
     return (
       <div className="flex flex-col gap-1.5">
         <label className="text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
           {t('gateways.networks')} <span className="text-[var(--danger)]">*</span>
         </label>
-        <p className="text-xs text-[var(--text-muted)]">
-          {t('gateways.networksHint')}
-        </p>
-        <div className="space-y-2 max-h-40 overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-3">
-          {activeNetworks.length === 0 ? (
-            <p className="text-xs text-[var(--text-muted)]">{t('gateways.noNetworks')}</p>
-          ) : (
-            activeNetworks.map((n) => (
-              <label key={n.id} className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={selectedIds.includes(n.id)}
-                  onChange={() => onChange(n.id)}
-                  className="rounded border-[var(--border)] bg-[var(--bg-tertiary)]"
-                />
-                <span className="text-sm font-mono text-[var(--text-primary)]">
-                  {n.name}
-                </span>
-                <span className="text-xs text-[var(--text-muted)]">({n.address})</span>
-              </label>
-            ))
+        <Input
+          placeholder={t('gateways.searchNetworks', 'Search networks...')}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          icon={<Search size={14} />}
+        />
+        <div className="max-h-48 overflow-y-auto space-y-1">
+          {selected.map((n) => (
+            <div
+              key={n.id}
+              className="flex items-center justify-between px-3 py-2 rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/5"
+            >
+              <div>
+                <span className="font-mono text-sm text-[var(--accent)]">{n.name}</span>
+                <span className="ml-2 text-xs text-[var(--text-muted)]">{n.address}</span>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => onToggle(n.id)}>
+                <Unlink size={14} className="text-[var(--danger)]" />
+              </Button>
+            </div>
+          ))}
+          {available.map((n) => (
+            <div
+              key={n.id}
+              className="flex items-center justify-between px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--bg-tertiary)] hover:border-[var(--accent)] transition-colors"
+            >
+              <div>
+                <span className="font-mono text-sm text-[var(--text-primary)]">{n.name}</span>
+                <span className="ml-2 text-xs text-[var(--text-muted)]">{n.address}</span>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => onToggle(n.id)}>
+                <Link2 size={14} className="text-[var(--accent)]" />
+              </Button>
+            </div>
+          ))}
+          {filtered.length === 0 && (
+            <p className="text-center py-4 text-xs text-[var(--text-muted)]">{t('gateways.noNetworks')}</p>
           )}
         </div>
         {error && <p className="text-xs text-[var(--danger)]">{error}</p>}
@@ -428,9 +452,9 @@ export default function GatewaysPage() {
             />
             {formErrors.name && <p className="text-xs text-[var(--danger)] mt-1">{formErrors.name}</p>}
           </div>
-          <NetworkCheckboxes
+          <NetworkPicker
             selectedIds={formNetworkIds}
-            onChange={(id) => { toggleNetworkId(formNetworkIds, setFormNetworkIds, id); setFormErrors(prev => ({ ...prev, networks: undefined })) }}
+            onToggle={(id: string) => { toggleNetworkId(formNetworkIds, setFormNetworkIds, id); setFormErrors(prev => ({ ...prev, networks: undefined })) }}
             error={formErrors.networks}
           />
           <div>
@@ -512,9 +536,9 @@ export default function GatewaysPage() {
             />
             {editErrors.name && <p className="text-xs text-[var(--danger)] mt-1">{editErrors.name}</p>}
           </div>
-          <NetworkCheckboxes
+          <NetworkPicker
             selectedIds={editNetworkIds}
-            onChange={(id) => { toggleNetworkId(editNetworkIds, setEditNetworkIds, id); setEditErrors(prev => ({ ...prev, networks: undefined })) }}
+            onToggle={(id: string) => { toggleNetworkId(editNetworkIds, setEditNetworkIds, id); setEditErrors(prev => ({ ...prev, networks: undefined })) }}
             error={editErrors.networks}
           />
           <div>

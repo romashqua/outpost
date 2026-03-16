@@ -72,6 +72,7 @@ services:
     environment:
       OUTPOST_GATEWAY_CORE_ADDR: "core:50051"
       OUTPOST_GATEWAY_TOKEN: outpost-dev-gateway-token
+      OUTPOST_JWT_SECRET: test-jwt-secret-not-for-production
       OUTPOST_LOG_LEVEL: debug
       OUTPOST_LOG_FORMAT: text
     ports:
@@ -98,6 +99,7 @@ services:
     environment:
       OUTPOST_PROXY_LISTEN_ADDR: ":8080"
       OUTPOST_PROXY_CORE_ADDR: "core:50051"
+      OUTPOST_JWT_SECRET: test-jwt-secret-not-for-production
       OUTPOST_LOG_LEVEL: debug
       OUTPOST_LOG_FORMAT: text
     ports:

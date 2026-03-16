@@ -106,7 +106,7 @@ func (h *GatewayHandler) list(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.pool.Query(r.Context(),
-		`SELECT id, network_id, name, public_ip::text, wireguard_pubkey, endpoint, is_active, priority, last_seen, created_at, updated_at
+		`SELECT id, network_id, name, host(public_ip), wireguard_pubkey, endpoint, is_active, priority, last_seen, created_at, updated_at
 		 FROM gateways
 		 ORDER BY created_at DESC
 		 LIMIT $1 OFFSET $2`, perPage, offset)
@@ -290,7 +290,7 @@ func (h *GatewayHandler) create(w http.ResponseWriter, r *http.Request) {
 	err = tx.QueryRow(r.Context(),
 		`INSERT INTO gateways (network_id, name, wireguard_pubkey, wireguard_privkey, endpoint, token_hash, public_ip, priority)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7::inet, $8)
-		 RETURNING id, network_id, name, public_ip::text, wireguard_pubkey, endpoint, is_active, priority, last_seen, created_at, updated_at`,
+		 RETURNING id, network_id, name, host(public_ip), wireguard_pubkey, endpoint, is_active, priority, last_seen, created_at, updated_at`,
 		primaryNetworkID, req.Name, pubKey, privKey, req.Endpoint, tokenHash, req.PublicIP, priority,
 	).Scan(&g.ID, &g.NetworkID, &g.Name, &g.PublicIP, &g.WireguardPubkey,
 		&g.Endpoint, &g.IsActive, &g.Priority, &g.LastSeen, &g.CreatedAt, &g.UpdatedAt)
@@ -365,7 +365,7 @@ func (h *GatewayHandler) get(w http.ResponseWriter, r *http.Request) {
 
 	var g gatewayResponse
 	err = h.pool.QueryRow(r.Context(),
-		`SELECT id, network_id, name, public_ip::text, wireguard_pubkey, endpoint, is_active, priority, last_seen, created_at, updated_at
+		`SELECT id, network_id, name, host(public_ip), wireguard_pubkey, endpoint, is_active, priority, last_seen, created_at, updated_at
 		 FROM gateways WHERE id = $1`, id,
 	).Scan(&g.ID, &g.NetworkID, &g.Name, &g.PublicIP, &g.WireguardPubkey,
 		&g.Endpoint, &g.IsActive, &g.Priority, &g.LastSeen, &g.CreatedAt, &g.UpdatedAt)
@@ -446,7 +446,7 @@ func (h *GatewayHandler) update(w http.ResponseWriter, r *http.Request) {
 		     is_active = COALESCE($6, is_active),
 		     updated_at = now()
 		 WHERE id = $1
-		 RETURNING id, network_id, name, public_ip::text, wireguard_pubkey, endpoint, is_active, priority, last_seen, created_at, updated_at`,
+		 RETURNING id, network_id, name, host(public_ip), wireguard_pubkey, endpoint, is_active, priority, last_seen, created_at, updated_at`,
 		id, req.Name, req.Endpoint, req.PublicIP, req.Priority, req.IsActive,
 	).Scan(&g.ID, &g.NetworkID, &g.Name, &g.PublicIP, &g.WireguardPubkey,
 		&g.Endpoint, &g.IsActive, &g.Priority, &g.LastSeen, &g.CreatedAt, &g.UpdatedAt)

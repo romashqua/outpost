@@ -48,32 +48,35 @@ func (h *NetworkHandler) Routes() chi.Router {
 }
 
 type networkResponse struct {
-	ID        uuid.UUID `json:"id"`
-	Name      string    `json:"name"`
-	Address   string    `json:"address"`
-	DNS       []string  `json:"dns"`
-	Port      int       `json:"port"`
-	Keepalive int       `json:"keepalive"`
-	IsActive  bool      `json:"is_active"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID         uuid.UUID `json:"id"`
+	Name       string    `json:"name"`
+	Address    string    `json:"address"`
+	TunnelCIDR *string   `json:"tunnel_cidr,omitempty"`
+	DNS        []string  `json:"dns"`
+	Port       int       `json:"port"`
+	Keepalive  int       `json:"keepalive"`
+	IsActive   bool      `json:"is_active"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type createNetworkRequest struct {
-	Name      string   `json:"name"`
-	Address   string   `json:"address"`
-	DNS       []string `json:"dns"`
-	Port      int      `json:"port"`
-	Keepalive int      `json:"keepalive"`
+	Name       string   `json:"name"`
+	Address    string   `json:"address"`
+	TunnelCIDR *string  `json:"tunnel_cidr,omitempty"`
+	DNS        []string `json:"dns"`
+	Port       int      `json:"port"`
+	Keepalive  int      `json:"keepalive"`
 }
 
 type updateNetworkRequest struct {
-	Name      *string  `json:"name,omitempty"`
-	Address   *string  `json:"address,omitempty"`
-	DNS       []string `json:"dns,omitempty"`
-	Port      *int     `json:"port,omitempty"`
-	Keepalive *int     `json:"keepalive,omitempty"`
-	IsActive  *bool    `json:"is_active,omitempty"`
+	Name       *string  `json:"name,omitempty"`
+	Address    *string  `json:"address,omitempty"`
+	TunnelCIDR *string  `json:"tunnel_cidr,omitempty"`
+	DNS        []string `json:"dns,omitempty"`
+	Port       *int     `json:"port,omitempty"`
+	Keepalive  *int     `json:"keepalive,omitempty"`
+	IsActive   *bool    `json:"is_active,omitempty"`
 }
 
 // @Summary List networks
@@ -97,7 +100,7 @@ func (h *NetworkHandler) list(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.pool.Query(r.Context(),
-		`SELECT id, name, address::text, dns, port, keepalive, is_active, created_at, updated_at
+		`SELECT id, name, address::text, tunnel_cidr::text, dns, port, keepalive, is_active, created_at, updated_at
 		 FROM networks
 		 ORDER BY created_at DESC
 		 LIMIT $1 OFFSET $2`, perPage, offset)
@@ -110,7 +113,7 @@ func (h *NetworkHandler) list(w http.ResponseWriter, r *http.Request) {
 	networks := make([]networkResponse, 0)
 	for rows.Next() {
 		var n networkResponse
-		if err := rows.Scan(&n.ID, &n.Name, &n.Address, &n.DNS, &n.Port,
+		if err := rows.Scan(&n.ID, &n.Name, &n.Address, &n.TunnelCIDR, &n.DNS, &n.Port,
 			&n.Keepalive, &n.IsActive, &n.CreatedAt, &n.UpdatedAt); err != nil {
 			respondError(w, http.StatusInternalServerError, "failed to scan network")
 			return
@@ -148,7 +151,7 @@ func (h *NetworkHandler) listMy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.pool.Query(r.Context(),
-		`SELECT DISTINCT n.id, n.name, n.address::text, n.dns, n.port, n.keepalive, n.is_active, n.created_at, n.updated_at
+		`SELECT DISTINCT n.id, n.name, n.address::text, n.tunnel_cidr::text, n.dns, n.port, n.keepalive, n.is_active, n.created_at, n.updated_at
 		 FROM networks n
 		 JOIN network_acls a ON a.network_id = n.id
 		 JOIN user_groups ug ON ug.group_id = a.group_id
@@ -163,7 +166,7 @@ func (h *NetworkHandler) listMy(w http.ResponseWriter, r *http.Request) {
 	networks := make([]networkResponse, 0)
 	for rows.Next() {
 		var n networkResponse
-		if err := rows.Scan(&n.ID, &n.Name, &n.Address, &n.DNS, &n.Port,
+		if err := rows.Scan(&n.ID, &n.Name, &n.Address, &n.TunnelCIDR, &n.DNS, &n.Port,
 			&n.Keepalive, &n.IsActive, &n.CreatedAt, &n.UpdatedAt); err != nil {
 			respondError(w, http.StatusInternalServerError, "failed to scan network")
 			return
@@ -241,13 +244,28 @@ func (h *NetworkHandler) create(w http.ResponseWriter, r *http.Request) {
 		req.DNS = []string{}
 	}
 
+	// Validate tunnel_cidr if provided.
+	if req.TunnelCIDR != nil && *req.TunnelCIDR != "" {
+		tip, tipNet, terr := net.ParseCIDR(*req.TunnelCIDR)
+		if terr != nil {
+			respondError(w, http.StatusBadRequest, fmt.Sprintf("invalid tunnel_cidr format: %s — expected format like 10.10.0.0/24", *req.TunnelCIDR))
+			return
+		}
+		if !tip.Equal(tipNet.IP) {
+			respondError(w, http.StatusBadRequest, fmt.Sprintf(
+				"invalid tunnel_cidr: %s has host bits set — did you mean %s?",
+				*req.TunnelCIDR, tipNet.String()))
+			return
+		}
+	}
+
 	var n networkResponse
 	err = h.pool.QueryRow(r.Context(),
-		`INSERT INTO networks (name, address, dns, port, keepalive)
-		 VALUES ($1, $2, $3, $4, $5)
-		 RETURNING id, name, address::text, dns, port, keepalive, is_active, created_at, updated_at`,
-		req.Name, req.Address, req.DNS, req.Port, req.Keepalive,
-	).Scan(&n.ID, &n.Name, &n.Address, &n.DNS, &n.Port,
+		`INSERT INTO networks (name, address, tunnel_cidr, dns, port, keepalive)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 RETURNING id, name, address::text, tunnel_cidr::text, dns, port, keepalive, is_active, created_at, updated_at`,
+		req.Name, req.Address, req.TunnelCIDR, req.DNS, req.Port, req.Keepalive,
+	).Scan(&n.ID, &n.Name, &n.Address, &n.TunnelCIDR, &n.DNS, &n.Port,
 		&n.Keepalive, &n.IsActive, &n.CreatedAt, &n.UpdatedAt)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -290,9 +308,9 @@ func (h *NetworkHandler) get(w http.ResponseWriter, r *http.Request) {
 
 	var n networkResponse
 	err = h.pool.QueryRow(r.Context(),
-		`SELECT id, name, address::text, dns, port, keepalive, is_active, created_at, updated_at
+		`SELECT id, name, address::text, tunnel_cidr::text, dns, port, keepalive, is_active, created_at, updated_at
 		 FROM networks WHERE id = $1`, id,
-	).Scan(&n.ID, &n.Name, &n.Address, &n.DNS, &n.Port,
+	).Scan(&n.ID, &n.Name, &n.Address, &n.TunnelCIDR, &n.DNS, &n.Port,
 		&n.Keepalive, &n.IsActive, &n.CreatedAt, &n.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -357,21 +375,36 @@ func (h *NetworkHandler) update(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "keepalive must be between 0 and 3600")
 		return
 	}
+	// Validate tunnel_cidr if provided.
+	if req.TunnelCIDR != nil && *req.TunnelCIDR != "" {
+		tip, tipNet, terr := net.ParseCIDR(*req.TunnelCIDR)
+		if terr != nil {
+			respondError(w, http.StatusBadRequest, fmt.Sprintf("invalid tunnel_cidr format: %s", *req.TunnelCIDR))
+			return
+		}
+		if !tip.Equal(tipNet.IP) {
+			respondError(w, http.StatusBadRequest, fmt.Sprintf(
+				"invalid tunnel_cidr: %s has host bits set — did you mean %s?",
+				*req.TunnelCIDR, tipNet.String()))
+			return
+		}
+	}
 
 	var n networkResponse
 	err = h.pool.QueryRow(r.Context(),
 		`UPDATE networks SET
-			name      = COALESCE($2, name),
-			address   = COALESCE($3, address),
-			dns       = COALESCE($4, dns),
-			port      = COALESCE($5, port),
-			keepalive = COALESCE($6, keepalive),
-			is_active = COALESCE($7, is_active),
-			updated_at = now()
+			name        = COALESCE($2, name),
+			address     = COALESCE($3, address),
+			tunnel_cidr = COALESCE($4, tunnel_cidr),
+			dns         = COALESCE($5, dns),
+			port        = COALESCE($6, port),
+			keepalive   = COALESCE($7, keepalive),
+			is_active   = COALESCE($8, is_active),
+			updated_at  = now()
 		 WHERE id = $1
-		 RETURNING id, name, address::text, dns, port, keepalive, is_active, created_at, updated_at`,
-		id, req.Name, req.Address, req.DNS, req.Port, req.Keepalive, req.IsActive,
-	).Scan(&n.ID, &n.Name, &n.Address, &n.DNS, &n.Port,
+		 RETURNING id, name, address::text, tunnel_cidr::text, dns, port, keepalive, is_active, created_at, updated_at`,
+		id, req.Name, req.Address, req.TunnelCIDR, req.DNS, req.Port, req.Keepalive, req.IsActive,
+	).Scan(&n.ID, &n.Name, &n.Address, &n.TunnelCIDR, &n.DNS, &n.Port,
 		&n.Keepalive, &n.IsActive, &n.CreatedAt, &n.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

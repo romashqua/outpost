@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -320,24 +321,38 @@ func (h *DeviceHandler) create(w http.ResponseWriter, r *http.Request) {
 	const maxRetries = 5
 	var d deviceResponse
 
-	netQuery := `SELECT id, address FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1`
-	args := []any{userID, req.Name, req.WireguardPubkey, ptrOrNil(generatedPrivKey)}
-
+	// Resolve network and its allocation CIDR (tunnel_cidr if set, else address).
+	var createNetID uuid.UUID
+	var createAllocCIDR string
 	if req.NetworkID != "" {
-		netQuery = `SELECT id, address FROM networks WHERE id = $5 AND is_active = true LIMIT 1`
-		args = append(args, req.NetworkID)
+		err = h.pool.QueryRow(r.Context(),
+			`SELECT id, COALESCE(tunnel_cidr, address)::text FROM networks WHERE id = $1 AND is_active = true`,
+			req.NetworkID,
+		).Scan(&createNetID, &createAllocCIDR)
+	} else {
+		err = h.pool.QueryRow(r.Context(),
+			`SELECT id, COALESCE(tunnel_cidr, address)::text FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1`,
+		).Scan(&createNetID, &createAllocCIDR)
+	}
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusUnprocessableEntity, "no active network found")
+		} else {
+			respondError(w, http.StatusInternalServerError, "failed to read network")
+		}
+		return
 	}
 
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		err = h.pool.QueryRow(r.Context(),
-			`WITH net AS (
-				`+netQuery+`
+			`WITH alloc AS (
+				SELECT $5::cidr AS cidr, $6::uuid AS net_id
 			),
 			candidate AS (
-				SELECT host(network(net.address) + s.off)::inet AS ip, net.id AS net_id
-				FROM net, generate_series(2, (1 << (32 - masklen(net.address))) - 2) AS s(off)
+				SELECT host(network(alloc.cidr) + s.off)::inet AS ip, alloc.net_id
+				FROM alloc, generate_series(2, (1 << (32 - masklen(alloc.cidr))) - 2) AS s(off)
 				WHERE NOT EXISTS (
-					SELECT 1 FROM devices WHERE assigned_ip = host(network(net.address) + s.off)::inet
+					SELECT 1 FROM devices WHERE assigned_ip = host(network(alloc.cidr) + s.off)::inet
 				)
 				LIMIT 1
 			)
@@ -345,7 +360,7 @@ func (h *DeviceHandler) create(w http.ResponseWriter, r *http.Request) {
 			SELECT $1, $2, $3, $4, candidate.ip, candidate.net_id
 			FROM candidate
 			RETURNING id, user_id, name, wireguard_pubkey, host(assigned_ip), is_approved, last_handshake, created_at, updated_at`,
-			args...,
+			userID, req.Name, req.WireguardPubkey, ptrOrNil(generatedPrivKey), createAllocCIDR, createNetID,
 		).Scan(&d.ID, &d.UserID, &d.Name, &d.WireguardPubkey,
 			&d.AssignedIP, &d.IsApproved, &d.LastHandshake, &d.CreatedAt, &d.UpdatedAt)
 		if err == nil {
@@ -609,16 +624,16 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 	// Find the best active gateway and its network for enrollment.
 	// Use gateway_networks junction table to pick the correct network.
 	var err error
-	var maskLen int
 	var networkCIDR string
+	var tunnelCIDR *string
 	var networkDNS []string
 	var networkID uuid.UUID
 	var gatewayEndpoint, gatewayPubkey string
 	var gatewayPublicIP *string
 	var networkPort int
 	err = h.pool.QueryRow(r.Context(),
-		`SELECT g.endpoint, g.wireguard_pubkey, g.public_ip::text,
-		        n.id, masklen(n.address), n.address::text, n.dns, n.port
+		`SELECT g.endpoint, g.wireguard_pubkey, host(g.public_ip),
+		        n.id, n.address::text, n.tunnel_cidr::text, n.dns, n.port
 		 FROM gateways g
 		 JOIN gateway_networks gn ON gn.gateway_id = g.id
 		 JOIN networks n ON n.id = gn.network_id AND n.is_active = true
@@ -626,7 +641,12 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 		 ORDER BY g.priority DESC, g.created_at
 		 LIMIT 1`,
 	).Scan(&gatewayEndpoint, &gatewayPubkey, &gatewayPublicIP,
-		&networkID, &maskLen, &networkCIDR, &networkDNS, &networkPort)
+		&networkID, &networkCIDR, &tunnelCIDR, &networkDNS, &networkPort)
+	// Determine IP allocation subnet: tunnel_cidr (VPN overlay) or address (legacy).
+	allocCIDR := networkCIDR
+	if tunnelCIDR != nil && *tunnelCIDR != "" {
+		allocCIDR = *tunnelCIDR
+	}
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			respondError(w, http.StatusUnprocessableEntity, "no active gateway with an active network — create and activate a gateway first")
@@ -658,21 +678,22 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Atomically allocate the next available IP and insert the device.
-	// Uses a CTE that finds the first unused IP in the gateway's network range,
+	// Uses a CTE that finds the first unused IP in the allocation subnet,
 	// with a retry loop to handle concurrent inserts racing for the same IP.
+	// allocCIDR is either tunnel_cidr (VPN overlay) or address (legacy single-subnet).
 	const maxEnrollRetries = 5
 	var deviceID uuid.UUID
 	var assignedIP string
 	for attempt := 0; attempt < maxEnrollRetries; attempt++ {
 		err = h.pool.QueryRow(r.Context(),
-			`WITH net AS (
-				SELECT id, address FROM networks WHERE id = $4 AND is_active = true LIMIT 1
+			`WITH alloc AS (
+				SELECT $4::cidr AS cidr, $5::uuid AS net_id
 			),
 			candidate AS (
-				SELECT host(network(net.address) + s.off)::inet AS ip, net.id AS net_id
-				FROM net, generate_series(2, (1 << (32 - masklen(net.address))) - 2) AS s(off)
+				SELECT host(network(alloc.cidr) + s.off)::inet AS ip, alloc.net_id
+				FROM alloc, generate_series(2, (1 << (32 - masklen(alloc.cidr))) - 2) AS s(off)
 				WHERE NOT EXISTS (
-					SELECT 1 FROM devices WHERE assigned_ip = host(network(net.address) + s.off)::inet
+					SELECT 1 FROM devices WHERE assigned_ip = host(network(alloc.cidr) + s.off)::inet
 				)
 				LIMIT 1
 			)
@@ -680,7 +701,7 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 			SELECT $1, $2, $3, candidate.ip, true, candidate.net_id
 			FROM candidate
 			RETURNING id, host(assigned_ip)`,
-			userID, req.Name, req.WireguardPubkey, networkID,
+			userID, req.Name, req.WireguardPubkey, allocCIDR, networkID,
 		).Scan(&deviceID, &assignedIP)
 		if err == nil {
 			break
@@ -713,7 +734,10 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clientAddress := fmt.Sprintf("%s/%d", assignedIP, maskLen)
+	// Compute mask length from the allocation CIDR for the client address.
+	_, allocNet, _ := net.ParseCIDR(allocCIDR)
+	allocMask, _ := allocNet.Mask.Size()
+	clientAddress := fmt.Sprintf("%s/%d", assignedIP, allocMask)
 
 	resp := enrollResponse{
 		DeviceID:            deviceID,
@@ -783,18 +807,18 @@ func (h *DeviceHandler) downloadConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get the mask length and DNS from the device's network (fallback to first active).
-	var maskLen int
+	// Get network info: address (target network for AllowedIPs) and tunnel_cidr (for client Address).
 	var networkCIDR string
+	var dlTunnelCIDR *string
 	var networkDNS []string
 	if deviceNetworkID != nil {
 		err = h.pool.QueryRow(r.Context(),
-			`SELECT masklen(address), address::text, dns FROM networks WHERE id = $1`, *deviceNetworkID,
-		).Scan(&maskLen, &networkCIDR, &networkDNS)
+			`SELECT address::text, tunnel_cidr::text, dns FROM networks WHERE id = $1`, *deviceNetworkID,
+		).Scan(&networkCIDR, &dlTunnelCIDR, &networkDNS)
 	} else {
 		err = h.pool.QueryRow(r.Context(),
-			`SELECT masklen(address), address::text, dns FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1`,
-		).Scan(&maskLen, &networkCIDR, &networkDNS)
+			`SELECT address::text, tunnel_cidr::text, dns FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1`,
+		).Scan(&networkCIDR, &dlTunnelCIDR, &networkDNS)
 	}
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to read network mask")
@@ -812,7 +836,7 @@ func (h *DeviceHandler) downloadConfig(w http.ResponseWriter, r *http.Request) {
 	var dlNetworkPort int
 	if deviceNetworkID != nil {
 		err = h.pool.QueryRow(r.Context(),
-			`SELECT g.endpoint, g.wireguard_pubkey, g.public_ip::text, n.port
+			`SELECT g.endpoint, g.wireguard_pubkey, host(g.public_ip), n.port
 			 FROM gateways g
 			 JOIN gateway_networks gn ON gn.gateway_id = g.id
 			 JOIN networks n ON n.id = gn.network_id
@@ -822,7 +846,7 @@ func (h *DeviceHandler) downloadConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if gatewayEndpoint == "" {
 		err = h.pool.QueryRow(r.Context(),
-			`SELECT g.endpoint, g.wireguard_pubkey, g.public_ip::text, COALESCE(n.port, 51820)
+			`SELECT g.endpoint, g.wireguard_pubkey, host(g.public_ip), COALESCE(n.port, 51820)
 			 FROM gateways g
 			 LEFT JOIN networks n ON n.id = g.network_id
 			 WHERE g.is_active = true
@@ -871,7 +895,14 @@ func (h *DeviceHandler) downloadConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clientAddress := fmt.Sprintf("%s/%d", assignedIP, maskLen)
+	// Compute mask from tunnel_cidr (if set) or network address.
+	dlAllocCIDR := networkCIDR
+	if dlTunnelCIDR != nil && *dlTunnelCIDR != "" {
+		dlAllocCIDR = *dlTunnelCIDR
+	}
+	_, dlAllocNet, _ := net.ParseCIDR(dlAllocCIDR)
+	dlMaskLen, _ := dlAllocNet.Mask.Size()
+	clientAddress := fmt.Sprintf("%s/%d", assignedIP, dlMaskLen)
 
 	// Build AllowedIPs based on user's group ACLs.
 	// If user has ACL entries, only include allowed networks/CIDRs.
@@ -1015,17 +1046,17 @@ func (h *DeviceHandler) sendConfig(w http.ResponseWriter, r *http.Request) {
 		`SELECT host(assigned_ip), network_id::text FROM devices WHERE id = $1`, id,
 	).Scan(&assignedIP, &sendDeviceNetworkID)
 
-	var maskLen int
 	var networkCIDR string
+	var scTunnelCIDR *string
 	var networkDNS []string
 	if sendDeviceNetworkID != nil {
 		err = h.pool.QueryRow(r.Context(),
-			`SELECT masklen(address), address::text, dns FROM networks WHERE id = $1`, *sendDeviceNetworkID,
-		).Scan(&maskLen, &networkCIDR, &networkDNS)
+			`SELECT address::text, tunnel_cidr::text, dns FROM networks WHERE id = $1`, *sendDeviceNetworkID,
+		).Scan(&networkCIDR, &scTunnelCIDR, &networkDNS)
 	} else {
 		err = h.pool.QueryRow(r.Context(),
-			`SELECT masklen(address), address::text, dns FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1`,
-		).Scan(&maskLen, &networkCIDR, &networkDNS)
+			`SELECT address::text, tunnel_cidr::text, dns FROM networks WHERE is_active = true ORDER BY created_at LIMIT 1`,
+		).Scan(&networkCIDR, &scTunnelCIDR, &networkDNS)
 	}
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to read network configuration")
@@ -1039,7 +1070,7 @@ func (h *DeviceHandler) sendConfig(w http.ResponseWriter, r *http.Request) {
 	var scGwPublicIP *string
 	var scNetPort int
 	err = h.pool.QueryRow(r.Context(),
-		`SELECT g.endpoint, g.wireguard_pubkey, g.public_ip::text, COALESCE(n.port, 51820)
+		`SELECT g.endpoint, g.wireguard_pubkey, host(g.public_ip), COALESCE(n.port, 51820)
 		 FROM gateways g JOIN networks n ON n.id = g.network_id
 		 WHERE n.is_active = true AND g.is_active = true
 		 ORDER BY g.priority DESC, g.created_at LIMIT 1`,
@@ -1067,7 +1098,13 @@ func (h *DeviceHandler) sendConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clientAddress := fmt.Sprintf("%s/%d", assignedIP, maskLen)
+	scAllocCIDR := networkCIDR
+	if scTunnelCIDR != nil && *scTunnelCIDR != "" {
+		scAllocCIDR = *scTunnelCIDR
+	}
+	_, scAllocNet, _ := net.ParseCIDR(scAllocCIDR)
+	scMaskLen, _ := scAllocNet.Mask.Size()
+	clientAddress := fmt.Sprintf("%s/%d", assignedIP, scMaskLen)
 	cfg := wireguard.InterfaceConfig{
 		PrivateKey: privateKey,
 		Address:    clientAddress,

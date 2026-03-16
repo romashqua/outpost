@@ -108,9 +108,11 @@ func (h *UserHandler) list(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.pool.Query(r.Context(),
 		`SELECT u.id, u.username, u.email, u.first_name, u.last_name, u.phone, u.is_active, u.is_admin, u.mfa_enabled,
-		        (SELECT MAX(s.created_at) FROM sessions s WHERE s.user_id = u.id),
+		        MAX(s.created_at),
 		        u.created_at, u.updated_at
 		 FROM users u
+		 LEFT JOIN sessions s ON s.user_id = u.id
+		 GROUP BY u.id
 		 ORDER BY u.created_at DESC
 		 LIMIT $1 OFFSET $2`, perPage, offset)
 	if err != nil {
@@ -192,7 +194,15 @@ func (h *UserHandler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var u userResponse
-	err = h.pool.QueryRow(r.Context(),
+	// Create user and assign role atomically.
+	tx, err := h.pool.Begin(r.Context())
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to begin transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	err = tx.QueryRow(r.Context(),
 		`INSERT INTO users (username, email, password_hash, first_name, last_name, is_admin)
 		 VALUES ($1, $2, $3, $4, $5, $6)
 		 RETURNING id, username, email, first_name, last_name, phone, is_active, is_admin, mfa_enabled, created_at, updated_at`,
@@ -220,11 +230,18 @@ func (h *UserHandler) create(w http.ResponseWriter, r *http.Request) {
 	if req.IsAdmin {
 		roleName = "admin"
 	}
-	if _, err := h.pool.Exec(r.Context(),
+	if _, err := tx.Exec(r.Context(),
 		`INSERT INTO user_roles (user_id, role_id)
 		 SELECT $1, id FROM roles WHERE name = $2
 		 ON CONFLICT DO NOTHING`, u.ID, roleName); err != nil {
 		h.log.Error("failed to assign role to user", "user_id", u.ID, "role", roleName, "error", err)
+		respondError(w, http.StatusInternalServerError, "failed to assign role")
+		return
+	}
+
+	if err := tx.Commit(r.Context()); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to commit user creation")
+		return
 	}
 
 	// Send welcome email asynchronously (best-effort, 30s timeout).

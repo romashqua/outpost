@@ -14,6 +14,7 @@ interface Network {
   id: string
   name: string
   address: string
+  tunnel_cidr?: string | null
   dns: string[]
   port: number
   keepalive: number
@@ -25,6 +26,7 @@ interface Network {
 interface CreateNetworkPayload {
   name: string
   address: string
+  tunnel_cidr: string
   dns: string
   port: number
   keepalive: number
@@ -76,6 +78,7 @@ export default function NetworksPage() {
   const [formData, setFormData] = useState<CreateNetworkPayload>({
     name: '',
     address: '10.0.0.0/24',
+    tunnel_cidr: '',
     dns: '1.1.1.1, 8.8.8.8',
     port: 51820,
     keepalive: 25,
@@ -90,6 +93,9 @@ export default function NetworksPage() {
   const createMutation = useMutation({
     mutationFn: (payload: CreateNetworkPayload) => {
       const body: Record<string, unknown> = { name: payload.name, address: payload.address }
+      if (payload.tunnel_cidr?.trim()) {
+        body.tunnel_cidr = payload.tunnel_cidr.trim()
+      }
       if (payload.dns) {
         body.dns = payload.dns.split(',').map((s) => s.trim()).filter(Boolean)
       } else {
@@ -102,7 +108,7 @@ export default function NetworksPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['networks'] })
       setShowCreate(false)
-      setFormData({ name: '', address: '10.0.0.0/24', dns: '1.1.1.1, 8.8.8.8', port: 51820, keepalive: 25 })
+      setFormData({ name: '', address: '10.0.0.0/24', tunnel_cidr: '', dns: '1.1.1.1, 8.8.8.8', port: 51820, keepalive: 25 })
       setCidrError(null)
       addToast(t('networks.networkCreated'), 'success')
     },
@@ -178,6 +184,15 @@ export default function NetworksPage() {
       render: (row: Network) => (
         <span className="font-mono text-[var(--text-primary)] bg-[var(--bg-tertiary)] px-2 py-0.5 rounded text-xs">
           {row.address}
+        </span>
+      ),
+    },
+    {
+      key: 'tunnel_cidr',
+      header: t('networks.tunnelCidr'),
+      render: (row: Network) => (
+        <span className="font-mono text-xs text-[var(--text-muted)]">
+          {row.tunnel_cidr || '-'}
         </span>
       ),
     },
@@ -296,6 +311,17 @@ export default function NetworksPage() {
             )}
             <p className="text-[10px] text-[var(--text-muted)] mt-1">
               {t('networks.cidrHint')}
+            </p>
+          </div>
+          <div>
+            <Input
+              label={t('networks.tunnelCidr')}
+              placeholder="10.10.0.0/24"
+              value={formData.tunnel_cidr}
+              onChange={(e) => setFormData({ ...formData, tunnel_cidr: e.target.value })}
+            />
+            <p className="text-[10px] text-[var(--text-muted)] mt-1">
+              {t('networks.tunnelCidrHint')}
             </p>
           </div>
           <Input
