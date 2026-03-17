@@ -15,10 +15,17 @@ import (
 	"github.com/romashqua/outpost/internal/auth"
 )
 
+// FirewallRefresher pushes updated firewall configs to gateways when ACL/group membership changes.
+type FirewallRefresher interface {
+	RefreshFirewallForUser(userID string)
+	RefreshFirewallForGroup(groupID string)
+}
+
 // GroupHandler provides CRUD endpoints for group management and ACL assignment.
 type GroupHandler struct {
-	pool *pgxpool.Pool
-	log  *slog.Logger
+	pool      *pgxpool.Pool
+	log       *slog.Logger
+	refresher FirewallRefresher
 }
 
 // NewGroupHandler creates a GroupHandler backed by the given connection pool.
@@ -28,6 +35,12 @@ func NewGroupHandler(pool *pgxpool.Pool, logger ...*slog.Logger) *GroupHandler {
 		l = logger[0]
 	}
 	return &GroupHandler{pool: pool, log: l.With("handler", "group")}
+}
+
+// WithFirewallRefresher sets the firewall refresher for pushing ACL changes to gateways.
+func (h *GroupHandler) WithFirewallRefresher(r FirewallRefresher) *GroupHandler {
+	h.refresher = r
+	return h
 }
 
 // Routes returns a chi.Router with group CRUD and ACL endpoints mounted.
@@ -481,6 +494,9 @@ func (h *GroupHandler) addMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.log.Info("member added to group", "group_id", groupID, "user_id", userID)
+	if h.refresher != nil {
+		h.refresher.RefreshFirewallForUser(userID.String())
+	}
 	respondJSON(w, http.StatusCreated, map[string]string{"status": "added", "user_id": userID.String(), "group_id": groupID.String()})
 }
 
@@ -520,6 +536,9 @@ func (h *GroupHandler) removeMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.refresher != nil {
+		h.refresher.RefreshFirewallForUser(userID.String())
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -653,6 +672,9 @@ func (h *GroupHandler) addACL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.log.Info("acl added", "group_id", groupID, "network_id", networkID)
+	if h.refresher != nil {
+		h.refresher.RefreshFirewallForGroup(groupID.String())
+	}
 	respondJSON(w, http.StatusCreated, acl)
 }
 
@@ -692,5 +714,8 @@ func (h *GroupHandler) removeACL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.refresher != nil {
+		h.refresher.RefreshFirewallForGroup(groupID.String())
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

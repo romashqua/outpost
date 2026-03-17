@@ -20,12 +20,24 @@ import (
 // validHostnameRe matches a valid hostname label sequence (RFC 952 / RFC 1123).
 var validHostnameRe = regexp.MustCompile(`^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$`)
 
+// SmartRouteNotifier pushes updated smart route configs to affected gateways.
+type SmartRouteNotifier interface {
+	NotifySmartRouteUpdate(smartRouteID string)
+}
+
 type SmartRouteHandler struct {
-	pool *pgxpool.Pool
+	pool     *pgxpool.Pool
+	notifier SmartRouteNotifier
 }
 
 func NewSmartRouteHandler(pool *pgxpool.Pool) *SmartRouteHandler {
 	return &SmartRouteHandler{pool: pool}
+}
+
+// WithNotifier sets the notifier for pushing smart route changes to gateways.
+func (h *SmartRouteHandler) WithNotifier(n SmartRouteNotifier) *SmartRouteHandler {
+	h.notifier = n
+	return h
 }
 
 func (h *SmartRouteHandler) Routes() chi.Router {
@@ -287,6 +299,9 @@ func (h *SmartRouteHandler) updateRoute(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if h.notifier != nil {
+		h.notifier.NotifySmartRouteUpdate(id.String())
+	}
 	respondJSON(w, http.StatusOK, sr)
 }
 
@@ -319,6 +334,9 @@ func (h *SmartRouteHandler) deleteRoute(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if h.notifier != nil {
+		h.notifier.NotifySmartRouteUpdate(id.String())
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -437,6 +455,9 @@ func (h *SmartRouteHandler) addEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.notifier != nil {
+		h.notifier.NotifySmartRouteUpdate(routeID.String())
+	}
 	respondJSON(w, http.StatusCreated, e)
 }
 
@@ -475,6 +496,9 @@ func (h *SmartRouteHandler) deleteEntry(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if h.notifier != nil {
+		h.notifier.NotifySmartRouteUpdate(routeID.String())
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -843,6 +867,9 @@ func (h *SmartRouteHandler) addRouteNetwork(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	if h.notifier != nil {
+		h.notifier.NotifySmartRouteUpdate(routeID.String())
+	}
 	respondJSON(w, http.StatusCreated, map[string]string{"status": "associated"})
 }
 
@@ -882,5 +909,8 @@ func (h *SmartRouteHandler) removeRouteNetwork(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	if h.notifier != nil {
+		h.notifier.NotifySmartRouteUpdate(routeID.String())
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

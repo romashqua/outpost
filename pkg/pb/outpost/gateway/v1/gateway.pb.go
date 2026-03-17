@@ -253,6 +253,7 @@ type GatewayConfig struct {
 	Peers         []*v1.Peer             `protobuf:"bytes,6,rep,name=peers,proto3" json:"peers,omitempty"`
 	Firewall      *v1.FirewallConfig     `protobuf:"bytes,7,opt,name=firewall,proto3" json:"firewall,omitempty"`
 	S2STunnels    []*S2STunnelConfig     `protobuf:"bytes,8,rep,name=s2s_tunnels,json=s2sTunnels,proto3" json:"s2s_tunnels,omitempty"`
+	SmartRoutes   *v1.SmartRouteConfig   `protobuf:"bytes,9,opt,name=smart_routes,json=smartRoutes,proto3" json:"smart_routes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -339,6 +340,13 @@ func (x *GatewayConfig) GetFirewall() *v1.FirewallConfig {
 func (x *GatewayConfig) GetS2STunnels() []*S2STunnelConfig {
 	if x != nil {
 		return x.S2STunnels
+	}
+	return nil
+}
+
+func (x *GatewayConfig) GetSmartRoutes() *v1.SmartRouteConfig {
+	if x != nil {
+		return x.SmartRoutes
 	}
 	return nil
 }
@@ -815,6 +823,7 @@ type CoreEvent struct {
 	//	*CoreEvent_S2SUpdate
 	//	*CoreEvent_FirewallUpdate
 	//	*CoreEvent_FullResync
+	//	*CoreEvent_SmartRouteUpdate
 	Event         isCoreEvent_Event `protobuf_oneof:"event"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -893,6 +902,15 @@ func (x *CoreEvent) GetFullResync() *FullResync {
 	return nil
 }
 
+func (x *CoreEvent) GetSmartRouteUpdate() *SmartRouteUpdate {
+	if x != nil {
+		if x, ok := x.Event.(*CoreEvent_SmartRouteUpdate); ok {
+			return x.SmartRouteUpdate
+		}
+	}
+	return nil
+}
+
 type isCoreEvent_Event interface {
 	isCoreEvent_Event()
 }
@@ -913,6 +931,10 @@ type CoreEvent_FullResync struct {
 	FullResync *FullResync `protobuf:"bytes,4,opt,name=full_resync,json=fullResync,proto3,oneof"`
 }
 
+type CoreEvent_SmartRouteUpdate struct {
+	SmartRouteUpdate *SmartRouteUpdate `protobuf:"bytes,5,opt,name=smart_route_update,json=smartRouteUpdate,proto3,oneof"`
+}
+
 func (*CoreEvent_PeerUpdate) isCoreEvent_Event() {}
 
 func (*CoreEvent_S2SUpdate) isCoreEvent_Event() {}
@@ -920,6 +942,8 @@ func (*CoreEvent_S2SUpdate) isCoreEvent_Event() {}
 func (*CoreEvent_FirewallUpdate) isCoreEvent_Event() {}
 
 func (*CoreEvent_FullResync) isCoreEvent_Event() {}
+
+func (*CoreEvent_SmartRouteUpdate) isCoreEvent_Event() {}
 
 type PeerUpdate struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1069,6 +1093,50 @@ func (x *FirewallUpdate) GetConfig() *v1.FirewallConfig {
 	return nil
 }
 
+type SmartRouteUpdate struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Config        *v1.SmartRouteConfig   `protobuf:"bytes,1,opt,name=config,proto3" json:"config,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SmartRouteUpdate) Reset() {
+	*x = SmartRouteUpdate{}
+	mi := &file_outpost_gateway_v1_gateway_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SmartRouteUpdate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SmartRouteUpdate) ProtoMessage() {}
+
+func (x *SmartRouteUpdate) ProtoReflect() protoreflect.Message {
+	mi := &file_outpost_gateway_v1_gateway_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SmartRouteUpdate.ProtoReflect.Descriptor instead.
+func (*SmartRouteUpdate) Descriptor() ([]byte, []int) {
+	return file_outpost_gateway_v1_gateway_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *SmartRouteUpdate) GetConfig() *v1.SmartRouteConfig {
+	if x != nil {
+		return x.Config
+	}
+	return nil
+}
+
 type FullResync struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Config        *GatewayConfig         `protobuf:"bytes,1,opt,name=config,proto3" json:"config,omitempty"`
@@ -1078,7 +1146,7 @@ type FullResync struct {
 
 func (x *FullResync) Reset() {
 	*x = FullResync{}
-	mi := &file_outpost_gateway_v1_gateway_proto_msgTypes[13]
+	mi := &file_outpost_gateway_v1_gateway_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1090,7 +1158,7 @@ func (x *FullResync) String() string {
 func (*FullResync) ProtoMessage() {}
 
 func (x *FullResync) ProtoReflect() protoreflect.Message {
-	mi := &file_outpost_gateway_v1_gateway_proto_msgTypes[13]
+	mi := &file_outpost_gateway_v1_gateway_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1103,7 +1171,7 @@ func (x *FullResync) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FullResync.ProtoReflect.Descriptor instead.
 func (*FullResync) Descriptor() ([]byte, []int) {
-	return file_outpost_gateway_v1_gateway_proto_rawDescGZIP(), []int{13}
+	return file_outpost_gateway_v1_gateway_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *FullResync) GetConfig() *GatewayConfig {
@@ -1125,7 +1193,7 @@ const file_outpost_gateway_v1_gateway_proto_rawDesc = "" +
 	"gateway_id\x18\x01 \x01(\tR\tgatewayId\x128\n" +
 	"\ttimestamp\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\x12%\n" +
 	"\x0euptime_seconds\x18\x03 \x01(\x03R\ruptimeSeconds\x12'\n" +
-	"\x0fconnected_peers\x18\x04 \x01(\x05R\x0econnectedPeers\"\xe5\x02\n" +
+	"\x0fconnected_peers\x18\x04 \x01(\x05R\x0econnectedPeers\"\xad\x03\n" +
 	"\rGatewayConfig\x12\x1d\n" +
 	"\n" +
 	"gateway_id\x18\x01 \x01(\tR\tgatewayId\x12!\n" +
@@ -1138,7 +1206,8 @@ const file_outpost_gateway_v1_gateway_proto_rawDesc = "" +
 	"\x05peers\x18\x06 \x03(\v2\x17.outpost.common.v1.PeerR\x05peers\x12=\n" +
 	"\bfirewall\x18\a \x01(\v2!.outpost.common.v1.FirewallConfigR\bfirewall\x12D\n" +
 	"\vs2s_tunnels\x18\b \x03(\v2#.outpost.gateway.v1.S2STunnelConfigR\n" +
-	"s2sTunnels\"\xef\x01\n" +
+	"s2sTunnels\x12F\n" +
+	"\fsmart_routes\x18\t \x01(\v2#.outpost.common.v1.SmartRouteConfigR\vsmartRoutes\"\xef\x01\n" +
 	"\x0fS2STunnelConfig\x12\x1b\n" +
 	"\ttunnel_id\x18\x01 \x01(\tR\btunnelId\x12%\n" +
 	"\x0einterface_name\x18\x02 \x01(\tR\rinterfaceName\x12\x1f\n" +
@@ -1180,7 +1249,7 @@ const file_outpost_gateway_v1_gateway_proto_rawDesc = "" +
 	"\x0erx_bytes_total\x18\x02 \x01(\x03R\frxBytesTotal\x12$\n" +
 	"\x0etx_bytes_total\x18\x03 \x01(\x03R\ftxBytesTotal\x12\x1b\n" +
 	"\tcpu_usage\x18\x04 \x01(\x01R\bcpuUsage\x12!\n" +
-	"\fmemory_usage\x18\x05 \x01(\x01R\vmemoryUsage\"\xa9\x02\n" +
+	"\fmemory_usage\x18\x05 \x01(\x01R\vmemoryUsage\"\xff\x02\n" +
 	"\tCoreEvent\x12A\n" +
 	"\vpeer_update\x18\x01 \x01(\v2\x1e.outpost.gateway.v1.PeerUpdateH\x00R\n" +
 	"peerUpdate\x12>\n" +
@@ -1188,7 +1257,8 @@ const file_outpost_gateway_v1_gateway_proto_rawDesc = "" +
 	"s2s_update\x18\x02 \x01(\v2\x1d.outpost.gateway.v1.S2SUpdateH\x00R\ts2sUpdate\x12M\n" +
 	"\x0ffirewall_update\x18\x03 \x01(\v2\".outpost.gateway.v1.FirewallUpdateH\x00R\x0efirewallUpdate\x12A\n" +
 	"\vfull_resync\x18\x04 \x01(\v2\x1e.outpost.gateway.v1.FullResyncH\x00R\n" +
-	"fullResyncB\a\n" +
+	"fullResync\x12T\n" +
+	"\x12smart_route_update\x18\x05 \x01(\v2$.outpost.gateway.v1.SmartRouteUpdateH\x00R\x10smartRouteUpdateB\a\n" +
 	"\x05event\"\xd0\x01\n" +
 	"\n" +
 	"PeerUpdate\x12=\n" +
@@ -1210,7 +1280,9 @@ const file_outpost_gateway_v1_gateway_proto_rawDesc = "" +
 	"\x13ACTION_UPDATE_PEERS\x10\x03\x12\x18\n" +
 	"\x14ACTION_UPDATE_ROUTES\x10\x04\"K\n" +
 	"\x0eFirewallUpdate\x129\n" +
-	"\x06config\x18\x01 \x01(\v2!.outpost.common.v1.FirewallConfigR\x06config\"G\n" +
+	"\x06config\x18\x01 \x01(\v2!.outpost.common.v1.FirewallConfigR\x06config\"O\n" +
+	"\x10SmartRouteUpdate\x12;\n" +
+	"\x06config\x18\x01 \x01(\v2#.outpost.common.v1.SmartRouteConfigR\x06config\"G\n" +
 	"\n" +
 	"FullResync\x129\n" +
 	"\x06config\x18\x01 \x01(\v2!.outpost.gateway.v1.GatewayConfigR\x06config2\xfb\x01\n" +
@@ -1232,7 +1304,7 @@ func file_outpost_gateway_v1_gateway_proto_rawDescGZIP() []byte {
 }
 
 var file_outpost_gateway_v1_gateway_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_outpost_gateway_v1_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_outpost_gateway_v1_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_outpost_gateway_v1_gateway_proto_goTypes = []any{
 	(PeerUpdate_Action)(0),        // 0: outpost.gateway.v1.PeerUpdate.Action
 	(S2SUpdate_Action)(0),         // 1: outpost.gateway.v1.S2SUpdate.Action
@@ -1249,46 +1321,51 @@ var file_outpost_gateway_v1_gateway_proto_goTypes = []any{
 	(*PeerUpdate)(nil),            // 12: outpost.gateway.v1.PeerUpdate
 	(*S2SUpdate)(nil),             // 13: outpost.gateway.v1.S2SUpdate
 	(*FirewallUpdate)(nil),        // 14: outpost.gateway.v1.FirewallUpdate
-	(*FullResync)(nil),            // 15: outpost.gateway.v1.FullResync
-	(*timestamppb.Timestamp)(nil), // 16: google.protobuf.Timestamp
-	(*v1.Peer)(nil),               // 17: outpost.common.v1.Peer
-	(*v1.FirewallConfig)(nil),     // 18: outpost.common.v1.FirewallConfig
-	(*v1.PeerStats)(nil),          // 19: outpost.common.v1.PeerStats
-	(*emptypb.Empty)(nil),         // 20: google.protobuf.Empty
+	(*SmartRouteUpdate)(nil),      // 15: outpost.gateway.v1.SmartRouteUpdate
+	(*FullResync)(nil),            // 16: outpost.gateway.v1.FullResync
+	(*timestamppb.Timestamp)(nil), // 17: google.protobuf.Timestamp
+	(*v1.Peer)(nil),               // 18: outpost.common.v1.Peer
+	(*v1.FirewallConfig)(nil),     // 19: outpost.common.v1.FirewallConfig
+	(*v1.SmartRouteConfig)(nil),   // 20: outpost.common.v1.SmartRouteConfig
+	(*v1.PeerStats)(nil),          // 21: outpost.common.v1.PeerStats
+	(*emptypb.Empty)(nil),         // 22: google.protobuf.Empty
 }
 var file_outpost_gateway_v1_gateway_proto_depIdxs = []int32{
-	16, // 0: outpost.gateway.v1.HeartbeatRequest.timestamp:type_name -> google.protobuf.Timestamp
-	17, // 1: outpost.gateway.v1.GatewayConfig.peers:type_name -> outpost.common.v1.Peer
-	18, // 2: outpost.gateway.v1.GatewayConfig.firewall:type_name -> outpost.common.v1.FirewallConfig
+	17, // 0: outpost.gateway.v1.HeartbeatRequest.timestamp:type_name -> google.protobuf.Timestamp
+	18, // 1: outpost.gateway.v1.GatewayConfig.peers:type_name -> outpost.common.v1.Peer
+	19, // 2: outpost.gateway.v1.GatewayConfig.firewall:type_name -> outpost.common.v1.FirewallConfig
 	5,  // 3: outpost.gateway.v1.GatewayConfig.s2s_tunnels:type_name -> outpost.gateway.v1.S2STunnelConfig
-	6,  // 4: outpost.gateway.v1.S2STunnelConfig.peers:type_name -> outpost.gateway.v1.S2SPeer
-	8,  // 5: outpost.gateway.v1.GatewayEvent.stats:type_name -> outpost.gateway.v1.PeerStatsReport
-	9,  // 6: outpost.gateway.v1.GatewayEvent.s2s_health:type_name -> outpost.gateway.v1.S2SHealthReport
-	10, // 7: outpost.gateway.v1.GatewayEvent.status:type_name -> outpost.gateway.v1.GatewayStatusReport
-	19, // 8: outpost.gateway.v1.PeerStatsReport.peers:type_name -> outpost.common.v1.PeerStats
-	16, // 9: outpost.gateway.v1.PeerStatsReport.collected_at:type_name -> google.protobuf.Timestamp
-	16, // 10: outpost.gateway.v1.S2SHealthReport.checked_at:type_name -> google.protobuf.Timestamp
-	12, // 11: outpost.gateway.v1.CoreEvent.peer_update:type_name -> outpost.gateway.v1.PeerUpdate
-	13, // 12: outpost.gateway.v1.CoreEvent.s2s_update:type_name -> outpost.gateway.v1.S2SUpdate
-	14, // 13: outpost.gateway.v1.CoreEvent.firewall_update:type_name -> outpost.gateway.v1.FirewallUpdate
-	15, // 14: outpost.gateway.v1.CoreEvent.full_resync:type_name -> outpost.gateway.v1.FullResync
-	0,  // 15: outpost.gateway.v1.PeerUpdate.action:type_name -> outpost.gateway.v1.PeerUpdate.Action
-	17, // 16: outpost.gateway.v1.PeerUpdate.peer:type_name -> outpost.common.v1.Peer
-	1,  // 17: outpost.gateway.v1.S2SUpdate.action:type_name -> outpost.gateway.v1.S2SUpdate.Action
-	5,  // 18: outpost.gateway.v1.S2SUpdate.tunnel:type_name -> outpost.gateway.v1.S2STunnelConfig
-	18, // 19: outpost.gateway.v1.FirewallUpdate.config:type_name -> outpost.common.v1.FirewallConfig
-	4,  // 20: outpost.gateway.v1.FullResync.config:type_name -> outpost.gateway.v1.GatewayConfig
-	2,  // 21: outpost.gateway.v1.GatewayService.GetConfig:input_type -> outpost.gateway.v1.ConfigRequest
-	7,  // 22: outpost.gateway.v1.GatewayService.Sync:input_type -> outpost.gateway.v1.GatewayEvent
-	3,  // 23: outpost.gateway.v1.GatewayService.Heartbeat:input_type -> outpost.gateway.v1.HeartbeatRequest
-	4,  // 24: outpost.gateway.v1.GatewayService.GetConfig:output_type -> outpost.gateway.v1.GatewayConfig
-	11, // 25: outpost.gateway.v1.GatewayService.Sync:output_type -> outpost.gateway.v1.CoreEvent
-	20, // 26: outpost.gateway.v1.GatewayService.Heartbeat:output_type -> google.protobuf.Empty
-	24, // [24:27] is the sub-list for method output_type
-	21, // [21:24] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	20, // 4: outpost.gateway.v1.GatewayConfig.smart_routes:type_name -> outpost.common.v1.SmartRouteConfig
+	6,  // 5: outpost.gateway.v1.S2STunnelConfig.peers:type_name -> outpost.gateway.v1.S2SPeer
+	8,  // 6: outpost.gateway.v1.GatewayEvent.stats:type_name -> outpost.gateway.v1.PeerStatsReport
+	9,  // 7: outpost.gateway.v1.GatewayEvent.s2s_health:type_name -> outpost.gateway.v1.S2SHealthReport
+	10, // 8: outpost.gateway.v1.GatewayEvent.status:type_name -> outpost.gateway.v1.GatewayStatusReport
+	21, // 9: outpost.gateway.v1.PeerStatsReport.peers:type_name -> outpost.common.v1.PeerStats
+	17, // 10: outpost.gateway.v1.PeerStatsReport.collected_at:type_name -> google.protobuf.Timestamp
+	17, // 11: outpost.gateway.v1.S2SHealthReport.checked_at:type_name -> google.protobuf.Timestamp
+	12, // 12: outpost.gateway.v1.CoreEvent.peer_update:type_name -> outpost.gateway.v1.PeerUpdate
+	13, // 13: outpost.gateway.v1.CoreEvent.s2s_update:type_name -> outpost.gateway.v1.S2SUpdate
+	14, // 14: outpost.gateway.v1.CoreEvent.firewall_update:type_name -> outpost.gateway.v1.FirewallUpdate
+	16, // 15: outpost.gateway.v1.CoreEvent.full_resync:type_name -> outpost.gateway.v1.FullResync
+	15, // 16: outpost.gateway.v1.CoreEvent.smart_route_update:type_name -> outpost.gateway.v1.SmartRouteUpdate
+	0,  // 17: outpost.gateway.v1.PeerUpdate.action:type_name -> outpost.gateway.v1.PeerUpdate.Action
+	18, // 18: outpost.gateway.v1.PeerUpdate.peer:type_name -> outpost.common.v1.Peer
+	1,  // 19: outpost.gateway.v1.S2SUpdate.action:type_name -> outpost.gateway.v1.S2SUpdate.Action
+	5,  // 20: outpost.gateway.v1.S2SUpdate.tunnel:type_name -> outpost.gateway.v1.S2STunnelConfig
+	19, // 21: outpost.gateway.v1.FirewallUpdate.config:type_name -> outpost.common.v1.FirewallConfig
+	20, // 22: outpost.gateway.v1.SmartRouteUpdate.config:type_name -> outpost.common.v1.SmartRouteConfig
+	4,  // 23: outpost.gateway.v1.FullResync.config:type_name -> outpost.gateway.v1.GatewayConfig
+	2,  // 24: outpost.gateway.v1.GatewayService.GetConfig:input_type -> outpost.gateway.v1.ConfigRequest
+	7,  // 25: outpost.gateway.v1.GatewayService.Sync:input_type -> outpost.gateway.v1.GatewayEvent
+	3,  // 26: outpost.gateway.v1.GatewayService.Heartbeat:input_type -> outpost.gateway.v1.HeartbeatRequest
+	4,  // 27: outpost.gateway.v1.GatewayService.GetConfig:output_type -> outpost.gateway.v1.GatewayConfig
+	11, // 28: outpost.gateway.v1.GatewayService.Sync:output_type -> outpost.gateway.v1.CoreEvent
+	22, // 29: outpost.gateway.v1.GatewayService.Heartbeat:output_type -> google.protobuf.Empty
+	27, // [27:30] is the sub-list for method output_type
+	24, // [24:27] is the sub-list for method input_type
+	24, // [24:24] is the sub-list for extension type_name
+	24, // [24:24] is the sub-list for extension extendee
+	0,  // [0:24] is the sub-list for field type_name
 }
 
 func init() { file_outpost_gateway_v1_gateway_proto_init() }
@@ -1306,6 +1383,7 @@ func file_outpost_gateway_v1_gateway_proto_init() {
 		(*CoreEvent_S2SUpdate)(nil),
 		(*CoreEvent_FirewallUpdate)(nil),
 		(*CoreEvent_FullResync)(nil),
+		(*CoreEvent_SmartRouteUpdate)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1313,7 +1391,7 @@ func file_outpost_gateway_v1_gateway_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_outpost_gateway_v1_gateway_proto_rawDesc), len(file_outpost_gateway_v1_gateway_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   14,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

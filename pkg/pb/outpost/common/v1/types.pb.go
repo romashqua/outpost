@@ -359,6 +359,118 @@ func (x *FirewallConfig) GetNatInterface() string {
 	return ""
 }
 
+type SmartRouteRule struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EntryType     string                 `protobuf:"bytes,1,opt,name=entry_type,json=entryType,proto3" json:"entry_type,omitempty"` // cidr, domain, domain_suffix
+	Value         string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
+	Action        string                 `protobuf:"bytes,3,opt,name=action,proto3" json:"action,omitempty"` // block, direct, proxy
+	Priority      int32                  `protobuf:"varint,4,opt,name=priority,proto3" json:"priority,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SmartRouteRule) Reset() {
+	*x = SmartRouteRule{}
+	mi := &file_outpost_common_v1_types_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SmartRouteRule) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SmartRouteRule) ProtoMessage() {}
+
+func (x *SmartRouteRule) ProtoReflect() protoreflect.Message {
+	mi := &file_outpost_common_v1_types_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SmartRouteRule.ProtoReflect.Descriptor instead.
+func (*SmartRouteRule) Descriptor() ([]byte, []int) {
+	return file_outpost_common_v1_types_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *SmartRouteRule) GetEntryType() string {
+	if x != nil {
+		return x.EntryType
+	}
+	return ""
+}
+
+func (x *SmartRouteRule) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
+func (x *SmartRouteRule) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
+func (x *SmartRouteRule) GetPriority() int32 {
+	if x != nil {
+		return x.Priority
+	}
+	return 0
+}
+
+type SmartRouteConfig struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Rules         []*SmartRouteRule      `protobuf:"bytes,1,rep,name=rules,proto3" json:"rules,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SmartRouteConfig) Reset() {
+	*x = SmartRouteConfig{}
+	mi := &file_outpost_common_v1_types_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SmartRouteConfig) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SmartRouteConfig) ProtoMessage() {}
+
+func (x *SmartRouteConfig) ProtoReflect() protoreflect.Message {
+	mi := &file_outpost_common_v1_types_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SmartRouteConfig.ProtoReflect.Descriptor instead.
+func (*SmartRouteConfig) Descriptor() ([]byte, []int) {
+	return file_outpost_common_v1_types_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *SmartRouteConfig) GetRules() []*SmartRouteRule {
+	if x != nil {
+		return x.Rules
+	}
+	return nil
+}
+
 var File_outpost_common_v1_types_proto protoreflect.FileDescriptor
 
 const file_outpost_common_v1_types_proto_rawDesc = "" +
@@ -393,7 +505,15 @@ const file_outpost_common_v1_types_proto_rawDesc = "" +
 	"\x05rules\x18\x01 \x03(\v2\x1f.outpost.common.v1.FirewallRuleR\x05rules\x12\x1f\n" +
 	"\vnat_enabled\x18\x02 \x01(\bR\n" +
 	"natEnabled\x12#\n" +
-	"\rnat_interface\x18\x03 \x01(\tR\fnatInterfaceB@Z>github.com/romashqua/outpost/pkg/pb/outpost/common/v1;commonv1b\x06proto3"
+	"\rnat_interface\x18\x03 \x01(\tR\fnatInterface\"y\n" +
+	"\x0eSmartRouteRule\x12\x1d\n" +
+	"\n" +
+	"entry_type\x18\x01 \x01(\tR\tentryType\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\x12\x16\n" +
+	"\x06action\x18\x03 \x01(\tR\x06action\x12\x1a\n" +
+	"\bpriority\x18\x04 \x01(\x05R\bpriority\"K\n" +
+	"\x10SmartRouteConfig\x127\n" +
+	"\x05rules\x18\x01 \x03(\v2!.outpost.common.v1.SmartRouteRuleR\x05rulesB@Z>github.com/romashqua/outpost/pkg/pb/outpost/common/v1;commonv1b\x06proto3"
 
 var (
 	file_outpost_common_v1_types_proto_rawDescOnce sync.Once
@@ -408,24 +528,27 @@ func file_outpost_common_v1_types_proto_rawDescGZIP() []byte {
 }
 
 var file_outpost_common_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_outpost_common_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_outpost_common_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_outpost_common_v1_types_proto_goTypes = []any{
 	(FirewallRule_Action)(0),      // 0: outpost.common.v1.FirewallRule.Action
 	(*Peer)(nil),                  // 1: outpost.common.v1.Peer
 	(*PeerStats)(nil),             // 2: outpost.common.v1.PeerStats
 	(*FirewallRule)(nil),          // 3: outpost.common.v1.FirewallRule
 	(*FirewallConfig)(nil),        // 4: outpost.common.v1.FirewallConfig
-	(*timestamppb.Timestamp)(nil), // 5: google.protobuf.Timestamp
+	(*SmartRouteRule)(nil),        // 5: outpost.common.v1.SmartRouteRule
+	(*SmartRouteConfig)(nil),      // 6: outpost.common.v1.SmartRouteConfig
+	(*timestamppb.Timestamp)(nil), // 7: google.protobuf.Timestamp
 }
 var file_outpost_common_v1_types_proto_depIdxs = []int32{
-	5, // 0: outpost.common.v1.PeerStats.last_handshake:type_name -> google.protobuf.Timestamp
+	7, // 0: outpost.common.v1.PeerStats.last_handshake:type_name -> google.protobuf.Timestamp
 	0, // 1: outpost.common.v1.FirewallRule.action:type_name -> outpost.common.v1.FirewallRule.Action
 	3, // 2: outpost.common.v1.FirewallConfig.rules:type_name -> outpost.common.v1.FirewallRule
-	3, // [3:3] is the sub-list for method output_type
-	3, // [3:3] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	5, // 3: outpost.common.v1.SmartRouteConfig.rules:type_name -> outpost.common.v1.SmartRouteRule
+	4, // [4:4] is the sub-list for method output_type
+	4, // [4:4] is the sub-list for method input_type
+	4, // [4:4] is the sub-list for extension type_name
+	4, // [4:4] is the sub-list for extension extendee
+	0, // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_outpost_common_v1_types_proto_init() }
@@ -439,7 +562,7 @@ func file_outpost_common_v1_types_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_outpost_common_v1_types_proto_rawDesc), len(file_outpost_common_v1_types_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   4,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

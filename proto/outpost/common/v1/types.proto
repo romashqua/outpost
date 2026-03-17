@@ -40,3 +40,14 @@ message FirewallConfig {
   bool nat_enabled = 2;
   string nat_interface = 3;
 }
+
+message SmartRouteRule {
+  string entry_type = 1;  // cidr, domain, domain_suffix
+  string value = 2;
+  string action = 3;      // block, direct, proxy
+  int32 priority = 4;
+}
+
+message SmartRouteConfig {
+  repeated SmartRouteRule rules = 1;
+}

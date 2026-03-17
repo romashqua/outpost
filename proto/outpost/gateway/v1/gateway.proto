@@ -43,6 +43,7 @@ message GatewayConfig {
   repeated outpost.common.v1.Peer peers = 6;
   outpost.common.v1.FirewallConfig firewall = 7;
   repeated S2STunnelConfig s2s_tunnels = 8;
+  outpost.common.v1.SmartRouteConfig smart_routes = 9;
 }
 
 message S2STunnelConfig {
@@ -101,6 +102,7 @@ message CoreEvent {
     S2SUpdate s2s_update = 2;
     FirewallUpdate firewall_update = 3;
     FullResync full_resync = 4;
+    SmartRouteUpdate smart_route_update = 5;
   }
 }
 
@@ -129,6 +131,10 @@ message S2SUpdate {
 
 message FirewallUpdate {
   outpost.common.v1.FirewallConfig config = 1;
+}
+
+message SmartRouteUpdate {
+  outpost.common.v1.SmartRouteConfig config = 1;
 }
 
 message FullResync {

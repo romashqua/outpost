@@ -107,6 +107,9 @@ func (s *gatewayService) GetConfig(ctx context.Context, req *gatewayv1.ConfigReq
 	// Build firewall config based on device ACLs.
 	fwConfig := s.buildFirewallConfig(ctx, gwID)
 
+	// Fetch smart route rules for this gateway's networks.
+	smartRoutes := fetchSmartRoutesForGateway(ctx, s.pool, s.logger, gwID)
+
 	return &gatewayv1.GatewayConfig{
 		GatewayId:   gwID,
 		NetworkName: gwName,
@@ -116,6 +119,7 @@ func (s *gatewayService) GetConfig(ctx context.Context, req *gatewayv1.ConfigReq
 		Peers:       peers,
 		S2STunnels:  s2sTunnels,
 		Firewall:    fwConfig,
+		SmartRoutes: smartRoutes,
 	}, nil
 }
 
@@ -262,14 +266,16 @@ func (s *gatewayService) Sync(stream grpc.BidiStreamingServer[gatewayv1.GatewayE
 	peers, err := s.fetchPeers(stream.Context(), gwID)
 	s2sTunnels := s.fetchS2STunnels(stream.Context(), gwID)
 	fwConfig := s.buildFirewallConfig(stream.Context(), gwID)
+	smartRoutes := fetchSmartRoutesForGateway(stream.Context(), s.pool, s.logger, gwID)
 	if err == nil && (len(peers) > 0 || len(s2sTunnels) > 0 || fwConfig != nil) {
 		_ = stream.Send(&gatewayv1.CoreEvent{
 			Event: &gatewayv1.CoreEvent_FullResync{
 				FullResync: &gatewayv1.FullResync{
 					Config: &gatewayv1.GatewayConfig{
-						Peers:      peers,
-						S2STunnels: s2sTunnels,
-						Firewall:   fwConfig,
+						Peers:       peers,
+						S2STunnels:  s2sTunnels,
+						Firewall:    fwConfig,
+						SmartRoutes: smartRoutes,
 					},
 				},
 			},
@@ -392,10 +398,81 @@ func buildFirewallConfigFromPool(ctx context.Context, pool *pgxpool.Pool, logger
 		deviceACLs[deviceIP] = append(deviceACLs[deviceIP], allowedCIDR)
 	}
 
+	// Fetch ALL approved devices on this gateway (for default-deny on devices without ACL).
+	allRows, err := pool.Query(ctx,
+		`SELECT DISTINCT host(d.assigned_ip)
+		 FROM devices d
+		 JOIN gateway_networks gn ON gn.network_id = d.network_id
+		 WHERE gn.gateway_id::text = $1
+		   AND d.is_approved = true
+		   AND d.wireguard_pubkey != ''
+		 UNION
+		 SELECT host(d.assigned_ip)
+		 FROM devices d
+		 JOIN gateways g ON g.network_id = d.network_id
+		 WHERE g.id::text = $1
+		   AND d.is_approved = true
+		   AND d.wireguard_pubkey != ''`, gatewayID)
+	if err != nil {
+		logger.Warn("failed to fetch all devices for default-deny", "error", err)
+	}
+	var allDeviceIPs []string
+	if allRows != nil {
+		for allRows.Next() {
+			var ip string
+			if err := allRows.Scan(&ip); err == nil {
+				allDeviceIPs = append(allDeviceIPs, ip)
+			}
+		}
+		allRows.Close()
+	}
+
+	// ZTNA: fetch trust scores and config for enforcement.
+	blockedByZTNA := make(map[string]bool) // device IPs blocked by ZTNA policy
+	var autoRestrict, autoBlock bool
+	_ = pool.QueryRow(ctx,
+		`SELECT auto_restrict_below_medium, auto_block_below_low
+		 FROM trust_score_config WHERE id = 1`).Scan(&autoRestrict, &autoBlock)
+
+	if autoRestrict || autoBlock {
+		// Fetch latest trust scores for devices on this gateway.
+		trustRows, err := pool.Query(ctx,
+			`SELECT DISTINCT ON (d.id) host(d.assigned_ip), ts.level
+			 FROM device_trust_scores ts
+			 JOIN devices d ON d.id = ts.device_id
+			 JOIN gateway_networks gn ON gn.network_id = d.network_id
+			 WHERE gn.gateway_id::text = $1
+			   AND d.is_approved = true
+			   AND d.wireguard_pubkey != ''
+			 ORDER BY d.id, ts.evaluated_at DESC`, gatewayID)
+		if err == nil {
+			for trustRows.Next() {
+				var ip, level string
+				if err := trustRows.Scan(&ip, &level); err != nil {
+					continue
+				}
+				if autoBlock && (level == "critical" || level == "low") {
+					blockedByZTNA[ip] = true
+				} else if autoRestrict && level == "critical" {
+					blockedByZTNA[ip] = true
+				}
+			}
+			trustRows.Close()
+		}
+	}
+
 	var rules []*commonv1.FirewallRule
 
 	// For each device with ACL entries: ACCEPT allowed, DROP rest.
+	// ZTNA-blocked devices get a DROP regardless of ACL.
 	for deviceIP, cidrs := range deviceACLs {
+		if blockedByZTNA[deviceIP] {
+			rules = append(rules, &commonv1.FirewallRule{
+				Source: deviceIP + "/32",
+				Action: commonv1.FirewallRule_ACTION_DROP,
+			})
+			continue
+		}
 		for _, cidr := range cidrs {
 			rules = append(rules, &commonv1.FirewallRule{
 				Source:      deviceIP + "/32",
@@ -410,12 +487,65 @@ func buildFirewallConfigFromPool(ctx context.Context, pool *pgxpool.Pool, logger
 		})
 	}
 
+	// Default-deny: devices without any ACL entries get a DROP rule.
+	for _, ip := range allDeviceIPs {
+		if _, hasACL := deviceACLs[ip]; !hasACL {
+			rules = append(rules, &commonv1.FirewallRule{
+				Source: ip + "/32",
+				Action: commonv1.FirewallRule_ACTION_DROP,
+			})
+		}
+	}
+
 	// Always return config with NAT enabled so gateway masquerades VPN traffic.
 	// Without masquerade, destination hosts cannot route replies back to VPN clients.
 	return &commonv1.FirewallConfig{
-		Rules:        rules,
+		Rules:      rules,
 		NatEnabled: true,
 	}
+}
+
+// fetchSmartRoutesForGateway returns smart route rules for all networks served by a gateway.
+func fetchSmartRoutesForGateway(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, gatewayID string) *commonv1.SmartRouteConfig {
+	rows, err := pool.Query(ctx,
+		`SELECT DISTINCT e.entry_type, e.value, e.action, e.priority
+		 FROM smart_route_entries e
+		 JOIN smart_routes sr ON sr.id = e.smart_route_id AND sr.is_active = true
+		 JOIN network_smart_routes nsr ON nsr.smart_route_id = sr.id
+		 JOIN gateway_networks gn ON gn.network_id = nsr.network_id
+		 WHERE gn.gateway_id::text = $1
+		 UNION
+		 SELECT DISTINCT e.entry_type, e.value, e.action, e.priority
+		 FROM smart_route_entries e
+		 JOIN smart_routes sr ON sr.id = e.smart_route_id AND sr.is_active = true
+		 JOIN network_smart_routes nsr ON nsr.smart_route_id = sr.id
+		 JOIN gateways g ON g.network_id = nsr.network_id
+		 WHERE g.id::text = $1
+		 ORDER BY priority`, gatewayID)
+	if err != nil {
+		logger.Warn("failed to fetch smart routes", "gateway_id", gatewayID, "error", err)
+		return nil
+	}
+	defer rows.Close()
+
+	var rules []*commonv1.SmartRouteRule
+	for rows.Next() {
+		var entryType, value, action string
+		var priority int32
+		if err := rows.Scan(&entryType, &value, &action, &priority); err != nil {
+			continue
+		}
+		rules = append(rules, &commonv1.SmartRouteRule{
+			EntryType: entryType,
+			Value:     value,
+			Action:    action,
+			Priority:  priority,
+		})
+	}
+	if len(rules) == 0 {
+		return nil
+	}
+	return &commonv1.SmartRouteConfig{Rules: rules}
 }
 
 func (s *gatewayService) Heartbeat(ctx context.Context, req *gatewayv1.HeartbeatRequest) (*emptypb.Empty, error) {

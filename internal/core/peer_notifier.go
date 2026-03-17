@@ -89,6 +89,88 @@ func (n *hubPeerNotifier) findGatewaysForPeer(pubkey string) []string {
 	return ids
 }
 
+// RefreshFirewallForUser recomputes and pushes firewall configs to all gateways
+// serving networks that the given user has devices on.
+func (n *hubPeerNotifier) RefreshFirewallForUser(userID string) {
+	ctx := context.Background()
+	rows, err := n.pool.Query(ctx,
+		`SELECT DISTINCT COALESCE(gn.gateway_id, g.id)::text
+		 FROM devices d
+		 LEFT JOIN gateway_networks gn ON gn.network_id = d.network_id
+		 LEFT JOIN gateways g ON g.network_id = d.network_id
+		 WHERE d.user_id::text = $1
+		   AND d.is_approved = true
+		   AND d.wireguard_pubkey != ''`, userID)
+	if err != nil {
+		n.logger.Warn("failed to find gateways for user", "user_id", userID, "error", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var gwID string
+		if err := rows.Scan(&gwID); err != nil {
+			continue
+		}
+		if fwConfig := buildFirewallConfigFromPool(ctx, n.pool, n.logger, gwID); fwConfig != nil {
+			n.hub.SendFirewallUpdate(gwID, fwConfig)
+		}
+	}
+}
+
+// RefreshFirewallForGroup recomputes and pushes firewall configs to all gateways
+// serving networks that have ACLs for the given group.
+func (n *hubPeerNotifier) RefreshFirewallForGroup(groupID string) {
+	ctx := context.Background()
+	rows, err := n.pool.Query(ctx,
+		`SELECT DISTINCT COALESCE(gn.gateway_id, g.id)::text
+		 FROM network_acls na
+		 LEFT JOIN gateway_networks gn ON gn.network_id = na.network_id
+		 LEFT JOIN gateways g ON g.network_id = na.network_id
+		 WHERE na.group_id::text = $1`, groupID)
+	if err != nil {
+		n.logger.Warn("failed to find gateways for group", "group_id", groupID, "error", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var gwID string
+		if err := rows.Scan(&gwID); err != nil {
+			continue
+		}
+		if fwConfig := buildFirewallConfigFromPool(ctx, n.pool, n.logger, gwID); fwConfig != nil {
+			n.hub.SendFirewallUpdate(gwID, fwConfig)
+		}
+	}
+}
+
+// NotifySmartRouteUpdate pushes updated smart route configs to all gateways
+// serving networks associated with the given smart route.
+func (n *hubPeerNotifier) NotifySmartRouteUpdate(smartRouteID string) {
+	ctx := context.Background()
+	rows, err := n.pool.Query(ctx,
+		`SELECT DISTINCT COALESCE(gn.gateway_id, g.id)::text
+		 FROM network_smart_routes nsr
+		 LEFT JOIN gateway_networks gn ON gn.network_id = nsr.network_id
+		 LEFT JOIN gateways g ON g.network_id = nsr.network_id
+		 WHERE nsr.smart_route_id::text = $1`, smartRouteID)
+	if err != nil {
+		n.logger.Warn("failed to find gateways for smart route", "smart_route_id", smartRouteID, "error", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var gwID string
+		if err := rows.Scan(&gwID); err != nil {
+			continue
+		}
+		srConfig := fetchSmartRoutesForGateway(ctx, n.pool, n.logger, gwID)
+		n.hub.SendSmartRouteUpdate(gwID, srConfig)
+	}
+}
+
 // hubS2SNotifier adapts StreamHub to the handler.S2SNotifier interface.
 type hubS2SNotifier struct {
 	hub  *StreamHub

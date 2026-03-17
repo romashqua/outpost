@@ -125,6 +125,13 @@ func (a *Agent) Run(ctx context.Context) error {
 				a.logger.Warn("failed to apply initial firewall config", "error", fwErr)
 			}
 		}
+
+		// Apply initial smart route rules.
+		if cfg.SmartRoutes != nil {
+			if srErr := fwMgr.ApplySmartRoutes(cfg.SmartRoutes); srErr != nil {
+				a.logger.Warn("failed to apply initial smart routes", "error", srErr)
+			}
+		}
 	}
 
 	// Start sync stream.
@@ -304,6 +311,8 @@ func (a *Agent) runSync(ctx context.Context) error {
 			a.handleS2SUpdate(e.S2SUpdate)
 		case *gatewayv1.CoreEvent_FirewallUpdate:
 			a.handleFirewallUpdate(e.FirewallUpdate)
+		case *gatewayv1.CoreEvent_SmartRouteUpdate:
+			a.handleSmartRouteUpdate(e.SmartRouteUpdate)
 		case *gatewayv1.CoreEvent_FullResync:
 			a.handleFullResync(e.FullResync)
 		}
@@ -459,6 +468,19 @@ func (a *Agent) handleFirewallUpdate(update *gatewayv1.FirewallUpdate) {
 	}
 }
 
+func (a *Agent) handleSmartRouteUpdate(update *gatewayv1.SmartRouteUpdate) {
+	a.logger.Info("smart route update", "rules", len(update.GetConfig().GetRules()))
+
+	if a.fw == nil {
+		a.logger.Warn("smart route update ignored: firewall manager not available")
+		return
+	}
+
+	if err := a.fw.ApplySmartRoutes(update.GetConfig()); err != nil {
+		a.logger.Error("failed to apply smart route update", "error", err)
+	}
+}
+
 func (a *Agent) handleFullResync(resync *gatewayv1.FullResync) {
 	cfg := resync.GetConfig()
 	a.logger.Info("full resync",
@@ -493,6 +515,13 @@ func (a *Agent) handleFullResync(resync *gatewayv1.FullResync) {
 					"peer_gateway", peer.GetGatewayId(),
 					"error", err)
 			}
+		}
+	}
+
+	// Apply smart routes if present.
+	if a.fw != nil && cfg.GetSmartRoutes() != nil {
+		if err := a.fw.ApplySmartRoutes(cfg.GetSmartRoutes()); err != nil {
+			a.logger.Warn("resync: failed to apply smart routes", "error", err)
 		}
 	}
 }

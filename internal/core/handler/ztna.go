@@ -16,8 +16,9 @@ import (
 
 // ZTNAHandler provides endpoints for Zero Trust Network Access.
 type ZTNAHandler struct {
-	pool *pgxpool.Pool
-	log  *slog.Logger
+	pool      *pgxpool.Pool
+	log       *slog.Logger
+	refresher FirewallRefresher
 }
 
 // NewZTNAHandler creates a ZTNAHandler.
@@ -27,6 +28,12 @@ func NewZTNAHandler(pool *pgxpool.Pool, logger ...*slog.Logger) *ZTNAHandler {
 		l = logger[0]
 	}
 	return &ZTNAHandler{pool: pool, log: l.With("handler", "ztna")}
+}
+
+// WithFirewallRefresher sets the firewall refresher for ZTNA enforcement.
+func (h *ZTNAHandler) WithFirewallRefresher(r FirewallRefresher) *ZTNAHandler {
+	h.refresher = r
+	return h
 }
 
 // Routes returns a chi.Router with ZTNA endpoints.
@@ -803,6 +810,11 @@ func (h *ZTNAHandler) reportPosture(w http.ResponseWriter, r *http.Request) {
 	if calcErr == nil {
 		resp["trust_score"] = result.Score
 		resp["trust_level"] = result.Level
+	}
+
+	// Refresh firewall rules so ZTNA enforcement takes effect immediately.
+	if h.refresher != nil {
+		h.refresher.RefreshFirewallForUser(ownerID)
 	}
 
 	h.log.Info("posture reported", "device_id", deviceID, "score", score)

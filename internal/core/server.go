@@ -355,7 +355,8 @@ func (s *Server) setupHTTPRouter() chi.Router {
 				userHandlerOpts = append(userHandlerOpts, s.mailer)
 			}
 			r.Mount("/users", handler.NewUserHandler(s.pool, s.logger, userHandlerOpts...).Routes())
-			r.Mount("/groups", handler.NewGroupHandler(s.pool, s.logger).Routes())
+			fwRefresher := &hubPeerNotifier{hub: s.streamHub, pool: s.pool, logger: s.logger}
+			r.Mount("/groups", handler.NewGroupHandler(s.pool, s.logger).WithFirewallRefresher(fwRefresher).Routes())
 			r.Mount("/networks", handler.NewNetworkHandler(s.pool, s.logger).Routes())
 			devHandler := handler.NewDeviceHandler(s.pool, s.logger).WithNotifier(&hubPeerNotifier{hub: s.streamHub, pool: s.pool, logger: s.logger})
 			if s.mailer != nil {
@@ -393,7 +394,8 @@ func (s *Server) setupHTTPRouter() chi.Router {
 			}
 
 			// Smart routing (selective proxy bypass).
-			r.Mount("/smart-routes", handler.NewSmartRouteHandler(s.pool).Routes())
+			srNotifier := &hubPeerNotifier{hub: s.streamHub, pool: s.pool, logger: s.logger}
+			r.Mount("/smart-routes", handler.NewSmartRouteHandler(s.pool).WithNotifier(srNotifier).Routes())
 
 			// Multi-tenant management.
 			r.Mount("/tenants", tenant.NewHandler(s.pool, s.logger).Routes())
@@ -410,7 +412,8 @@ func (s *Server) setupHTTPRouter() chi.Router {
 			// Killer feature routes.
 			r.Mount("/analytics", analytics.NewHandler(s.pool).Routes())
 			r.Mount("/compliance", compliance.NewHandler(s.pool).Routes())
-			r.Mount("/ztna", handler.NewZTNAHandler(s.pool, s.logger).Routes())
+			ztnaRefresher := &hubPeerNotifier{hub: s.streamHub, pool: s.pool, logger: s.logger}
+			r.Mount("/ztna", handler.NewZTNAHandler(s.pool, s.logger).WithFirewallRefresher(ztnaRefresher).Routes())
 		})
 	})
 

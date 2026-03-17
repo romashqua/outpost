@@ -14,6 +14,7 @@ import { useAuthStore } from '@/store/auth'
 interface Device {
   id: string
   user_id: string
+  owner_name: string
   name: string
   wireguard_pubkey: string
   assigned_ip: string
@@ -280,7 +281,7 @@ export default function DevicesPage() {
       header: t('devices.owner'),
       sortable: true,
       render: (row: Device) => (
-        <span className="font-mono text-[var(--accent)]">{row.user_id}</span>
+        <span className="font-mono text-[var(--accent)]">{row.owner_name || row.user_id}</span>
       ),
     }] : []),
     {

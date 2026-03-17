@@ -92,6 +92,17 @@ func (h *StreamHub) SendFirewallUpdate(gatewayID string, config *commonv1.Firewa
 	})
 }
 
+// SendSmartRouteUpdate sends a SmartRouteUpdate event to a specific gateway.
+func (h *StreamHub) SendSmartRouteUpdate(gatewayID string, config *commonv1.SmartRouteConfig) {
+	_ = h.SendTo(gatewayID, &gatewayv1.CoreEvent{
+		Event: &gatewayv1.CoreEvent_SmartRouteUpdate{
+			SmartRouteUpdate: &gatewayv1.SmartRouteUpdate{
+				Config: config,
+			},
+		},
+	})
+}
+
 // ConnectedCount returns the number of connected gateways.
 func (h *StreamHub) ConnectedCount() int {
 	h.mu.RLock()

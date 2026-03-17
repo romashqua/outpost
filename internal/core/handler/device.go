@@ -80,6 +80,7 @@ func (h *DeviceHandler) Routes() chi.Router {
 type deviceResponse struct {
 	ID              uuid.UUID  `json:"id"`
 	UserID          uuid.UUID  `json:"user_id"`
+	OwnerName       string     `json:"owner_name"`
 	Name            string     `json:"name"`
 	WireguardPubkey string     `json:"wireguard_pubkey"`
 	AssignedIP      string     `json:"assigned_ip"`
@@ -140,9 +141,10 @@ func (h *DeviceHandler) list(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.pool.Query(r.Context(),
-		`SELECT d.id, d.user_id, d.name, d.wireguard_pubkey, host(d.assigned_ip), d.is_approved, d.last_handshake, d.network_id, n.name, d.created_at, d.updated_at
+		`SELECT d.id, d.user_id, COALESCE(u.username, ''), d.name, d.wireguard_pubkey, host(d.assigned_ip), d.is_approved, d.last_handshake, d.network_id, n.name, d.created_at, d.updated_at
 		 FROM devices d
 		 LEFT JOIN networks n ON n.id = d.network_id
+		 LEFT JOIN users u ON u.id = d.user_id
 		 ORDER BY d.created_at DESC
 		 LIMIT $1 OFFSET $2`, perPage, offset)
 	if err != nil {
@@ -155,7 +157,7 @@ func (h *DeviceHandler) list(w http.ResponseWriter, r *http.Request) {
 	devices := make([]deviceResponse, 0)
 	for rows.Next() {
 		var d deviceResponse
-		if err := rows.Scan(&d.ID, &d.UserID, &d.Name, &d.WireguardPubkey,
+		if err := rows.Scan(&d.ID, &d.UserID, &d.OwnerName, &d.Name, &d.WireguardPubkey,
 			&d.AssignedIP, &d.IsApproved, &d.LastHandshake, &d.NetworkID, &d.NetworkName, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			respondError(w, http.StatusInternalServerError, "failed to scan device")
 			return
@@ -209,9 +211,10 @@ func (h *DeviceHandler) listMy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.pool.Query(r.Context(),
-		`SELECT d.id, d.user_id, d.name, d.wireguard_pubkey, host(d.assigned_ip), d.is_approved, d.last_handshake, d.network_id, n.name, d.created_at, d.updated_at
+		`SELECT d.id, d.user_id, COALESCE(u.username, ''), d.name, d.wireguard_pubkey, host(d.assigned_ip), d.is_approved, d.last_handshake, d.network_id, n.name, d.created_at, d.updated_at
 		 FROM devices d
 		 LEFT JOIN networks n ON n.id = d.network_id
+		 LEFT JOIN users u ON u.id = d.user_id
 		 WHERE d.user_id = $1
 		 ORDER BY d.created_at DESC
 		 LIMIT $2 OFFSET $3`, userID, perPage, offset)
@@ -224,7 +227,7 @@ func (h *DeviceHandler) listMy(w http.ResponseWriter, r *http.Request) {
 	devices := make([]deviceResponse, 0)
 	for rows.Next() {
 		var d deviceResponse
-		if err := rows.Scan(&d.ID, &d.UserID, &d.Name, &d.WireguardPubkey,
+		if err := rows.Scan(&d.ID, &d.UserID, &d.OwnerName, &d.Name, &d.WireguardPubkey,
 			&d.AssignedIP, &d.IsApproved, &d.LastHandshake, &d.NetworkID, &d.NetworkName, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			respondError(w, http.StatusInternalServerError, "failed to scan device")
 			return
@@ -427,9 +430,11 @@ func (h *DeviceHandler) get(w http.ResponseWriter, r *http.Request) {
 	// Combine ownership check into SQL to prevent timing-based device enumeration.
 	var d deviceResponse
 	err = h.pool.QueryRow(r.Context(),
-		`SELECT id, user_id, name, wireguard_pubkey, host(assigned_ip), is_approved, last_handshake, created_at, updated_at
-		 FROM devices WHERE id = $1 AND (user_id = $2 OR $3 = true)`, id, claims.UserID, claims.IsAdmin,
-	).Scan(&d.ID, &d.UserID, &d.Name, &d.WireguardPubkey,
+		`SELECT d.id, d.user_id, COALESCE(u.username, ''), d.name, d.wireguard_pubkey, host(d.assigned_ip), d.is_approved, d.last_handshake, d.created_at, d.updated_at
+		 FROM devices d
+		 LEFT JOIN users u ON u.id = d.user_id
+		 WHERE d.id = $1 AND (d.user_id = $2 OR $3 = true)`, id, claims.UserID, claims.IsAdmin,
+	).Scan(&d.ID, &d.UserID, &d.OwnerName, &d.Name, &d.WireguardPubkey,
 		&d.AssignedIP, &d.IsApproved, &d.LastHandshake, &d.CreatedAt, &d.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

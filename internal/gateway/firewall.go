@@ -54,6 +54,11 @@ func (fm *FirewallManager) Apply(config *commonv1.FirewallConfig) error {
 		return fmt.Errorf("flush chain %s: %w", outpostChain, err)
 	}
 
+	// Allow established/related connections first (return traffic for accepted sessions).
+	if err := fm.run("-A", outpostChain, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"); err != nil {
+		fm.logger.Warn("failed to add conntrack rule", "error", err)
+	}
+
 	applied := 0
 	for _, rule := range config.GetRules() {
 		args := fm.buildRuleArgs(rule)
@@ -151,10 +156,69 @@ func (fm *FirewallManager) run(args ...string) error {
 	return nil
 }
 
-// Cleanup removes the OUTPOST-FWD chain and its FORWARD reference.
+const smartChain = "OUTPOST-SMART"
+
+// ApplySmartRoutes creates and populates the OUTPOST-SMART chain with CIDR-based
+// block/direct rules. Domain-based entries are logged as unsupported.
+func (fm *FirewallManager) ApplySmartRoutes(config *commonv1.SmartRouteConfig) error {
+	if config == nil || len(config.GetRules()) == 0 {
+		// Remove smart chain if it exists and no rules.
+		_ = fm.run("-D", "FORWARD", "-j", smartChain)
+		_ = fm.run("-F", smartChain)
+		_ = fm.run("-X", smartChain)
+		return nil
+	}
+
+	// Create chain (ignore error if already exists).
+	_ = fm.run("-N", smartChain)
+
+	// Flush existing rules.
+	if err := fm.run("-F", smartChain); err != nil {
+		return fmt.Errorf("flush chain %s: %w", smartChain, err)
+	}
+
+	// Ensure OUTPOST-SMART is inserted before OUTPOST-FWD in FORWARD.
+	if err := fm.run("-C", "FORWARD", "-j", smartChain); err != nil {
+		if err := fm.run("-I", "FORWARD", "1", "-j", smartChain); err != nil {
+			return fmt.Errorf("insert %s into FORWARD: %w", smartChain, err)
+		}
+	}
+
+	applied := 0
+	for _, rule := range config.GetRules() {
+		switch rule.GetEntryType() {
+		case "cidr":
+			var action string
+			switch rule.GetAction() {
+			case "block":
+				action = "DROP"
+			case "direct":
+				action = "ACCEPT"
+			default:
+				fm.logger.Debug("smart route: unsupported action for cidr", "action", rule.GetAction(), "value", rule.GetValue())
+				continue
+			}
+			if err := fm.run("-A", smartChain, "-d", rule.GetValue(), "-j", action); err != nil {
+				fm.logger.Warn("failed to apply smart route rule", "cidr", rule.GetValue(), "action", action, "error", err)
+				continue
+			}
+			applied++
+		case "domain", "domain_suffix":
+			fm.logger.Debug("smart route: domain-based routing not yet supported", "type", rule.GetEntryType(), "value", rule.GetValue())
+		}
+	}
+
+	fm.logger.Info("smart route rules applied", "total", len(config.GetRules()), "applied", applied)
+	return nil
+}
+
+// Cleanup removes the OUTPOST-FWD and OUTPOST-SMART chains and their FORWARD references.
 func (fm *FirewallManager) Cleanup() {
+	_ = fm.run("-D", "FORWARD", "-j", smartChain)
+	_ = fm.run("-F", smartChain)
+	_ = fm.run("-X", smartChain)
 	_ = fm.run("-D", "FORWARD", "-j", outpostChain)
 	_ = fm.run("-F", outpostChain)
 	_ = fm.run("-X", outpostChain)
-	fm.logger.Info("firewall chain cleaned up")
+	fm.logger.Info("firewall chains cleaned up")
 }

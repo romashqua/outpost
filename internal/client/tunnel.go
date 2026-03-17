@@ -194,6 +194,13 @@ func (tm *TunnelManager) RunSessionLoop(ctx context.Context, postureInterval tim
 	defer postureTicker.Stop()
 	defer refreshTicker.Stop()
 
+	// Send initial posture report immediately on connect.
+	if tm.State() == TunnelConnected {
+		if err := tm.client.ReportPosture(ctx); err != nil {
+			tm.logger.Warn("initial posture report failed", "error", err)
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
