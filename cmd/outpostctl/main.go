@@ -11,6 +11,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/romashqua/outpost/pkg/cli"
 	"github.com/romashqua/outpost/pkg/version"
 )
 
@@ -21,14 +22,15 @@ var (
 
 func main() {
 	if len(os.Args) < 2 {
-		printUsage()
-		os.Exit(1)
+		printBanner()
+		runInteractive()
+		return
 	}
 
 	var err error
 	switch os.Args[1] {
 	case "version":
-		fmt.Printf("outpostctl %s\n", version.Version)
+		fmt.Printf("outpostctl %s (%s) built %s\n", version.Version, version.GitCommit, version.BuildDate)
 	case "login":
 		err = cmdLogin()
 	case "users":
@@ -45,48 +47,171 @@ func main() {
 		err = cmdCompliance()
 	case "status":
 		err = cmdStatus()
+	case "completion":
+		printCompletion()
 	case "help", "--help", "-h":
+		printBanner()
 		printUsage()
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, "%s\n", cli.ErrorMsg("unknown command: "+os.Args[1]))
 		printUsage()
 		os.Exit(1)
 	}
 
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s\n", cli.ErrorMsg(err.Error()))
 		os.Exit(1)
 	}
 }
 
+func runInteractive() {
+	if !cli.IsTerminal() {
+		printUsage()
+		return
+	}
+
+	repl := cli.NewREPL("outpostctl")
+	repl.Register(cli.Command{Name: "login", Description: "Authenticate and store token", Run: func(args []string) error {
+		os.Args = append([]string{"outpostctl", "login"}, args...)
+		return cmdLogin()
+	}})
+	repl.Register(cli.Command{Name: "status", Description: "Show cluster health", Run: func(_ []string) error {
+		return cmdStatus()
+	}})
+	repl.Register(cli.Command{Name: "users", Description: "Manage users (list, get, create, delete)", Run: func(args []string) error {
+		os.Args = append([]string{"outpostctl", "users"}, args...)
+		return cmdUsers()
+	}})
+	repl.Register(cli.Command{Name: "networks", Description: "Manage VPN networks", Run: func(args []string) error {
+		os.Args = append([]string{"outpostctl", "networks"}, args...)
+		return cmdNetworks()
+	}})
+	repl.Register(cli.Command{Name: "devices", Description: "Manage devices", Run: func(args []string) error {
+		os.Args = append([]string{"outpostctl", "devices"}, args...)
+		return cmdDevices()
+	}})
+	repl.Register(cli.Command{Name: "gateways", Description: "Manage gateways", Run: func(args []string) error {
+		os.Args = append([]string{"outpostctl", "gateways"}, args...)
+		return cmdGateways()
+	}})
+	repl.Register(cli.Command{Name: "audit", Description: "View audit log", Run: func(args []string) error {
+		os.Args = append([]string{"outpostctl", "audit"}, args...)
+		return cmdAudit()
+	}})
+	repl.Register(cli.Command{Name: "compliance", Description: "Run compliance checks", Run: func(args []string) error {
+		os.Args = append([]string{"outpostctl", "compliance"}, args...)
+		return cmdCompliance()
+	}})
+	repl.Register(cli.Command{Name: "version", Description: "Show version info", Run: func(_ []string) error {
+		fmt.Printf("outpostctl %s (%s) built %s\n", version.Version, version.GitCommit, version.BuildDate)
+		return nil
+	}})
+
+	// Single-key shortcuts.
+	repl.Alias("q", "quit")
+	repl.Alias("h", "help")
+	repl.Alias("?", "help")
+	repl.Alias("l", "login")
+	repl.Alias("s", "status")
+	repl.Alias("u", "users")
+	repl.Alias("n", "networks")
+	repl.Alias("d", "devices")
+	repl.Alias("g", "gateways")
+	repl.Alias("a", "audit")
+	repl.Alias("c", "compliance")
+	repl.Alias("v", "version")
+
+	repl.Run()
+}
+
+func printBanner() {
+	if !cli.IsTerminal() {
+		return
+	}
+
+	authStatus := fmt.Sprintf("%s●%s not authenticated", cli.Red, cli.Reset)
+	if token != "" {
+		authStatus = fmt.Sprintf("%s●%s authenticated", cli.Green, cli.Reset)
+	}
+
+	extra := []string{
+		fmt.Sprintf("%sServer:%s %s", cli.Muted, cli.Reset, apiURL),
+		fmt.Sprintf("%sAuth:%s   %s", cli.Muted, cli.Reset, authStatus),
+	}
+
+	fmt.Print(cli.Banner("outpostctl", version.Version, version.GitCommit, extra))
+}
+
 func printUsage() {
-	fmt.Print(`outpostctl - Outpost VPN management CLI
+	fmt.Printf(`
+%s%sUsage:%s  outpostctl <command> [subcommand] [flags]
 
-Usage:
-  outpostctl <command> [subcommand] [flags]
+%s%sCommands:%s
+  %sversion%s       Print version information
+  %slogin%s         Authenticate and store token
+  %sstatus%s        Show cluster health and readiness
+  %susers%s         Manage users (list, get, create, delete)
+  %snetworks%s      Manage VPN networks (list, get, create, delete)
+  %sdevices%s       Manage devices (list, get, approve, revoke, delete)
+  %sgateways%s      Manage gateways (list, get, create, delete)
+  %saudit%s         View audit log
+  %scompliance%s    Run compliance checks
+  %scompletion%s    Generate shell completion (bash|zsh)
 
-Commands:
-  version       Print version information
-  login         Authenticate and store token
-  status        Show cluster health and readiness
-  users         Manage users (list, get, create, delete)
-  networks      Manage VPN networks (list, get, create, delete)
-  devices       Manage devices (list, get, approve, revoke, delete)
-  gateways      Manage gateways (list, get, create, delete)
-  audit         View audit log
-  compliance    Run compliance checks
+%s%sEnvironment:%s
+  %sOUTPOST_API_URL%s   API base URL (default: http://localhost:8080)
+  %sOUTPOST_TOKEN%s     JWT authentication token
+`,
+		cli.Bold, cli.White, cli.Reset,
+		cli.Bold, cli.Accent, cli.Reset,
+		cli.Accent, cli.Reset,
+		cli.Accent, cli.Reset,
+		cli.Accent, cli.Reset,
+		cli.Accent, cli.Reset,
+		cli.Accent, cli.Reset,
+		cli.Accent, cli.Reset,
+		cli.Accent, cli.Reset,
+		cli.Accent, cli.Reset,
+		cli.Accent, cli.Reset,
+		cli.Accent, cli.Reset,
+		cli.Bold, cli.Muted, cli.Reset,
+		cli.Yellow, cli.Reset,
+		cli.Yellow, cli.Reset,
+	)
+}
 
-Environment:
-  OUTPOST_API_URL   API base URL (default: http://localhost:8080)
-  OUTPOST_TOKEN     JWT authentication token
+var outpostctlCommands = []cli.CommandDef{
+	{Name: "version", Description: "Print version information"},
+	{Name: "login", Description: "Authenticate and store token"},
+	{Name: "status", Description: "Show cluster health and readiness"},
+	{Name: "users", Description: "Manage users"},
+	{Name: "networks", Description: "Manage VPN networks"},
+	{Name: "devices", Description: "Manage devices"},
+	{Name: "gateways", Description: "Manage gateways"},
+	{Name: "audit", Description: "View audit log"},
+	{Name: "compliance", Description: "Run compliance checks"},
+	{Name: "completion", Description: "Generate shell completion"},
+	{Name: "help", Description: "Show help"},
+}
 
-Examples:
-  outpostctl login -u admin -p secret
-  outpostctl users list
-  outpostctl networks create -n "Office VPN" -a 10.10.0.0/24
-  outpostctl compliance report
-  outpostctl audit --action user.created --limit 20
-`)
+func printCompletion() {
+	shell := "bash"
+	if len(os.Args) > 2 {
+		shell = os.Args[2]
+	}
+	switch shell {
+	case "bash":
+		cmdNames := make([]string, len(outpostctlCommands))
+		for i, c := range outpostctlCommands {
+			cmdNames[i] = c.Name
+		}
+		fmt.Print(cli.BashCompletion("outpostctl", cmdNames))
+	case "zsh":
+		fmt.Print(cli.ZshCompletion("outpostctl", outpostctlCommands))
+	default:
+		fmt.Fprintf(os.Stderr, "%s\n", cli.ErrorMsg("unsupported shell: "+shell+". Use bash or zsh."))
+		os.Exit(1)
+	}
 }
 
 // ── Login ────────────────────────────────────────────────────────────
@@ -558,19 +683,19 @@ func boolIcon(v any) string {
 	switch b := v.(type) {
 	case bool:
 		if b {
-			return "YES"
+			return cli.Green + "✓" + cli.Reset
 		}
-		return "NO"
+		return cli.Red + "✗" + cli.Reset
 	default:
-		return "-"
+		return cli.Muted + "-" + cli.Reset
 	}
 }
 
 func statusIcon(ok bool) string {
 	if ok {
-		return "OK"
+		return cli.Green + "✓ OK" + cli.Reset
 	}
-	return "FAIL"
+	return cli.Red + "✗ FAIL" + cli.Reset
 }
 
 func toFloat(v any) float64 {

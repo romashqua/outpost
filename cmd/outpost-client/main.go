@@ -14,16 +14,12 @@ import (
 	"time"
 
 	"github.com/romashqua/outpost/internal/client"
+	"github.com/romashqua/outpost/pkg/cli"
 	"github.com/romashqua/outpost/pkg/version"
 )
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
-
-	if len(os.Args) < 2 {
-		printUsage()
-		os.Exit(1)
-	}
 
 	serverURL := os.Getenv("OUTPOST_SERVER")
 	if serverURL == "" {
@@ -31,6 +27,12 @@ func main() {
 	}
 
 	c := client.NewClient(serverURL)
+
+	if len(os.Args) < 2 {
+		printBanner(serverURL)
+		runInteractive(c, logger, serverURL)
+		return
+	}
 
 	switch os.Args[1] {
 	case "connect":
@@ -46,35 +48,144 @@ func main() {
 	case "posture":
 		cmdPosture()
 	case "version":
-		fmt.Printf("outpost-client %s\n", version.Version)
+		fmt.Printf("outpost-client %s (%s) built %s\n", version.Version, version.GitCommit, version.BuildDate)
+	case "completion":
+		printCompletion()
 	case "help", "--help", "-h":
+		printBanner(serverURL)
 		printUsage()
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
+		fmt.Fprintf(os.Stderr, "%s\n", cli.ErrorMsg("unknown command: "+os.Args[1]))
 		printUsage()
 		os.Exit(1)
 	}
 }
 
+func runInteractive(c *client.Client, logger *slog.Logger, serverURL string) {
+	if !cli.IsTerminal() {
+		printUsage()
+		return
+	}
+
+	repl := cli.NewREPL("outpost-client")
+	repl.Register(cli.Command{Name: "connect", Description: "Connect to VPN", Run: func(args []string) error {
+		os.Args = append([]string{"outpost-client", "connect"}, args...)
+		cmdConnect(c, logger)
+		return nil
+	}})
+	repl.Register(cli.Command{Name: "disconnect", Description: "Disconnect from VPN", Run: func(_ []string) error {
+		cmdDisconnect(c, logger)
+		return nil
+	}})
+	repl.Register(cli.Command{Name: "login", Description: "Authenticate", Run: func(_ []string) error {
+		cmdLogin(c, logger)
+		return nil
+	}})
+	repl.Register(cli.Command{Name: "status", Description: "Show connection status", Run: func(_ []string) error {
+		cmdStatus(c, logger)
+		return nil
+	}})
+	repl.Register(cli.Command{Name: "posture", Description: "Show device security posture", Run: func(_ []string) error {
+		cmdPosture()
+		return nil
+	}})
+	repl.Register(cli.Command{Name: "version", Description: "Show version info", Run: func(_ []string) error {
+		fmt.Printf("outpost-client %s (%s) built %s\n", version.Version, version.GitCommit, version.BuildDate)
+		return nil
+	}})
+
+	// Single-key shortcuts.
+	repl.Alias("q", "quit")
+	repl.Alias("h", "help")
+	repl.Alias("?", "help")
+	repl.Alias("c", "connect")
+	repl.Alias("d", "disconnect")
+	repl.Alias("l", "login")
+	repl.Alias("s", "status")
+	repl.Alias("p", "posture")
+	repl.Alias("v", "version")
+
+	repl.Run()
+}
+
+func printBanner(serverURL string) {
+	if !cli.IsTerminal() {
+		return
+	}
+
+	extra := []string{
+		fmt.Sprintf("%sServer:%s %s", cli.Muted, cli.Reset, serverURL),
+	}
+
+	fmt.Print(cli.Banner("outpost-client", version.Version, version.GitCommit, extra))
+}
+
 func printUsage() {
-	fmt.Println(`outpost-client — Outpost VPN Client with MFA support
+	fmt.Printf(`
+%s%sUsage:%s  outpost-client <command> [options]
 
-Usage:
-  outpost-client <command> [options]
+%s%sCommands:%s
+  %sconnect%s      Connect to VPN (login + MFA + tunnel)
+  %sdisconnect%s   Disconnect from VPN
+  %sgateway%s      Run as S2S gateway (gateway <tunnel-id>)
+  %slogin%s        Authenticate without connecting
+  %sstatus%s       Show connection status
+  %sposture%s      Show device security posture
+  %sversion%s      Show version
+  %scompletion%s   Generate shell completion (bash|zsh)
 
-Commands:
-  connect      Connect to VPN (login + MFA + tunnel)
-  disconnect   Disconnect from VPN
-  gateway      Run as S2S gateway (gateway <tunnel-id>)
-  login        Authenticate without connecting
-  status       Show connection status
-  posture      Show device security posture
-  version      Show version
+%s%sEnvironment:%s
+  %sOUTPOST_SERVER%s   Server URL (default: http://localhost:8080)
+  %sOUTPOST_USER%s     Username for non-interactive login
+  %sOUTPOST_PASS%s     Password for non-interactive login
+`,
+		cli.Bold, cli.White, cli.Reset,
+		cli.Bold, cli.Accent, cli.Reset,
+		cli.Accent, cli.Reset,
+		cli.Accent, cli.Reset,
+		cli.Accent, cli.Reset,
+		cli.Accent, cli.Reset,
+		cli.Accent, cli.Reset,
+		cli.Accent, cli.Reset,
+		cli.Accent, cli.Reset,
+		cli.Accent, cli.Reset,
+		cli.Bold, cli.Muted, cli.Reset,
+		cli.Yellow, cli.Reset,
+		cli.Yellow, cli.Reset,
+		cli.Yellow, cli.Reset,
+	)
+}
 
-Environment:
-  OUTPOST_SERVER   Server URL (default: http://localhost:8080)
-  OUTPOST_USER     Username for non-interactive login
-  OUTPOST_PASS     Password for non-interactive login`)
+var clientCommands = []cli.CommandDef{
+	{Name: "connect", Description: "Connect to VPN"},
+	{Name: "disconnect", Description: "Disconnect from VPN"},
+	{Name: "gateway", Description: "Run as S2S gateway"},
+	{Name: "login", Description: "Authenticate without connecting"},
+	{Name: "status", Description: "Show connection status"},
+	{Name: "posture", Description: "Show device security posture"},
+	{Name: "version", Description: "Show version"},
+	{Name: "completion", Description: "Generate shell completion"},
+	{Name: "help", Description: "Show help"},
+}
+
+func printCompletion() {
+	shell := "bash"
+	if len(os.Args) > 2 {
+		shell = os.Args[2]
+	}
+	switch shell {
+	case "bash":
+		cmdNames := make([]string, len(clientCommands))
+		for i, c := range clientCommands {
+			cmdNames[i] = c.Name
+		}
+		fmt.Print(cli.BashCompletion("outpost-client", cmdNames))
+	case "zsh":
+		fmt.Print(cli.ZshCompletion("outpost-client", clientCommands))
+	default:
+		fmt.Fprintf(os.Stderr, "%s\n", cli.ErrorMsg("unsupported shell: "+shell+". Use bash or zsh."))
+		os.Exit(1)
+	}
 }
 
 func cmdConnect(c *client.Client, logger *slog.Logger) {
@@ -101,14 +212,14 @@ func cmdConnect(c *client.Client, logger *slog.Logger) {
 	tm.OnStateChange(func(state client.TunnelState) {
 		switch state {
 		case client.TunnelConnected:
-			fmt.Println("✓ VPN connected")
+			fmt.Println(cli.SuccessMsg("VPN connected"))
 		case client.TunnelMFARequired:
-			fmt.Println("⚠ MFA re-authentication required, please re-login")
+			fmt.Println(cli.WarnMsg("MFA re-authentication required, please re-login"))
 			if err := doLogin(ctx, c); err != nil {
 				logger.Error("re-authentication failed", "error", err)
 			}
 		case client.TunnelDisconnected:
-			fmt.Println("✗ VPN disconnected")
+			fmt.Printf("%s%s✗%s VPN disconnected\n", cli.Red, cli.Bold, cli.Reset)
 		}
 	})
 
