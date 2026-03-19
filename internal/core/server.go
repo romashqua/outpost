@@ -15,6 +15,7 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 
 	outpost "github.com/romashqua/outpost"
@@ -35,28 +36,35 @@ import (
 	"github.com/romashqua/outpost/internal/webhook"
 )
 
-// ipRateLimiter tracks per-IP request timestamps for simple rate limiting.
+// ipRateLimiter tracks per-IP request counts for rate limiting.
+// When a Redis client is provided, uses Redis INCR+EXPIRE for global
+// enforcement across multiple core instances. Falls back to in-memory
+// tracking when Redis is nil.
 type ipRateLimiter struct {
 	mu       sync.Mutex
 	attempts map[string][]time.Time
 	limit    int
 	window   time.Duration
 	stop     chan struct{}
+	rdb      *redis.Client // nil = in-memory mode
 }
 
-func newIPRateLimiter(limit int, window time.Duration) *ipRateLimiter {
+func newIPRateLimiter(limit int, window time.Duration, rdb *redis.Client) *ipRateLimiter {
 	rl := &ipRateLimiter{
 		attempts: make(map[string][]time.Time),
 		limit:    limit,
 		window:   window,
 		stop:     make(chan struct{}),
+		rdb:      rdb,
 	}
-	go rl.cleanup()
+	if rdb == nil {
+		go rl.cleanup()
+	}
 	return rl
 }
 
 // cleanup periodically removes expired entries to prevent memory leaks from
-// IPs that made requests but never returned.
+// IPs that made requests but never returned. Only used in in-memory mode.
 func (rl *ipRateLimiter) cleanup() {
 	ticker := time.NewTicker(rl.window)
 	defer ticker.Stop()
@@ -88,6 +96,11 @@ func (rl *ipRateLimiter) cleanup() {
 
 // allow returns true if the IP has not exceeded the rate limit within the window.
 func (rl *ipRateLimiter) allow(ip string) bool {
+	// Use Redis for global rate limiting across cores when available.
+	if rl.rdb != nil {
+		return rl.allowRedis(ip)
+	}
+
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
@@ -118,13 +131,31 @@ func (rl *ipRateLimiter) allow(ip string) bool {
 	return true
 }
 
+// allowRedis uses Redis INCR + EXPIRE for global rate limiting across cores.
+func (rl *ipRateLimiter) allowRedis(ip string) bool {
+	key := "ratelimit:" + ip
+	ctx := context.Background()
+
+	count, err := rl.rdb.Incr(ctx, key).Result()
+	if err != nil {
+		return true // fail-open on Redis errors
+	}
+	// Set expiry on first request in the window.
+	if count == 1 {
+		rl.rdb.Expire(ctx, key, rl.window)
+	}
+	return count <= int64(rl.limit)
+}
+
 // rateLimitMiddleware returns an HTTP middleware that rejects requests exceeding the rate limit.
 func rateLimitMiddleware(rl *ipRateLimiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Use RemoteAddr for rate limiting. X-Real-IP/X-Forwarded-For
-			// headers are easily spoofed and must not be trusted for
-			// security-sensitive decisions unless behind a verified proxy.
+			// Use RemoteAddr for rate limiting. Note: chimiddleware.RealIP
+			// runs earlier in the chain and rewrites RemoteAddr from
+			// X-Real-IP/X-Forwarded-For headers. This is correct when behind
+			// a trusted reverse proxy (nginx/envoy/LB). In direct-exposure
+			// deployments, remove chimiddleware.RealIP to prevent spoofing.
 			ip := r.RemoteAddr
 			// Strip port from ip if present.
 			if host, _, err := net.SplitHostPort(ip); err == nil {
@@ -142,6 +173,7 @@ func rateLimitMiddleware(rl *ipRateLimiter) func(http.Handler) http.Handler {
 type Server struct {
 	cfg             *config.Config
 	pool            *pgxpool.Pool
+	rdb             *redis.Client // nil when Redis is not configured
 	mailer          *mail.Mailer
 	httpServer      *http.Server
 	grpcServer      *grpc.Server
@@ -164,32 +196,43 @@ func NewServer(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) *Ser
 		}, logger)
 	}
 
+	// Create a shared Redis client for sessions, pub/sub, and rate limiting.
+	var rdb *redis.Client
+	if cfg.Redis.Addr != "" {
+		rdb = redis.NewClient(&redis.Options{
+			Addr:     cfg.Redis.Addr,
+			Password: cfg.Redis.Password,
+			DB:       cfg.Redis.DB,
+		})
+		if err := rdb.Ping(context.Background()).Err(); err != nil {
+			logger.Warn("Redis unavailable, running in single-core mode", "addr", cfg.Redis.Addr, "error", err)
+			rdb = nil
+		} else {
+			logger.Info("Redis connected", "addr", cfg.Redis.Addr)
+		}
+	}
+
 	return &Server{
 		cfg:       cfg,
 		pool:      pool,
+		rdb:       rdb,
 		mailer:    mailer,
 		logger:    logger,
-		streamHub: NewStreamHub(logger),
+		streamHub: NewStreamHub(logger, rdb),
 	}
 }
 
 func (s *Server) Start(ctx context.Context) error {
-	// Periodically clean up expired token blacklist entries.
-	go func() {
+	// Start Redis Pub/Sub subscriber for cross-core event propagation.
+	s.streamHub.StartSubscriber(ctx)
+
+	// Periodically clean up expired token blacklist entries (leader only).
+	go s.runWithLeaderLock(ctx, 3, 1*time.Hour, "token-blacklist-cleanup", func(ctx context.Context) {
 		bl := auth.NewDBTokenBlacklist(s.pool)
-		ticker := time.NewTicker(1 * time.Hour)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				if err := bl.Cleanup(ctx); err != nil {
-					s.logger.Warn("token blacklist cleanup failed", "error", err)
-				}
-			case <-ctx.Done():
-				return
-			}
+		if err := bl.Cleanup(ctx); err != nil {
+			s.logger.Warn("token blacklist cleanup failed", "error", err)
 		}
-	}()
+	})
 
 	router := s.setupHTTPRouter()
 	s.httpServer = &http.Server{
@@ -212,6 +255,16 @@ func (s *Server) Start(ctx context.Context) error {
 			errCh <- fmt.Errorf("http server: %w", err)
 		}
 	}()
+
+	// Start gateway health monitor (leader only via advisory lock).
+	go s.runWithLeaderLock(ctx, 1, 60*time.Second, "gateway-health-monitor", func(ctx context.Context) {
+		monitorGatewayHealthTick(ctx, s.pool, s.logger, s.streamHub)
+	})
+
+	// Maintain peer_stats partitions (leader only via advisory lock).
+	go s.runWithLeaderLock(ctx, 2, 24*time.Hour, "peer-stats-partitions", func(ctx context.Context) {
+		s.ensurePeerStatsPartitions(ctx)
+	})
 
 	// Start gRPC server.
 	go func() {
@@ -236,6 +289,9 @@ func (s *Server) Start(ctx context.Context) error {
 
 func (s *Server) Shutdown() error {
 	s.logger.Info("shutting down servers")
+
+	// Stop StreamHub Redis subscriber.
+	s.streamHub.Stop()
 
 	// Stop rate limiter cleanup goroutine.
 	if s.authRateLimiter != nil {
@@ -325,7 +381,7 @@ func (s *Server) setupHTTPRouter() chi.Router {
 	// API routes.
 	r.Route("/api/v1", func(r chi.Router) {
 		// Auth endpoints (no JWT required) — rate limited to 10 req/min per IP.
-		authRateLimiter := newIPRateLimiter(10, time.Minute)
+		authRateLimiter := newIPRateLimiter(10, time.Minute, s.rdb)
 		s.authRateLimiter = authRateLimiter
 		tokenBlacklist := auth.NewDBTokenBlacklist(s.pool)
 		authOpts := []func(*handler.AuthHandler){
@@ -357,21 +413,37 @@ func (s *Server) setupHTTPRouter() chi.Router {
 			r.Mount("/users", handler.NewUserHandler(s.pool, s.logger, userHandlerOpts...).Routes())
 			fwRefresher := &hubPeerNotifier{hub: s.streamHub, pool: s.pool, logger: s.logger}
 			r.Mount("/groups", handler.NewGroupHandler(s.pool, s.logger).WithFirewallRefresher(fwRefresher).Routes())
-			r.Mount("/networks", handler.NewNetworkHandler(s.pool, s.logger).Routes())
+			r.Mount("/networks", handler.NewNetworkHandler(s.pool, s.logger).WithNetworkFirewallRefresher(fwRefresher).Routes())
 			devHandler := handler.NewDeviceHandler(s.pool, s.logger).WithNotifier(&hubPeerNotifier{hub: s.streamHub, pool: s.pool, logger: s.logger})
 			if s.mailer != nil {
 				devHandler = devHandler.WithMailer(s.mailer)
 			}
 			r.Mount("/devices", devHandler.Routes())
-			r.Mount("/gateways", handler.NewGatewayHandler(s.pool, s.logger).Routes())
+			r.Mount("/gateways", handler.NewGatewayHandler(s.pool, s.logger).WithNetworkNotifier(&hubGatewayNetworkNotifier{hub: s.streamHub, pool: s.pool, logger: s.logger}).Routes())
 
 			// MFA management.
 			mfaMgr := mfa.NewManager(s.pool)
 			mfaWebauthn := mfa.NewWebAuthnStore(s.pool)
-			r.Mount("/mfa", mfa.NewHandler(mfaMgr, mfaWebauthn).Routes())
+			mfaOpts := []func(*mfa.Handler){}
+			if originURL := s.cfg.OIDC.Issuer; originURL != "" {
+				ceremony, err := mfa.NewWebAuthnCeremony(mfaWebauthn, originURL, s.rdb)
+				if err != nil {
+					s.logger.Warn("WebAuthn ceremony init failed, passkey registration disabled", "error", err)
+				} else {
+					mfaOpts = append(mfaOpts, mfa.WithCeremony(ceremony))
+					s.logger.Info("WebAuthn ceremony enabled", "origin", originURL)
+				}
+			}
+			r.Mount("/mfa", mfa.NewHandler(mfaMgr, mfaWebauthn, mfaOpts...).Routes())
 
-			// Session management.
-			sessionStore := session.NewMemoryStore()
+			// Session management — use shared Redis client when available, fall back to in-memory.
+			var sessionStore session.Store
+			if s.rdb != nil {
+				s.logger.Info("using Redis session store")
+				sessionStore = session.NewRedisStore(s.rdb)
+			} else {
+				sessionStore = session.NewMemoryStore()
+			}
 			sessionMgr := session.NewManager(sessionStore, s.pool, s.cfg.Auth.SessionTTL, s.logger)
 			r.Mount("/sessions", sessionMgr.Routes())
 
@@ -450,4 +522,58 @@ func (s *Server) setupGRPCServer() *grpc.Server {
 	srv := grpc.NewServer()
 	registerGatewayService(srv, s.pool, s.logger, s.streamHub)
 	return srv
+}
+
+// runWithLeaderLock runs fn on a ticker, but only if this core holds the
+// PostgreSQL advisory lock identified by lockID. This ensures that singleton
+// tasks (health monitoring, partition management, cleanup) run on exactly one
+// core in a multi-core deployment. The lock is non-blocking and re-attempted
+// on every tick, so leadership transfers automatically if the current leader dies.
+func (s *Server) runWithLeaderLock(ctx context.Context, lockID int64, interval time.Duration, name string, fn func(context.Context)) {
+	// Run immediately on startup (attempt to acquire lock).
+	if s.tryAdvisoryLock(ctx, lockID) {
+		fn(ctx)
+		s.releaseAdvisoryLock(ctx, lockID)
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if s.tryAdvisoryLock(ctx, lockID) {
+				fn(ctx)
+				s.releaseAdvisoryLock(ctx, lockID)
+			}
+		}
+	}
+}
+
+func (s *Server) tryAdvisoryLock(ctx context.Context, lockID int64) bool {
+	var acquired bool
+	if err := s.pool.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", lockID).Scan(&acquired); err != nil {
+		return false
+	}
+	return acquired
+}
+
+func (s *Server) releaseAdvisoryLock(ctx context.Context, lockID int64) {
+	_, _ = s.pool.Exec(ctx, "SELECT pg_advisory_unlock($1)", lockID)
+}
+
+func (s *Server) ensurePeerStatsPartitions(ctx context.Context) {
+	// Create partitions for current + next 2 months.
+	if _, err := s.pool.Exec(ctx, "SELECT create_peer_stats_partitions(2)"); err != nil {
+		s.logger.Warn("failed to create peer_stats partitions", "error", err)
+	} else {
+		s.logger.Debug("peer_stats partitions ensured")
+	}
+
+	// Drop partitions older than 6 months.
+	if _, err := s.pool.Exec(ctx, "SELECT drop_old_peer_stats_partitions(6)"); err != nil {
+		s.logger.Warn("failed to drop old peer_stats partitions", "error", err)
+	}
 }

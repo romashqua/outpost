@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2, Users, Shield, Search } from 'lucide-react'
+import { Plus, Trash2, Users, Shield, Search, Pencil } from 'lucide-react'
 import Table from '@/components/ui/Table'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
@@ -66,6 +66,9 @@ export default function GroupsPage() {
   const [addAclNetworkId, setAddAclNetworkId] = useState('')
   const [addAclAllowedIps, setAddAclAllowedIps] = useState('0.0.0.0/0')
 
+  const [editTarget, setEditTarget] = useState<Group | null>(null)
+  const [editForm, setEditForm] = useState({ name: '', description: '' })
+
   const [formData, setFormData] = useState({ name: '', description: '' })
 
   const { data: groups = [], isLoading, error } = useQuery<Group[]>({
@@ -100,6 +103,19 @@ export default function GroupsPage() {
       setShowCreate(false)
       setFormData({ name: '', description: '' })
       addToast(t('groups.groupCreated'), 'success')
+    },
+    onError: (err) => {
+      addToast((err as Error).message, 'error')
+    },
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: (payload: { id: string; name: string; description: string }) =>
+      api.put(`/groups/${payload.id}`, { name: payload.name, description: payload.description }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['groups'] })
+      setEditTarget(null)
+      addToast(t('groups.groupUpdated'), 'success')
     },
     onError: (err) => {
       addToast((err as Error).message, 'error')
@@ -269,22 +285,37 @@ export default function GroupsPage() {
       key: 'actions',
       header: '',
       render: (row: Group) => (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={(e) => {
-            e.stopPropagation()
-            if (row.is_system) {
-              addToast(t('groups.cannotDeleteSystem'), 'error')
-              return
-            }
-            deleteMutation.reset()
-            setDeleteTarget(row)
-          }}
-          disabled={row.is_system}
-        >
-          <Trash2 size={14} className={row.is_system ? 'text-[var(--text-muted)]' : 'text-[var(--danger)]'} />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation()
+              updateMutation.reset()
+              setEditForm({ name: row.name, description: row.description })
+              setEditTarget(row)
+            }}
+            disabled={row.is_system}
+          >
+            <Pencil size={14} className={row.is_system ? 'text-[var(--text-muted)]' : 'text-[var(--accent)]'} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation()
+              if (row.is_system) {
+                addToast(t('groups.cannotDeleteSystem'), 'error')
+                return
+              }
+              deleteMutation.reset()
+              setDeleteTarget(row)
+            }}
+            disabled={row.is_system}
+          >
+            <Trash2 size={14} className={row.is_system ? 'text-[var(--text-muted)]' : 'text-[var(--danger)]'} />
+          </Button>
+        </div>
       ),
     },
   ]
@@ -360,6 +391,41 @@ export default function GroupsPage() {
             </Button>
             <Button type="submit" disabled={createMutation.isPending}>
               {createMutation.isPending ? t('groups.creating') : t('common.create')}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Edit Group Modal */}
+      <Modal open={!!editTarget} onClose={() => setEditTarget(null)} title={t('groups.editGroup')}>
+        <form className="flex flex-col gap-4" onSubmit={(e) => {
+          e.preventDefault()
+          if (editTarget) updateMutation.mutate({ id: editTarget.id, name: editForm.name, description: editForm.description })
+        }}>
+          <Input
+            label={t('groups.name')}
+            placeholder="engineering"
+            value={editForm.name}
+            onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+            required
+          />
+          <Input
+            label={t('groups.description')}
+            placeholder={t('groups.descriptionPlaceholder')}
+            value={editForm.description}
+            onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+          />
+          {updateMutation.isError && (
+            <p className="text-sm text-[var(--danger)]">
+              {(updateMutation.error as Error).message}
+            </p>
+          )}
+          <div className="flex gap-3 justify-end mt-2">
+            <Button variant="secondary" type="button" onClick={() => setEditTarget(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button type="submit" disabled={updateMutation.isPending}>
+              {updateMutation.isPending ? t('groups.saving') : t('common.save')}
             </Button>
           </div>
         </form>

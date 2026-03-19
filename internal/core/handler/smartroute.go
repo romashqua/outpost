@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/romashqua/outpost/internal/auth"
 )
@@ -26,11 +25,11 @@ type SmartRouteNotifier interface {
 }
 
 type SmartRouteHandler struct {
-	pool     *pgxpool.Pool
+	pool DB
 	notifier SmartRouteNotifier
 }
 
-func NewSmartRouteHandler(pool *pgxpool.Pool) *SmartRouteHandler {
+func NewSmartRouteHandler(pool DB) *SmartRouteHandler {
 	return &SmartRouteHandler{pool: pool}
 }
 

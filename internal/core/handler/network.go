@@ -13,24 +13,35 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/romashqua/outpost/internal/auth"
 )
 
+// NetworkFirewallRefresher pushes updated firewall configs to gateways when networks change.
+type NetworkFirewallRefresher interface {
+	RefreshFirewallForGateways(gatewayIDs []string)
+}
+
 // NetworkHandler provides CRUD endpoints for network management.
 type NetworkHandler struct {
-	pool *pgxpool.Pool
-	log  *slog.Logger
+	pool DB
+	log       *slog.Logger
+	refresher NetworkFirewallRefresher
 }
 
 // NewNetworkHandler creates a NetworkHandler backed by the given connection pool.
-func NewNetworkHandler(pool *pgxpool.Pool, logger ...*slog.Logger) *NetworkHandler {
+func NewNetworkHandler(pool DB, logger ...*slog.Logger) *NetworkHandler {
 	l := slog.Default()
 	if len(logger) > 0 && logger[0] != nil {
 		l = logger[0]
 	}
 	return &NetworkHandler{pool: pool, log: l.With("handler", "network")}
+}
+
+// WithNetworkFirewallRefresher sets the firewall refresher for pushing updates when networks change.
+func (h *NetworkHandler) WithNetworkFirewallRefresher(r NetworkFirewallRefresher) *NetworkHandler {
+	h.refresher = r
+	return h
 }
 
 // Routes returns a chi.Router with network CRUD endpoints mounted.
@@ -243,6 +254,12 @@ func (h *NetworkHandler) create(w http.ResponseWriter, r *http.Request) {
 	if req.DNS == nil {
 		req.DNS = []string{}
 	}
+	for _, dns := range req.DNS {
+		if net.ParseIP(dns) == nil {
+			respondError(w, http.StatusBadRequest, fmt.Sprintf("invalid DNS server IP: %s", dns))
+			return
+		}
+	}
 
 	// Validate tunnel_cidr if provided.
 	if req.TunnelCIDR != nil && *req.TunnelCIDR != "" {
@@ -375,6 +392,12 @@ func (h *NetworkHandler) update(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "keepalive must be between 0 and 3600")
 		return
 	}
+	for _, dns := range req.DNS {
+		if net.ParseIP(dns) == nil {
+			respondError(w, http.StatusBadRequest, fmt.Sprintf("invalid DNS server IP: %s", dns))
+			return
+		}
+	}
 	// Validate tunnel_cidr if provided.
 	if req.TunnelCIDR != nil && *req.TunnelCIDR != "" {
 		tip, tipNet, terr := net.ParseCIDR(*req.TunnelCIDR)
@@ -441,6 +464,25 @@ func (h *NetworkHandler) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Capture gateway IDs before deletion (cascade will remove gateway_networks rows).
+	var gatewayIDs []string
+	if h.refresher != nil {
+		rows, _ := h.pool.Query(r.Context(),
+			`SELECT DISTINCT COALESCE(gn.gateway_id, g.id)::text
+			 FROM gateway_networks gn
+			 FULL OUTER JOIN gateways g ON g.network_id = $1
+			 WHERE gn.network_id = $1 OR g.network_id = $1`, id)
+		if rows != nil {
+			for rows.Next() {
+				var gwID string
+				if rows.Scan(&gwID) == nil {
+					gatewayIDs = append(gatewayIDs, gwID)
+				}
+			}
+			rows.Close()
+		}
+	}
+
 	tag, err := h.pool.Exec(r.Context(),
 		`DELETE FROM networks WHERE id = $1`, id)
 	if err != nil {
@@ -451,6 +493,11 @@ func (h *NetworkHandler) delete(w http.ResponseWriter, r *http.Request) {
 	if tag.RowsAffected() == 0 {
 		respondError(w, http.StatusNotFound, "network not found")
 		return
+	}
+
+	// Refresh firewall rules for gateways that were serving this network.
+	if h.refresher != nil && len(gatewayIDs) > 0 {
+		go h.refresher.RefreshFirewallForGateways(gatewayIDs)
 	}
 
 	w.WriteHeader(http.StatusNoContent)

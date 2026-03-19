@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/romashqua/outpost/internal/auth"
 )
 
@@ -12,11 +13,21 @@ import (
 type Handler struct {
 	mgr      *Manager
 	webauthn *WebAuthnStore
+	ceremony *WebAuthnCeremony // nil if WebAuthn ceremony not configured
 }
 
 // NewHandler creates a new MFA Handler.
-func NewHandler(mgr *Manager, webauthn *WebAuthnStore) *Handler {
-	return &Handler{mgr: mgr, webauthn: webauthn}
+func NewHandler(mgr *Manager, webauthn *WebAuthnStore, opts ...func(*Handler)) *Handler {
+	h := &Handler{mgr: mgr, webauthn: webauthn}
+	for _, o := range opts {
+		o(h)
+	}
+	return h
+}
+
+// WithCeremony sets the WebAuthn ceremony handler for full attestation/assertion support.
+func WithCeremony(c *WebAuthnCeremony) func(*Handler) {
+	return func(h *Handler) { h.ceremony = c }
 }
 
 // Routes returns a chi.Router with all MFA endpoints mounted.
@@ -36,6 +47,14 @@ func (h *Handler) Routes() chi.Router {
 	r.Get("/webauthn/credentials", h.listWebAuthnCredentials)
 	r.Post("/webauthn/credentials", h.registerWebAuthnCredential)
 	r.Delete("/webauthn/credentials/{id}", h.deleteWebAuthnCredential)
+
+	// WebAuthn ceremony endpoints (registration).
+	r.Post("/webauthn/register/begin", h.beginWebAuthnRegistration)
+	r.Post("/webauthn/register/finish", h.finishWebAuthnRegistration)
+
+	// WebAuthn ceremony endpoints (login/assertion) — used during MFA step.
+	r.Post("/webauthn/login/begin", h.beginWebAuthnLogin)
+	r.Post("/webauthn/login/finish", h.finishWebAuthnLogin)
 
 	return r
 }
@@ -57,19 +76,16 @@ func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, status)
 }
 
-// setupTOTPRequest is the request body for TOTP setup.
 type setupTOTPRequest struct {
 	Issuer string `json:"issuer"`
 }
 
-// setupTOTPResponse is the response body for TOTP setup.
 type setupTOTPResponse struct {
 	Secret  string `json:"secret"`
 	QRURL   string `json:"qr_url"`
 	QRImage string `json:"qr_image"`
 }
 
-// setupTOTP begins TOTP enrollment by generating a secret.
 func (h *Handler) setupTOTP(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
@@ -95,12 +111,10 @@ func (h *Handler) setupTOTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, setupTOTPResponse{Secret: secret, QRURL: qrURL, QRImage: qrImage})
 }
 
-// codeRequest is a shared request body for code-based verification endpoints.
 type codeRequest struct {
 	Code string `json:"code"`
 }
 
-// verifyTOTP validates a TOTP code and activates TOTP on first success.
 func (h *Handler) verifyTOTP(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
@@ -128,7 +142,6 @@ func (h *Handler) verifyTOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Ensure MFA is enabled on the user record once TOTP is verified.
 	if err := h.mgr.SetMFAEnabled(r.Context(), claims.UserID, true); err != nil {
 		respondError(w, http.StatusInternalServerError, "TOTP verified but failed to enable MFA flag")
 		return
@@ -137,7 +150,6 @@ func (h *Handler) verifyTOTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"valid": true})
 }
 
-// disableTOTP removes the TOTP configuration for the user.
 func (h *Handler) disableTOTP(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
@@ -153,7 +165,6 @@ func (h *Handler) disableTOTP(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// generateBackupCodes creates a fresh set of backup codes.
 func (h *Handler) generateBackupCodes(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
@@ -170,7 +181,6 @@ func (h *Handler) generateBackupCodes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string][]string{"codes": codes})
 }
 
-// verifyBackupCode validates a single-use backup code.
 func (h *Handler) verifyBackupCode(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
@@ -197,7 +207,6 @@ func (h *Handler) verifyBackupCode(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"valid": valid})
 }
 
-// listWebAuthnCredentials returns all WebAuthn credentials for the user.
 func (h *Handler) listWebAuthnCredentials(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
@@ -214,14 +223,13 @@ func (h *Handler) listWebAuthnCredentials(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, creds)
 }
 
-// registerWebAuthnRequest is the request body for registering a credential.
+// registerWebAuthnRequest is the legacy request body for registering a credential (bypasses ceremony).
 type registerWebAuthnRequest struct {
 	CredentialID []byte `json:"credential_id"`
 	PublicKey    []byte `json:"public_key"`
 	Name         string `json:"name"`
 }
 
-// registerWebAuthnCredential stores a new WebAuthn credential.
 func (h *Handler) registerWebAuthnCredential(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
@@ -254,7 +262,6 @@ func (h *Handler) registerWebAuthnCredential(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusCreated)
 }
 
-// deleteWebAuthnCredential removes a WebAuthn credential by ID.
 func (h *Handler) deleteWebAuthnCredential(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
@@ -275,6 +282,182 @@ func (h *Handler) deleteWebAuthnCredential(w http.ResponseWriter, r *http.Reques
 
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// --- WebAuthn Ceremony Endpoints ---
+
+type beginRegisterRequest struct {
+	Name string `json:"name"` // optional friendly name for the credential
+}
+
+// beginWebAuthnRegistration starts the WebAuthn registration ceremony.
+// Returns PublicKeyCredentialCreationOptions for navigator.credentials.create().
+func (h *Handler) beginWebAuthnRegistration(w http.ResponseWriter, r *http.Request) {
+	if h.ceremony == nil {
+		respondError(w, http.StatusServiceUnavailable, "WebAuthn not configured")
+		return
+	}
+	claims, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+
+	options, err := h.ceremony.BeginRegistration(r.Context(), claims.UserID, claims.Username, claims.Username)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to begin registration: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, options)
+}
+
+type finishRegisterRequest struct {
+	Name string `json:"name"` // friendly name for the credential
+}
+
+// finishWebAuthnRegistration completes the WebAuthn registration ceremony.
+// The request body is the authenticator's attestation response.
+func (h *Handler) finishWebAuthnRegistration(w http.ResponseWriter, r *http.Request) {
+	if h.ceremony == nil {
+		respondError(w, http.StatusServiceUnavailable, "WebAuthn not configured")
+		return
+	}
+	claims, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+
+	// Get credential name from query param (body is consumed by webauthn library).
+	credName := r.URL.Query().Get("name")
+	if credName == "" {
+		credName = "Security Key"
+	}
+
+	user, err := h.ceremony.BuildUser(r.Context(), claims.UserID, claims.Username, claims.Username)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to build user")
+		return
+	}
+
+	session, err := h.ceremony.LoadSession(r.Context(), claims.UserID, "register")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "no pending registration or session expired")
+		return
+	}
+
+	credential, err := h.ceremony.GetWebAuthn().FinishRegistration(user, *session, r)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "registration verification failed: "+err.Error())
+		return
+	}
+
+	// Store the verified credential.
+	dbCred := WebAuthnCredential{
+		UserID:       claims.UserID,
+		CredentialID: credential.ID,
+		PublicKey:    credential.PublicKey,
+		SignCount:    int64(credential.Authenticator.SignCount),
+		Name:         credName,
+	}
+	if err := h.webauthn.RegisterCredential(r.Context(), dbCred); err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to store credential")
+		return
+	}
+
+	// Enable MFA on user if not already.
+	if err := h.mgr.SetMFAEnabled(r.Context(), claims.UserID, true); err != nil {
+		respondError(w, http.StatusInternalServerError, "credential stored but failed to enable MFA")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]string{"status": "ok", "name": credName})
+}
+
+// beginWebAuthnLogin starts the WebAuthn assertion ceremony.
+// This is called during MFA verification — requires an MFA token (not full auth).
+// For simplicity, we accept both JWT auth and an mfa_token query param.
+func (h *Handler) beginWebAuthnLogin(w http.ResponseWriter, r *http.Request) {
+	if h.ceremony == nil {
+		respondError(w, http.StatusServiceUnavailable, "WebAuthn not configured")
+		return
+	}
+
+	// Try to get user from JWT context first (authenticated user).
+	claims, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+
+	options, err := h.ceremony.BeginLogin(r.Context(), claims.UserID, claims.Username, claims.Username)
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, options)
+}
+
+// finishWebAuthnLogin completes the WebAuthn assertion ceremony.
+// On success, updates the credential sign count.
+func (h *Handler) finishWebAuthnLogin(w http.ResponseWriter, r *http.Request) {
+	if h.ceremony == nil {
+		respondError(w, http.StatusServiceUnavailable, "WebAuthn not configured")
+		return
+	}
+
+	claims, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+
+	user, err := h.ceremony.BuildUser(r.Context(), claims.UserID, claims.Username, claims.Username)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to build user")
+		return
+	}
+
+	session, err := h.ceremony.LoadSession(r.Context(), claims.UserID, "login")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, "no pending login or session expired")
+		return
+	}
+
+	credential, err := h.ceremony.GetWebAuthn().FinishLogin(user, *session, r)
+	if err != nil {
+		respondError(w, http.StatusUnauthorized, "assertion verification failed: "+err.Error())
+		return
+	}
+
+	// Update sign count.
+	creds, _ := h.webauthn.GetCredentials(r.Context(), claims.UserID)
+	for _, c := range creds {
+		if bytesEqual(c.CredentialID, credential.ID) {
+			_ = h.webauthn.UpdateSignCount(r.Context(), c.ID, int64(credential.Authenticator.SignCount))
+			break
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]bool{"valid": true})
+}
+
+// bytesEqual compares two byte slices.
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// Ensure webauthn.Credential is not used directly in type assertion.
+var _ webauthn.User = (*webauthnUser)(nil)
 
 // writeJSON writes a JSON response with the given status code.
 func writeJSON(w http.ResponseWriter, status int, v any) {

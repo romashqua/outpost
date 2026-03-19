@@ -15,25 +15,37 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/romashqua/outpost/internal/auth"
 	"github.com/romashqua/outpost/internal/wireguard"
 )
 
+// GatewayNetworkChangeNotifier is called when a gateway's network assignments change,
+// so that S2S routes and firewall rules can be recomputed.
+type GatewayNetworkChangeNotifier interface {
+	NotifyGatewayNetworksChanged(gatewayID string)
+}
+
 // GatewayHandler provides endpoints for managing WireGuard gateways.
 type GatewayHandler struct {
-	pool *pgxpool.Pool
-	log  *slog.Logger
+	pool DB
+	log              *slog.Logger
+	networkNotifier  GatewayNetworkChangeNotifier
 }
 
 // NewGatewayHandler creates a GatewayHandler backed by the given connection pool.
-func NewGatewayHandler(pool *pgxpool.Pool, logger ...*slog.Logger) *GatewayHandler {
+func NewGatewayHandler(pool DB, logger ...*slog.Logger) *GatewayHandler {
 	l := slog.Default()
 	if len(logger) > 0 && logger[0] != nil {
 		l = logger[0]
 	}
 	return &GatewayHandler{pool: pool, log: l.With("handler", "gateway")}
+}
+
+// WithNetworkNotifier sets the notifier for gateway network changes.
+func (h *GatewayHandler) WithNetworkNotifier(n GatewayNetworkChangeNotifier) *GatewayHandler {
+	h.networkNotifier = n
+	return h
 }
 
 // Routes returns a chi.Router with gateway management endpoints mounted.
@@ -63,6 +75,7 @@ type gatewayResponse struct {
 	WireguardPubkey string             `json:"wireguard_pubkey"`
 	Endpoint        string             `json:"endpoint"`
 	IsActive        bool               `json:"is_active"`
+	HealthStatus    string             `json:"health_status"`
 	Priority        int                `json:"priority"`
 	LastSeen        *time.Time         `json:"last_seen,omitempty"`
 	CreatedAt       time.Time          `json:"created_at"`
@@ -106,7 +119,7 @@ func (h *GatewayHandler) list(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.pool.Query(r.Context(),
-		`SELECT id, network_id, name, host(public_ip), wireguard_pubkey, endpoint, is_active, priority, last_seen, created_at, updated_at
+		`SELECT id, network_id, name, host(public_ip), wireguard_pubkey, endpoint, is_active, health_status, priority, last_seen, created_at, updated_at
 		 FROM gateways
 		 ORDER BY created_at DESC
 		 LIMIT $1 OFFSET $2`, perPage, offset)
@@ -121,7 +134,7 @@ func (h *GatewayHandler) list(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var g gatewayResponse
 		if err := rows.Scan(&g.ID, &g.NetworkID, &g.Name, &g.PublicIP, &g.WireguardPubkey,
-			&g.Endpoint, &g.IsActive, &g.Priority, &g.LastSeen, &g.CreatedAt, &g.UpdatedAt); err != nil {
+			&g.Endpoint, &g.IsActive, &g.HealthStatus, &g.Priority, &g.LastSeen, &g.CreatedAt, &g.UpdatedAt); err != nil {
 			respondError(w, http.StatusInternalServerError, "failed to scan gateway")
 			return
 		}
@@ -290,10 +303,10 @@ func (h *GatewayHandler) create(w http.ResponseWriter, r *http.Request) {
 	err = tx.QueryRow(r.Context(),
 		`INSERT INTO gateways (network_id, name, wireguard_pubkey, wireguard_privkey, endpoint, token_hash, public_ip, priority)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7::inet, $8)
-		 RETURNING id, network_id, name, host(public_ip), wireguard_pubkey, endpoint, is_active, priority, last_seen, created_at, updated_at`,
+		 RETURNING id, network_id, name, host(public_ip), wireguard_pubkey, endpoint, is_active, health_status, priority, last_seen, created_at, updated_at`,
 		primaryNetworkID, req.Name, pubKey, privKey, req.Endpoint, tokenHash, req.PublicIP, priority,
 	).Scan(&g.ID, &g.NetworkID, &g.Name, &g.PublicIP, &g.WireguardPubkey,
-		&g.Endpoint, &g.IsActive, &g.Priority, &g.LastSeen, &g.CreatedAt, &g.UpdatedAt)
+		&g.Endpoint, &g.IsActive, &g.HealthStatus, &g.Priority, &g.LastSeen, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -365,10 +378,10 @@ func (h *GatewayHandler) get(w http.ResponseWriter, r *http.Request) {
 
 	var g gatewayResponse
 	err = h.pool.QueryRow(r.Context(),
-		`SELECT id, network_id, name, host(public_ip), wireguard_pubkey, endpoint, is_active, priority, last_seen, created_at, updated_at
+		`SELECT id, network_id, name, host(public_ip), wireguard_pubkey, endpoint, is_active, health_status, priority, last_seen, created_at, updated_at
 		 FROM gateways WHERE id = $1`, id,
 	).Scan(&g.ID, &g.NetworkID, &g.Name, &g.PublicIP, &g.WireguardPubkey,
-		&g.Endpoint, &g.IsActive, &g.Priority, &g.LastSeen, &g.CreatedAt, &g.UpdatedAt)
+		&g.Endpoint, &g.IsActive, &g.HealthStatus, &g.Priority, &g.LastSeen, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			respondError(w, http.StatusNotFound, "gateway not found")
@@ -446,10 +459,10 @@ func (h *GatewayHandler) update(w http.ResponseWriter, r *http.Request) {
 		     is_active = COALESCE($6, is_active),
 		     updated_at = now()
 		 WHERE id = $1
-		 RETURNING id, network_id, name, host(public_ip), wireguard_pubkey, endpoint, is_active, priority, last_seen, created_at, updated_at`,
+		 RETURNING id, network_id, name, host(public_ip), wireguard_pubkey, endpoint, is_active, health_status, priority, last_seen, created_at, updated_at`,
 		id, req.Name, req.Endpoint, req.PublicIP, req.Priority, req.IsActive,
 	).Scan(&g.ID, &g.NetworkID, &g.Name, &g.PublicIP, &g.WireguardPubkey,
-		&g.Endpoint, &g.IsActive, &g.Priority, &g.LastSeen, &g.CreatedAt, &g.UpdatedAt)
+		&g.Endpoint, &g.IsActive, &g.HealthStatus, &g.Priority, &g.LastSeen, &g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			respondError(w, http.StatusNotFound, "gateway not found")
@@ -499,9 +512,16 @@ func (h *GatewayHandler) update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	networksChanged := len(req.NetworkIDs) > 0
+
 	if err := tx.Commit(r.Context()); err != nil {
 		respondError(w, http.StatusInternalServerError, "failed to commit transaction")
 		return
+	}
+
+	// After commit, notify S2S + firewall subsystems about network changes.
+	if networksChanged && h.networkNotifier != nil {
+		h.networkNotifier.NotifyGatewayNetworksChanged(id.String())
 	}
 
 	g.NetworkIDs = []uuid.UUID{}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,6 +34,12 @@ func AuditMiddleware(logger *AuditLogger) func(http.Handler) http.Handler {
 			switch r.Method {
 			case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
 			default:
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Only log requests to known API paths — skip bot/scanner traffic.
+			if !strings.HasPrefix(r.URL.Path, "/api/") {
 				next.ServeHTTP(w, r)
 				return
 			}

@@ -86,6 +86,14 @@ type tenantStats struct {
 	GatewayCount int    `json:"gateway_count"`
 }
 
+// @Summary List all tenants
+// @Description Return all tenants. Requires admin role.
+// @Tags Tenants
+// @Produce json
+// @Success 200 {array} Tenant
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /tenants [get]
 func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	tenants, err := h.mgr.List(r.Context())
 	if err != nil {
@@ -98,6 +106,18 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, tenants)
 }
 
+// @Summary Create a tenant
+// @Description Create a new tenant with the given parameters. Requires admin role.
+// @Tags Tenants
+// @Accept json
+// @Produce json
+// @Param body body createTenantRequest true "Tenant creation parameters"
+// @Success 201 {object} Tenant
+// @Failure 400 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /tenants [post]
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	var req createTenantRequest
 	if err := parseBody(r, &req); err != nil {
@@ -197,6 +217,16 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusCreated, created)
 }
 
+// @Summary Get a tenant
+// @Description Return a single tenant by ID. Requires admin role.
+// @Tags Tenants
+// @Produce json
+// @Param id path string true "Tenant ID"
+// @Success 200 {object} Tenant
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /tenants/{id} [get]
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
@@ -217,6 +247,19 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, t)
 }
 
+// @Summary Update a tenant
+// @Description Update an existing tenant by ID with partial fields. Requires admin role.
+// @Tags Tenants
+// @Accept json
+// @Produce json
+// @Param id path string true "Tenant ID"
+// @Param body body updateTenantRequest true "Fields to update"
+// @Success 200 {object} Tenant
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /tenants/{id} [put]
 func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
@@ -297,6 +340,16 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, updated)
 }
 
+// @Summary Deactivate a tenant
+// @Description Soft-delete a tenant by setting is_active to false. Requires admin role.
+// @Tags Tenants
+// @Param id path string true "Tenant ID"
+// @Success 204 "Tenant deactivated"
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /tenants/{id} [delete]
 func (h *Handler) deactivate(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
@@ -328,6 +381,17 @@ func (h *Handler) deactivate(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// @Summary Get tenant stats
+// @Description Return usage statistics for a tenant (user, device, network, gateway counts). Requires admin role.
+// @Tags Tenants
+// @Produce json
+// @Param id path string true "Tenant ID"
+// @Success 200 {object} tenantStats
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /tenants/{id}/stats [get]
 func (h *Handler) stats(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" {
@@ -400,6 +464,15 @@ func (h *Handler) stats(w http.ResponseWriter, r *http.Request) {
 
 // --- Tenant resource management endpoints ---
 
+// @Summary List tenant users
+// @Description Return all users assigned to a tenant. Requires admin role.
+// @Tags Tenants
+// @Produce json
+// @Param id path string true "Tenant ID"
+// @Success 200 {object} map[string]any
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /tenants/{id}/users [get]
 func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	rows, err := h.pool.Query(r.Context(),
@@ -430,15 +503,25 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 		}
 		users = append(users, u)
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"users": users, "total": len(users)})
+	respondJSON(w, http.StatusOK, users)
 }
 
+// @Summary List tenant networks
+// @Description Return all networks assigned to a tenant. Requires admin role.
+// @Tags Tenants
+// @Produce json
+// @Param id path string true "Tenant ID"
+// @Success 200 {object} map[string]any
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /tenants/{id}/networks [get]
 func (h *Handler) listNetworks(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	rows, err := h.pool.Query(r.Context(),
-		`SELECT id, name, address::text, dns, port, is_active, created_at
+		`SELECT id, name, address::text, COALESCE(dns, '{}'), is_active, created_at
 		 FROM networks WHERE tenant_id = $1 ORDER BY created_at DESC`, id)
 	if err != nil {
+		h.log.Error("failed to query tenant networks", "tenant_id", id, "error", err)
 		respondJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to query networks", "message": "failed to query networks"})
 		return
 	}
@@ -447,54 +530,79 @@ func (h *Handler) listNetworks(w http.ResponseWriter, r *http.Request) {
 	type networkRow struct {
 		ID        string   `json:"id"`
 		Name      string   `json:"name"`
-		Address   string   `json:"address"`
+		CIDR      string   `json:"cidr"`
 		DNS       []string `json:"dns"`
-		Port      int      `json:"port"`
 		IsActive  bool     `json:"is_active"`
 		CreatedAt string   `json:"created_at"`
 	}
 	networks := make([]networkRow, 0)
 	for rows.Next() {
 		var n networkRow
-		if err := rows.Scan(&n.ID, &n.Name, &n.Address, &n.DNS, &n.Port, &n.IsActive, &n.CreatedAt); err != nil {
+		if err := rows.Scan(&n.ID, &n.Name, &n.CIDR, &n.DNS, &n.IsActive, &n.CreatedAt); err != nil {
+			h.log.Error("failed to scan tenant network", "tenant_id", id, "error", err)
 			respondJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to scan network", "message": "failed to scan network"})
 			return
 		}
 		networks = append(networks, n)
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"networks": networks, "total": len(networks)})
+	respondJSON(w, http.StatusOK, networks)
 }
 
+// @Summary List tenant gateways
+// @Description Return all gateways assigned to a tenant. Requires admin role.
+// @Tags Tenants
+// @Produce json
+// @Param id path string true "Tenant ID"
+// @Success 200 {object} map[string]any
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /tenants/{id}/gateways [get]
 func (h *Handler) listGateways(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	rows, err := h.pool.Query(r.Context(),
-		`SELECT id, name, endpoint, is_active, created_at
+		`SELECT id, name, COALESCE(endpoint, ''), health_status,
+		        last_seen IS NOT NULL AND last_seen > now() - interval '2 minutes' AS is_online,
+		        created_at
 		 FROM gateways WHERE tenant_id = $1 ORDER BY created_at DESC`, id)
 	if err != nil {
+		h.log.Error("failed to query tenant gateways", "tenant_id", id, "error", err)
 		respondJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to query gateways", "message": "failed to query gateways"})
 		return
 	}
 	defer rows.Close()
 
 	type gatewayRow struct {
-		ID        string `json:"id"`
-		Name      string `json:"name"`
-		Endpoint  string `json:"endpoint"`
-		IsActive  bool   `json:"is_active"`
-		CreatedAt string `json:"created_at"`
+		ID           string `json:"id"`
+		Name         string `json:"name"`
+		Endpoint     string `json:"endpoint"`
+		HealthStatus string `json:"health_status"`
+		IsOnline     bool   `json:"is_online"`
+		CreatedAt    string `json:"created_at"`
 	}
 	gateways := make([]gatewayRow, 0)
 	for rows.Next() {
 		var g gatewayRow
-		if err := rows.Scan(&g.ID, &g.Name, &g.Endpoint, &g.IsActive, &g.CreatedAt); err != nil {
+		if err := rows.Scan(&g.ID, &g.Name, &g.Endpoint, &g.HealthStatus, &g.IsOnline, &g.CreatedAt); err != nil {
+			h.log.Error("failed to scan tenant gateway", "tenant_id", id, "error", err)
 			respondJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to scan gateway", "message": "failed to scan gateway"})
 			return
 		}
 		gateways = append(gateways, g)
 	}
-	respondJSON(w, http.StatusOK, map[string]any{"gateways": gateways, "total": len(gateways)})
+	respondJSON(w, http.StatusOK, gateways)
 }
 
+// @Summary Assign user to tenant
+// @Description Assign an existing user to a tenant. Requires admin role.
+// @Tags Tenants
+// @Produce json
+// @Param id path string true "Tenant ID"
+// @Param userId path string true "User ID"
+// @Success 200 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /tenants/{id}/users/{userId} [post]
 func (h *Handler) assignUser(w http.ResponseWriter, r *http.Request) {
 	tenantID := chi.URLParam(r, "id")
 	userID := chi.URLParam(r, "userId")
@@ -511,6 +619,17 @@ func (h *Handler) assignUser(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]string{"status": "assigned"})
 }
 
+// @Summary Unassign user from tenant
+// @Description Remove a user's tenant assignment. Requires admin role.
+// @Tags Tenants
+// @Produce json
+// @Param id path string true "Tenant ID"
+// @Param userId path string true "User ID"
+// @Success 200 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /tenants/{id}/users/{userId} [delete]
 func (h *Handler) unassignUser(w http.ResponseWriter, r *http.Request) {
 	userID := chi.URLParam(r, "userId")
 	tag, err := h.pool.Exec(r.Context(),
@@ -526,6 +645,17 @@ func (h *Handler) unassignUser(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]string{"status": "unassigned"})
 }
 
+// @Summary Assign network to tenant
+// @Description Assign an existing network to a tenant. Requires admin role.
+// @Tags Tenants
+// @Produce json
+// @Param id path string true "Tenant ID"
+// @Param networkId path string true "Network ID"
+// @Success 200 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /tenants/{id}/networks/{networkId} [post]
 func (h *Handler) assignNetwork(w http.ResponseWriter, r *http.Request) {
 	tenantID := chi.URLParam(r, "id")
 	networkID := chi.URLParam(r, "networkId")
@@ -542,6 +672,17 @@ func (h *Handler) assignNetwork(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]string{"status": "assigned"})
 }
 
+// @Summary Unassign network from tenant
+// @Description Remove a network's tenant assignment. Requires admin role.
+// @Tags Tenants
+// @Produce json
+// @Param id path string true "Tenant ID"
+// @Param networkId path string true "Network ID"
+// @Success 200 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /tenants/{id}/networks/{networkId} [delete]
 func (h *Handler) unassignNetwork(w http.ResponseWriter, r *http.Request) {
 	networkID := chi.URLParam(r, "networkId")
 	tag, err := h.pool.Exec(r.Context(),
@@ -557,6 +698,17 @@ func (h *Handler) unassignNetwork(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]string{"status": "unassigned"})
 }
 
+// @Summary Assign gateway to tenant
+// @Description Assign an existing gateway to a tenant. Requires admin role.
+// @Tags Tenants
+// @Produce json
+// @Param id path string true "Tenant ID"
+// @Param gatewayId path string true "Gateway ID"
+// @Success 200 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /tenants/{id}/gateways/{gatewayId} [post]
 func (h *Handler) assignGateway(w http.ResponseWriter, r *http.Request) {
 	tenantID := chi.URLParam(r, "id")
 	gatewayID := chi.URLParam(r, "gatewayId")
@@ -573,6 +725,17 @@ func (h *Handler) assignGateway(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]string{"status": "assigned"})
 }
 
+// @Summary Unassign gateway from tenant
+// @Description Remove a gateway's tenant assignment. Requires admin role.
+// @Tags Tenants
+// @Produce json
+// @Param id path string true "Tenant ID"
+// @Param gatewayId path string true "Gateway ID"
+// @Success 200 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /tenants/{id}/gateways/{gatewayId} [delete]
 func (h *Handler) unassignGateway(w http.ResponseWriter, r *http.Request) {
 	gatewayID := chi.URLParam(r, "gatewayId")
 	tag, err := h.pool.Exec(r.Context(),

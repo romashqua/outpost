@@ -23,6 +23,13 @@ const (
 	idTokenLifetime    = 1 * time.Hour
 )
 
+// @Summary OpenID Connect Discovery
+// @Description Return the OpenID Connect Discovery document (RFC 8414).
+// @Tags OIDC
+// @Produce json
+// @Success 200 {object} object
+// @Router /oidc/.well-known/openid-configuration [get]
+//
 // discovery handles GET /.well-known/openid-configuration.
 func (p *Provider) discovery(w http.ResponseWriter, r *http.Request) {
 	doc := map[string]any{
@@ -46,6 +53,23 @@ func (p *Provider) discovery(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, doc)
 }
 
+// @Summary OIDC Authorization
+// @Description Initiate the OAuth 2.0 Authorization Code flow with optional PKCE (S256).
+// @Tags OIDC
+// @Param client_id query string true "OAuth2 client ID"
+// @Param redirect_uri query string true "Redirect URI registered with the client"
+// @Param response_type query string true "Must be 'code'"
+// @Param scope query string false "Space-separated scopes (openid, profile, email, groups)"
+// @Param state query string false "Opaque state value for CSRF protection"
+// @Param nonce query string false "Nonce for ID token replay protection"
+// @Param code_challenge query string false "PKCE code challenge (S256)"
+// @Param code_challenge_method query string false "Must be 'S256' if provided"
+// @Success 302 "Redirect to redirect_uri with authorization code"
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Security BearerAuth
+// @Router /oidc/authorize [get]
+//
 // authorize handles GET /authorize — the authorization endpoint.
 // In a real deployment a login UI would be shown; here we expect the user_id
 // to already be established via session (passed as a query parameter for now).
@@ -139,6 +163,23 @@ func (p *Provider) authorize(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, redirectURL.String(), http.StatusFound)
 }
 
+// @Summary OIDC Token
+// @Description Exchange an authorization code for access_token and id_token (RFC 6749 section 4.1.3).
+// @Tags OIDC
+// @Accept application/x-www-form-urlencoded
+// @Produce json
+// @Param grant_type formData string true "Must be 'authorization_code'"
+// @Param code formData string true "Authorization code"
+// @Param redirect_uri formData string true "Must match the original authorize request"
+// @Param client_id formData string true "OAuth2 client ID"
+// @Param client_secret formData string false "Client secret (required for confidential clients)"
+// @Param code_verifier formData string false "PKCE code verifier"
+// @Success 200 {object} object "Token response with access_token, id_token, token_type, expires_in, scope"
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Router /oidc/token [post]
+//
 // token handles POST /token — the token endpoint.
 func (p *Provider) token(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
@@ -269,6 +310,16 @@ func (p *Provider) token(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// @Summary OIDC UserInfo
+// @Description Return claims about the authenticated user (OpenID Connect Core section 5.3).
+// @Tags OIDC
+// @Produce json
+// @Success 200 {object} object "UserInfo claims (sub, email, name, preferred_username, groups)"
+// @Failure 401 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /oidc/userinfo [get]
+//
 // userinfo handles GET /userinfo — returns claims for the authenticated user.
 func (p *Provider) userinfo(w http.ResponseWriter, r *http.Request) {
 	tokenStr := extractBearerToken(r)
@@ -316,6 +367,13 @@ func (p *Provider) userinfo(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// @Summary OIDC JWKS
+// @Description Return the JSON Web Key Set containing the provider's RSA public signing key (RFC 7517).
+// @Tags OIDC
+// @Produce json
+// @Success 200 {object} object "JWKS document with keys array"
+// @Router /oidc/jwks [get]
+//
 // jwks handles GET /jwks — returns the JSON Web Key Set containing the public key.
 func (p *Provider) jwks(w http.ResponseWriter, r *http.Request) {
 	pub := &p.signingKey.PublicKey

@@ -5,6 +5,7 @@ import { clsx } from 'clsx'
 import {
   AreaChart, Area, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  ReferenceLine,
 } from 'recharts'
 import { api } from '@/api/client'
 import Card from '@/components/ui/Card'
@@ -75,6 +76,7 @@ export default function AnalyticsPage() {
   const { t } = useTranslation()
   const [activeTab, setActiveTab] = useState<Tab>('overview')
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('7d')
+  const [cursorIndex, setCursorIndex] = useState<number | null>(null)
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'overview', label: t('analytics.overview', 'Overview') },
@@ -239,7 +241,15 @@ export default function AnalyticsPage() {
                   </div>
                 ) : (
                   <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={bandwidthChart}>
+                    <AreaChart
+                      data={bandwidthChart}
+                      onMouseMove={(state) => {
+                        if (state?.activeTooltipIndex !== undefined) {
+                          setCursorIndex(state.activeTooltipIndex)
+                        }
+                      }}
+                      onMouseLeave={() => setCursorIndex(null)}
+                    >
                       <defs>
                         <linearGradient id="anaRx" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="5%" stopColor="#00ff88" stopOpacity={0.3} />
@@ -254,6 +264,7 @@ export default function AnalyticsPage() {
                       <XAxis dataKey="time" stroke="var(--text-muted)" fontSize={11} />
                       <YAxis stroke="var(--text-muted)" fontSize={11} tickFormatter={(v: number) => formatBytesShort(v)} />
                       <Tooltip
+                        cursor={{ stroke: 'var(--accent)', strokeWidth: 1, strokeDasharray: '4 2' }}
                         contentStyle={{
                           background: 'var(--bg-card)',
                           border: '1px solid var(--border)',
@@ -261,15 +272,48 @@ export default function AnalyticsPage() {
                           fontFamily: "'JetBrains Mono', monospace",
                           fontSize: '11px',
                           color: 'var(--text-primary)',
+                          boxShadow: '0 4px 12px rgba(0,0,0,0.4)',
                         }}
                         formatter={(val: number, name: string) => [formatBytes(val), name === 'rx' ? t('dashboard.rx') : t('dashboard.tx')]}
+                        labelStyle={{ color: 'var(--accent)', fontWeight: 600 }}
                       />
-                      <Area type="monotone" dataKey="rx" stroke="#00ff88" fill="url(#anaRx)" strokeWidth={2} />
-                      <Area type="monotone" dataKey="tx" stroke="#00aaff" fill="url(#anaTx)" strokeWidth={2} />
+                      <Area
+                        type="monotone"
+                        dataKey="rx"
+                        stroke="#00ff88"
+                        fill="url(#anaRx)"
+                        strokeWidth={2}
+                        activeDot={{ r: 5, stroke: '#00ff88', strokeWidth: 2, fill: 'var(--bg-primary)' }}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="tx"
+                        stroke="#00aaff"
+                        fill="url(#anaTx)"
+                        strokeWidth={2}
+                        activeDot={{ r: 5, stroke: '#00aaff', strokeWidth: 2, fill: 'var(--bg-primary)' }}
+                      />
                     </AreaChart>
                   </ResponsiveContainer>
                 )}
               </div>
+              {/* Cursor readout bar */}
+              {cursorIndex !== null && bandwidthChart[cursorIndex] && (
+                <div className="flex items-center gap-4 mt-2 px-2 py-1 text-[10px] font-mono text-[var(--text-muted)] border-t border-[var(--border)]">
+                  <span className="text-[var(--text-secondary)]">{bandwidthChart[cursorIndex].time}</span>
+                  <span>
+                    <span className="inline-block w-2 h-2 rounded-full mr-1" style={{ background: '#00ff88' }} />
+                    RX: {formatBytes(bandwidthChart[cursorIndex].rx)}
+                  </span>
+                  <span>
+                    <span className="inline-block w-2 h-2 rounded-full mr-1" style={{ background: '#00aaff' }} />
+                    TX: {formatBytes(bandwidthChart[cursorIndex].tx)}
+                  </span>
+                  <span className="ml-auto text-[var(--text-secondary)]">
+                    Total: {formatBytes(bandwidthChart[cursorIndex].rx + bandwidthChart[cursorIndex].tx)}
+                  </span>
+                </div>
+              )}
             </Card>
 
             {/* Top users */}

@@ -9,18 +9,17 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/romashqua/outpost/internal/auth"
 	"github.com/romashqua/outpost/internal/mail"
 )
 
 type SettingsHandler struct {
-	pool   *pgxpool.Pool
+	pool DB
 	mailer *mail.Mailer
 }
 
-func NewSettingsHandler(pool *pgxpool.Pool, mailer *mail.Mailer) *SettingsHandler {
+func NewSettingsHandler(pool DB, mailer *mail.Mailer) *SettingsHandler {
 	return &SettingsHandler{pool: pool, mailer: mailer}
 }
 

@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/romashqua/outpost/internal/auth"
 )
@@ -24,12 +23,12 @@ type S2SNotifier interface {
 }
 
 type S2SHandler struct {
-	pool     *pgxpool.Pool
+	pool DB
 	log      *slog.Logger
 	notifier S2SNotifier
 }
 
-func NewS2SHandler(pool *pgxpool.Pool, notifier S2SNotifier, logger ...*slog.Logger) *S2SHandler {
+func NewS2SHandler(pool DB, notifier S2SNotifier, logger ...*slog.Logger) *S2SHandler {
 	l := slog.Default()
 	if len(logger) > 0 && logger[0] != nil {
 		l = logger[0]
@@ -43,6 +42,7 @@ func (h *S2SHandler) Routes() chi.Router {
 	r.With(auth.RequireAdmin).Post("/", h.create)
 	r.Route("/{id}", func(r chi.Router) {
 		r.Get("/", h.get)
+		r.With(auth.RequireAdmin).Put("/", h.update)
 		r.With(auth.RequireAdmin).Delete("/", h.delete)
 		r.Get("/members", h.listMembers)
 		r.With(auth.RequireAdmin).Post("/members", h.addMember)
@@ -136,6 +136,10 @@ func (h *S2SHandler) create(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "topology must be 'mesh' or 'hub_spoke'")
 		return
 	}
+	if req.Topology == "hub_spoke" && (req.HubGatewayID == nil || *req.HubGatewayID == "") {
+		respondError(w, http.StatusBadRequest, "hub_gateway_id is required for hub_spoke topology")
+		return
+	}
 
 	var t s2sTunnel
 	err := h.pool.QueryRow(r.Context(),
@@ -206,6 +210,71 @@ func (h *S2SHandler) get(w http.ResponseWriter, r *http.Request) {
 // @Failure 400 {object} map[string]string
 // @Failure 404 {object} map[string]string
 // @Failure 500 {object} map[string]string
+type updateS2STunnelRequest struct {
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+}
+
+// @Summary Update S2S tunnel
+// @Description Update a site-to-site tunnel's name or description. Requires admin privileges.
+// @Tags S2S Tunnels
+// @Accept json
+// @Produce json
+// @Param id path string true "Tunnel ID (UUID)"
+// @Param body body updateS2STunnelRequest true "Update data"
+// @Success 200 {object} s2sTunnel
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /s2s-tunnels/{id} [put]
+func (h *S2SHandler) update(w http.ResponseWriter, r *http.Request) {
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var req updateS2STunnelRequest
+	if err := parseBody(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if req.Name == nil && req.Description == nil {
+		respondError(w, http.StatusBadRequest, "no fields to update")
+		return
+	}
+
+	var t s2sTunnel
+	err = h.pool.QueryRow(r.Context(),
+		`UPDATE s2s_tunnels SET
+		   name = COALESCE($1, name),
+		   description = COALESCE($2, description),
+		   updated_at = now()
+		 WHERE id = $3
+		 RETURNING id, name, description, topology, hub_gateway_id, is_active, created_at, updated_at`,
+		req.Name, req.Description, id,
+	).Scan(&t.ID, &t.Name, &t.Description, &t.Topology, &t.HubGatewayID, &t.IsActive, &t.CreatedAt, &t.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "tunnel not found")
+			return
+		}
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			respondError(w, http.StatusConflict, "tunnel name already exists")
+			return
+		}
+		h.log.Error("failed to update s2s tunnel", "error", err, "id", id)
+		respondError(w, http.StatusInternalServerError, "failed to update tunnel")
+		return
+	}
+
+	h.log.Info("s2s tunnel updated", "id", id)
+	respondJSON(w, http.StatusOK, t)
+}
+
 // @Security BearerAuth
 // @Router /s2s-tunnels/{id} [delete]
 func (h *S2SHandler) delete(w http.ResponseWriter, r *http.Request) {

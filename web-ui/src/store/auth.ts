@@ -20,6 +20,7 @@ interface AuthState {
   token: string | null
   user: User | null
   isAuthenticated: boolean
+  isInitialized: boolean
   needsMFA: boolean
   mfaToken: string | null
   passwordMustChange: boolean
@@ -29,17 +30,11 @@ interface AuthState {
   clearPasswordMustChange: () => void
   logout: () => void
   setAuth: (token: string, user: User) => void
+  refreshToken: () => Promise<void>
+  initialize: () => void
 }
 
-function parseJwtPayload(token: string): Record<string, unknown> | null {
-  try {
-    const base64 = token.split('.')[1]
-    const json = atob(base64.replace(/-/g, '+').replace(/_/g, '/'))
-    return JSON.parse(json)
-  } catch {
-    return null
-  }
-}
+import { parseJwtPayload } from '@/utils/jwt'
 
 function userFromToken(token: string, fallbackUsername?: string): User {
   const payload = parseJwtPayload(token)
@@ -70,14 +65,30 @@ export const useAuthStore = create<AuthState>((set) => ({
     return stored ? JSON.parse(stored) : null
   })(),
   isAuthenticated: !!localStorage.getItem('outpost-token'),
+  isInitialized: false,
   needsMFA: false,
-  mfaToken: null,
+  mfaToken: sessionStorage.getItem('outpost-mfa-token'),
   passwordMustChange: false,
+
+  initialize: () => {
+    const token = localStorage.getItem('outpost-token')
+    const storedUser = localStorage.getItem('outpost-user')
+    const mfaToken = sessionStorage.getItem('outpost-mfa-token')
+    set({
+      token,
+      user: storedUser ? JSON.parse(storedUser) : null,
+      isAuthenticated: !!token,
+      isInitialized: true,
+      needsMFA: !!mfaToken,
+      mfaToken,
+    })
+  },
 
   login: async (username: string, password: string) => {
     const res = await api.post<LoginResponse>('/auth/login', { username, password })
 
     if (res.mfa_required && res.mfa_token) {
+      sessionStorage.setItem('outpost-mfa-token', res.mfa_token)
       set({ needsMFA: true, mfaToken: res.mfa_token })
       return
     }
@@ -87,6 +98,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
 
     const user = applyToken(res.token, username)
+    sessionStorage.removeItem('outpost-mfa-token')
     set({
       token: res.token,
       user,
@@ -112,6 +124,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     }
 
     const user = applyToken(res.token)
+    sessionStorage.removeItem('outpost-mfa-token')
     set({
       token: res.token,
       user,
@@ -141,6 +154,7 @@ export const useAuthStore = create<AuthState>((set) => ({
     })
     localStorage.removeItem('outpost-token')
     localStorage.removeItem('outpost-user')
+    sessionStorage.removeItem('outpost-mfa-token')
     set({
       token: null,
       user: null,
@@ -151,12 +165,31 @@ export const useAuthStore = create<AuthState>((set) => ({
     })
   },
 
+  refreshToken: async () => {
+    const { token } = useAuthStore.getState()
+    if (!token) return
+
+    try {
+      const res = await api.post<LoginResponse>('/auth/refresh', { token })
+      if (res.token) {
+        const user = applyToken(res.token)
+        set({ token: res.token, user, isAuthenticated: true })
+      }
+    } catch {
+      // Refresh failed — force logout.
+      useAuthStore.getState().logout()
+    }
+  },
+
   setAuth: (token: string, user: User) => {
     localStorage.setItem('outpost-token', token)
     localStorage.setItem('outpost-user', JSON.stringify(user))
     set({ token, user, isAuthenticated: true })
   },
 }))
+
+// Initialize on load.
+useAuthStore.getState().initialize()
 
 // Listen for 401 events dispatched by the API client (avoids circular imports).
 window.addEventListener('auth:logout', () => {

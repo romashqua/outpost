@@ -8,8 +8,14 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/pgconn"
 )
+
+// DB is the database interface used by trust score calculator.
+type DB interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
 
 // TrustLevel categorizes device trust into actionable tiers.
 type TrustLevel string
@@ -80,12 +86,12 @@ type TrustComponent struct {
 
 // TrustScoreCalculator computes device trust scores.
 type TrustScoreCalculator struct {
-	pool   *pgxpool.Pool
+	pool   DB
 	config TrustScoreConfig
 }
 
 // NewTrustScoreCalculator creates a new calculator.
-func NewTrustScoreCalculator(pool *pgxpool.Pool, config TrustScoreConfig) *TrustScoreCalculator {
+func NewTrustScoreCalculator(pool DB, config TrustScoreConfig) *TrustScoreCalculator {
 	return &TrustScoreCalculator{pool: pool, config: config}
 }
 

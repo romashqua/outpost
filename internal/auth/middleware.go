@@ -17,6 +17,12 @@ func GetUserFromContext(ctx context.Context) (*TokenClaims, bool) {
 	return claims, ok
 }
 
+// ContextWithClaims returns a new context with the given claims stored under
+// the same key used by JWTMiddleware. This is intended for testing.
+func ContextWithClaims(ctx context.Context, claims *TokenClaims) context.Context {
+	return context.WithValue(ctx, claimsKey, claims)
+}
+
 // JWTMiddleware returns middleware that validates a Bearer token in the
 // Authorization header and stores the parsed claims in the request context.
 // Responds with 401 Unauthorized on any failure.

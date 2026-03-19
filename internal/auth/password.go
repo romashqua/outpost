@@ -8,7 +8,7 @@ import (
 
 // HashPassword returns a bcrypt hash of the plaintext password.
 func HashPassword(password string) (string, error) {
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
 	if err != nil {
 		return "", fmt.Errorf("hashing password: %w", err)
 	}

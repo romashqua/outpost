@@ -75,7 +75,7 @@ That's it. Database migrations run automatically, all services start in the corr
 | Feature | Description |
 |---|---|
 | **WireGuard Tunnels** | Kernel and userspace support with automatic key management |
-| **Site-to-Site** | Full mesh and hub-spoke topologies with BGP-lite route exchange |
+| **Site-to-Site** | Full mesh and hub-spoke topologies with automatic route synchronization |
 | **NAT Traversal** | Built-in STUN/TURN relay servers for restricted networks |
 | **Smart Routes** | Selective domain/CIDR routing through proxy servers (SOCKS5, HTTP, Shadowsocks, VLESS) |
 | **Real-Time Sync** | gRPC bidirectional streaming between core and gateways |
@@ -118,6 +118,8 @@ That's it. Database migrations run automatically, all services start in the corr
 | **Multi-Tenancy** | MSP/reseller mode with full organization isolation |
 | **Built-in PKI** | Automatic WireGuard key rotation with zero downtime |
 | **Visual Network Map** | Interactive SVG topology of the entire VPN mesh |
+| **Gateway HA** | Multi-gateway failover with automatic health monitoring and endpoint switching |
+| **Horizontal Scaling** | Multi-core behind LB without etcd — PG + Redis Pub/Sub, zero overhead with 1 core |
 | **Email Notifications** | Configurable SMTP for MFA, device enrollment, alerts (i18n) |
 | **Prometheus Metrics** | Full observability with ready-made dashboards |
 | **Docker & Kubernetes** | docker-compose for development, Helm charts for production |
@@ -135,22 +137,23 @@ That's it. Database migrations run automatically, all services start in the corr
                    +--------+--------+
                             |
                    +--------+--------+
-                   |  outpost-core   |  API server, OIDC provider,
-                   |  :8080  HTTP    |  admin panel, gRPC hub
-                   |  :50051 gRPC    |  React UI (go:embed)
+                   |  Load Balancer  |  L4/L7 (nginx, envoy, HAProxy)
                    +---+--------+---+
                        |        |
-              gRPC streaming  gRPC streaming
-                       |        |
               +--------+--+  +--+--------+
-              |  gateway  |  |  gateway  |     N gateways
-              | :51820/udp|  | :51821/udp|     per site
-              | WireGuard |  | WireGuard |
-              +-----------+  +-----------+
-                    |              |
-              +-----+-----+  +----+------+
-              |  Clients   |  |  Clients  |
-              +-----------+  +-----------+
+              | core-1    |  | core-2    |   N cores (stateless)
+              | :8080 HTTP|  | :8080 HTTP|   Redis Pub/Sub for
+              | :50051 gRPC  | :50051 gRPC   cross-core events
+              +---+----+--+  +--+----+---+
+                  |    |        |    |
+         gRPC streaming     gRPC streaming
+                  |    |        |    |
+              +---+--+ +--+  +-+--+ +---+
+              | GW-1 | | GW-2 |   | GW-3 |  N gateways
+              |:51820| |:51820|   |:51820|  per network
+              +------+ +------+   +------+
+                 |        |          |
+              Clients  Clients    Clients
 ```
 
 | Component | Role | Default Ports |
@@ -161,7 +164,7 @@ That's it. Database migrations run automatically, all services start in the corr
 | `outpost-client` | Cross-platform VPN client with MFA and device posture reporting | -- |
 | `outpostctl` | CLI management and automation tool | -- |
 
-> For a detailed architecture overview, see [docs/architecture.md](docs/architecture.md).
+**Scaling:** Core is fully stateless — any number of instances behind a LB. PostgreSQL is the single source of truth. Redis Pub/Sub coordinates events between core instances (peer updates, firewall changes). No etcd or external consensus needed — PG advisory locks for singleton tasks (health monitor, cron). See [docs/architecture.md](docs/architecture.md) for details.
 
 ---
 
@@ -229,6 +232,8 @@ SCIM 2.0:     /scim/v2/Users, /scim/v2/Groups (bearer token auth)
 | **Smart Routing (Proxy)** | Yes | No | No | No | No |
 | **Built-in PKI / Key Rotation** | Yes | No | No | Yes | No |
 | **Visual Network Map** | Yes | No | No | No | No |
+| **Gateway HA (Failover)** | Yes | No | No | Yes (DERP) | No |
+| **Horizontal Scaling** | Yes (no etcd) | No | No | Yes (paid) | No |
 | **Self-Hosted** | Yes | Yes | Yes | Limited (Headscale) | Yes |
 | **Protocol-Level MFA** | Yes | Yes | No | No | No |
 | **NAT Traversal** | In progress | No | Yes | Yes (DERP) | No |

@@ -78,7 +78,17 @@ type natCheckResponse struct {
 // --- Handlers ---
 
 // getStatus returns the latest NAT status for a device.
-// GET /api/v1/nat/status?device_id=<uuid>
+// @Summary Get NAT status
+// @Description Return the latest NAT traversal status for a device.
+// @Tags NAT
+// @Produce json
+// @Param device_id query string true "Device UUID"
+// @Success 200 {object} natStatusResponse
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /nat/status [get]
 func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request) {
 	deviceIDStr := r.URL.Query().Get("device_id")
 	if deviceIDStr == "" {
@@ -110,7 +120,17 @@ func (h *Handler) getStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // triggerCheck runs NAT type detection and persists the result.
-// POST /api/v1/nat/check
+// @Summary Trigger NAT check
+// @Description Run NAT type detection for a device and persist the result.
+// @Tags NAT
+// @Accept json
+// @Produce json
+// @Param body body natCheckRequest true "NAT check parameters"
+// @Success 200 {object} natCheckResponse
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /nat/check [post]
 func (h *Handler) triggerCheck(w http.ResponseWriter, r *http.Request) {
 	var req natCheckRequest
 	if err := parseBody(r, &req); err != nil {
@@ -173,7 +193,14 @@ func (h *Handler) triggerCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 // listRelays returns all active relay servers.
-// GET /api/v1/nat/relays
+// @Summary List relay servers
+// @Description Return all relay servers ordered by creation date.
+// @Tags NAT
+// @Produce json
+// @Success 200 {array} relayServerResponse
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /nat/relays [get]
 func (h *Handler) listRelays(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.pool.Query(r.Context(),
 		`SELECT id, name, address, region, protocol, is_active, created_at, updated_at
@@ -205,7 +232,18 @@ func (h *Handler) listRelays(w http.ResponseWriter, r *http.Request) {
 }
 
 // createRelay adds a new relay server (admin only).
-// POST /api/v1/nat/relays
+// @Summary Create relay server
+// @Description Add a new relay server. Requires admin privileges.
+// @Tags NAT
+// @Accept json
+// @Produce json
+// @Param body body object true "Relay server data (name, address, region, protocol)"
+// @Success 201 {object} relayServerResponse
+// @Failure 400 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /nat/relays [post]
 func (h *Handler) createRelay(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name     string `json:"name"`
@@ -248,7 +286,17 @@ func (h *Handler) createRelay(w http.ResponseWriter, r *http.Request) {
 }
 
 // deleteRelay removes a relay server (admin only).
-// DELETE /api/v1/nat/relays/{id}
+// @Summary Delete relay server
+// @Description Remove a relay server by ID. Requires admin privileges.
+// @Tags NAT
+// @Param id path string true "Relay server UUID"
+// @Success 204
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 409 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /nat/relays/{id} [delete]
 func (h *Handler) deleteRelay(w http.ResponseWriter, r *http.Request) {
 	idStr := chi.URLParam(r, "id")
 	id, err := uuid.Parse(idStr)

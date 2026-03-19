@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2, Network, Globe, Route, Server, Download } from 'lucide-react'
+import { Plus, Trash2, Network, Route, Server, Download, Pencil } from 'lucide-react'
 import { api } from '@/api/client'
 import { useToastStore } from '@/store/toast'
 import Card from '@/components/ui/Card'
@@ -46,11 +46,6 @@ interface TunnelRoute {
   created_at: string
 }
 
-interface AllowedDomain {
-  id: string
-  domain: string
-}
-
 function TunnelDetailPanel({
   tunnel,
   onClose,
@@ -66,9 +61,6 @@ function TunnelDetailPanel({
   const [selectedGatewayId, setSelectedGatewayId] = useState('')
   const [showAddRoute, setShowAddRoute] = useState(false)
   const [routeForm, setRouteForm] = useState({ destination: '', via_gateway: '', metric: '100' })
-  const [showAddDomain, setShowAddDomain] = useState(false)
-  const [domainName, setDomainName] = useState('')
-
   // Fetch members
   const { data: members = [], isLoading: membersLoading } = useQuery<TunnelMember[]>({
     queryKey: ['s2s-tunnels', tunnel.id, 'members'],
@@ -138,40 +130,6 @@ function TunnelDetailPanel({
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['s2s-tunnels', tunnel.id, 'routes'] })
       addToast(t('s2s.removeRoute'), 'success')
-    },
-    onError: (err) => {
-      addToast((err as Error).message, 'error')
-    },
-  })
-
-  // Fetch domains
-  const { data: domains = [], isLoading: domainsLoading } = useQuery<AllowedDomain[]>({
-    queryKey: ['s2s-tunnels', tunnel.id, 'domains'],
-    queryFn: () => api.get(`/s2s-tunnels/${tunnel.id}/domains`),
-  })
-
-  // Add domain mutation
-  const addDomainMutation = useMutation({
-    mutationFn: (domain: string) =>
-      api.post(`/s2s-tunnels/${tunnel.id}/domains`, { domain }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['s2s-tunnels', tunnel.id, 'domains'] })
-      setShowAddDomain(false)
-      setDomainName('')
-      addToast(t('s2s.addDomain'), 'success')
-    },
-    onError: (err) => {
-      addToast((err as Error).message, 'error')
-    },
-  })
-
-  // Remove domain mutation
-  const removeDomainMutation = useMutation({
-    mutationFn: (domainId: string) =>
-      api.delete(`/s2s-tunnels/${tunnel.id}/domains/${domainId}`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['s2s-tunnels', tunnel.id, 'domains'] })
-      addToast(t('s2s.removeDomain'), 'success')
     },
     onError: (err) => {
       addToast((err as Error).message, 'error')
@@ -413,72 +371,6 @@ function TunnelDetailPanel({
           )}
         </div>
 
-        <hr className="border-[var(--border)]" />
-
-        {/* Allowed Domains section */}
-        <div>
-          <div className={sectionHeader}>
-            <Globe size={14} />
-            {t('s2s.allowedDomains')}
-          </div>
-          {domainsLoading ? (
-            <p className="text-sm text-[var(--text-muted)]">{t('common.loading')}</p>
-          ) : domains.length === 0 ? (
-            <p className="text-sm text-[var(--text-muted)] italic">{t('s2s.noDomains')}</p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              {domains.map((d) => (
-                <div key={d.id} className={listItem}>
-                  <span className="text-sm font-mono text-[var(--text-primary)]">
-                    {d.domain}
-                  </span>
-                  <button
-                    onClick={() => removeDomainMutation.mutate(d.id)}
-                    disabled={removeDomainMutation.isPending}
-                    className="text-[var(--text-muted)] hover:text-[var(--danger)] transition-colors"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-          {showAddDomain ? (
-            <div className="mt-2 flex items-center gap-2">
-              <Input
-                placeholder={t('s2s.domainName')}
-                value={domainName}
-                onChange={(e) => setDomainName(e.target.value)}
-                className="flex-1"
-              />
-              <Button
-                size="sm"
-                disabled={!domainName.trim() || addDomainMutation.isPending}
-                onClick={() => {
-                  if (domainName.trim()) addDomainMutation.mutate(domainName.trim())
-                }}
-              >
-                {addDomainMutation.isPending ? t('s2s.adding') : t('common.create')}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setShowAddDomain(false)}>
-                {t('common.cancel')}
-              </Button>
-            </div>
-          ) : (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="mt-2"
-              onClick={() => {
-                addDomainMutation.reset()
-                setShowAddDomain(true)
-              }}
-            >
-              <Plus size={14} className="mr-1" /> {t('s2s.addDomain')}
-            </Button>
-          )}
-        </div>
-
         {/* Close button at bottom */}
         <div className="flex justify-end pt-2">
           <Button variant="ghost" onClick={onClose}>
@@ -497,6 +389,8 @@ export default function S2SPage() {
   const [showCreate, setShowCreate] = useState(false)
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [selectedTunnel, setSelectedTunnel] = useState<S2STunnel | null>(null)
+  const [editTarget, setEditTarget] = useState<S2STunnel | null>(null)
+  const [editForm, setEditForm] = useState({ name: '', description: '' })
   const [form, setForm] = useState({ name: '', topology: 'mesh', description: '' })
 
   const { data: tunnels = [], isLoading, error } = useQuery<S2STunnel[]>({
@@ -512,6 +406,21 @@ export default function S2SPage() {
       setShowCreate(false)
       setForm({ name: '', topology: 'mesh', description: '' })
       addToast(t('s2s.createTunnel'), 'success')
+    },
+    onError: (err) => {
+      addToast((err as Error).message, 'error')
+    },
+  })
+
+  const updateMutation = useMutation({
+    mutationFn: (payload: { id: string; name: string; description?: string }) => {
+      const { id, ...rest } = payload
+      return api.put(`/s2s-tunnels/${id}`, rest)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['s2s-tunnels'] })
+      setEditTarget(null)
+      addToast(t('s2s.tunnelUpdated'), 'success')
     },
     onError: (err) => {
       addToast((err as Error).message, 'error')
@@ -570,12 +479,25 @@ export default function S2SPage() {
       key: 'actions',
       header: '',
       render: (row: S2STunnel) => (
-        <button
-          onClick={(e) => { e.stopPropagation(); deleteMutation.reset(); setDeleteId(row.id) }}
-          className="text-[var(--text-muted)] hover:text-[var(--danger)] transition-colors"
-        >
-          <Trash2 size={16} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              updateMutation.reset()
+              setEditForm({ name: row.name, description: row.description || '' })
+              setEditTarget(row)
+            }}
+            className="text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors"
+          >
+            <Pencil size={16} />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); deleteMutation.reset(); setDeleteId(row.id) }}
+            className="text-[var(--text-muted)] hover:text-[var(--danger)] transition-colors"
+          >
+            <Trash2 size={16} />
+          </button>
+        </div>
       ),
     },
   ]
@@ -677,6 +599,44 @@ export default function S2SPage() {
             </div>
           </form>
         </Modal>
+
+      {/* Edit Tunnel Modal */}
+      <Modal open={!!editTarget} title={t('s2s.editTunnel')} onClose={() => setEditTarget(null)}>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (editTarget) updateMutation.mutate({ id: editTarget.id, name: editForm.name, description: editForm.description || undefined })
+          }}
+          className="flex flex-col gap-4"
+        >
+          <Input
+            label={t('common.name')}
+            value={editForm.name}
+            onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+            placeholder="e.g. datacenter-mesh"
+            required
+          />
+          <Input
+            label={t('s2s.description')}
+            value={editForm.description}
+            onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+            placeholder={t('common.description')}
+          />
+          {updateMutation.isError && (
+            <p className="text-sm text-[var(--danger)]">
+              {(updateMutation.error as Error).message}
+            </p>
+          )}
+          <div className="flex justify-end gap-2 mt-2">
+            <Button variant="ghost" type="button" onClick={() => setEditTarget(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button type="submit" disabled={updateMutation.isPending}>
+              {updateMutation.isPending ? t('s2s.saving') : t('common.save')}
+            </Button>
+          </div>
+        </form>
+      </Modal>
 
       <Modal open={!!deleteId} title={t('s2s.deleteTunnel')} onClose={() => setDeleteId(null)}>
           <p className="text-sm text-[var(--text-secondary)] mb-4">

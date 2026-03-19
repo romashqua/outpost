@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { CheckCircle, XCircle, Trash2, Plus, Download, Copy, Check, FileDown, Mail } from 'lucide-react'
+import { CheckCircle, XCircle, Trash2, Plus, Download, Copy, Check, FileDown, Mail, Pencil } from 'lucide-react'
+import CheckboxItem from '@/components/CheckboxItem'
 import Table from '@/components/ui/Table'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
@@ -86,6 +87,8 @@ export default function DevicesPage() {
     autoGenerateKey: true,
     wireguard_pubkey: '',
   })
+  const [editTarget, setEditTarget] = useState<Device | null>(null)
+  const [editName, setEditName] = useState('')
   const [copiedConfig, setCopiedConfig] = useState(false)
 
   interface DevicesResponse {
@@ -246,6 +249,19 @@ export default function DevicesPage() {
     },
   })
 
+  const updateMutation = useMutation({
+    mutationFn: (payload: { id: string; name: string }) =>
+      api.put(`/devices/${payload.id}`, { name: payload.name }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['devices'] })
+      setEditTarget(null)
+      addToast(t('devices.deviceUpdated'), 'success')
+    },
+    onError: (err) => {
+      addToast((err as Error).message, 'error')
+    },
+  })
+
   const copyConfig = () => {
     copyToClipboard(configText)
   }
@@ -335,6 +351,19 @@ export default function DevicesPage() {
       header: '',
       render: (row: Device) => (
         <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            title={t('devices.editDevice')}
+            onClick={(e) => {
+              e.stopPropagation()
+              updateMutation.reset()
+              setEditName(row.name)
+              setEditTarget(row)
+            }}
+          >
+            <Pencil size={14} className="text-[var(--accent)]" />
+          </Button>
           <Button
             variant="ghost"
             size="sm"
@@ -526,23 +555,7 @@ export default function DevicesPage() {
               </div>
             )}
 
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="autoGenKey"
-                checked={createForm.autoGenerateKey}
-                onChange={(e) =>
-                  setCreateForm((f) => ({ ...f, autoGenerateKey: e.target.checked }))
-                }
-                className="rounded border-[var(--border)] bg-[var(--bg-secondary)]"
-              />
-              <label
-                htmlFor="autoGenKey"
-                className="text-sm text-[var(--text-secondary)] cursor-pointer"
-              >
-                {t('devices.autoGenerateKey')}
-              </label>
-            </div>
+            <CheckboxItem compact checked={createForm.autoGenerateKey} onChange={(v) => setCreateForm((f) => ({ ...f, autoGenerateKey: v }))} label={t('devices.autoGenerateKey')} />
 
             {!createForm.autoGenerateKey && (
               <Input
@@ -607,6 +620,35 @@ export default function DevicesPage() {
             )}
           </div>
         </div>
+      </Modal>
+
+      {/* Edit Device Modal */}
+      <Modal open={!!editTarget} onClose={() => setEditTarget(null)} title={t('devices.editDevice')}>
+        <form className="flex flex-col gap-4" onSubmit={(e) => {
+          e.preventDefault()
+          if (editTarget) updateMutation.mutate({ id: editTarget.id, name: editName.trim() })
+        }}>
+          <Input
+            label={t('devices.name')}
+            placeholder="e.g. laptop-work"
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            required
+          />
+          {updateMutation.isError && (
+            <p className="text-sm text-[var(--danger)]">
+              {(updateMutation.error as Error).message}
+            </p>
+          )}
+          <div className="flex gap-3 justify-end mt-2">
+            <Button variant="secondary" type="button" onClick={() => setEditTarget(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button type="submit" disabled={updateMutation.isPending}>
+              {updateMutation.isPending ? t('devices.saving') : t('common.save')}
+            </Button>
+          </div>
+        </form>
       </Modal>
 
       {/* Delete Confirmation Modal */}

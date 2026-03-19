@@ -33,14 +33,38 @@ interface TopUser {
 }
 
 interface AuditEntry {
-  id: string
-  user_id: string
-  username: string
+  id: number
+  timestamp: string
+  user_id?: string
   action: string
   resource: string
-  resource_id: string
+  details?: Record<string, unknown>
   ip_address: string
-  created_at: string
+  user_agent: string
+}
+
+function formatAction(action: string): string {
+  // Convert "POST /api/v1/devices/xxx/approve" → "Device approved"
+  const map: Record<string, string> = {
+    'POST /api/v1/auth/login': 'User login',
+    'POST /api/v1/auth/logout': 'User logout',
+  }
+  if (map[action]) return map[action]
+  // Parse "METHOD /api/v1/resource..." pattern
+  const m = action.match(/^(POST|PUT|DELETE|PATCH)\s+\/api\/v1\/(\w+)/)
+  if (m) {
+    const [, method, resource] = m
+    const res = resource.replace(/-/g, ' ')
+    if (action.includes('/approve')) return `${res} approved`
+    if (action.includes('/revoke')) return `${res} revoked`
+    if (method === 'POST') return `${res} created`
+    if (method === 'DELETE') return `${res} deleted`
+    if (method === 'PUT' || method === 'PATCH') return `${res} updated`
+  }
+  // Semantic events
+  if (action.startsWith('gateway.')) return action.replace('.', ' ')
+  if (action.startsWith('device.')) return action.replace('.', ' ')
+  return action
 }
 
 function formatBytes(bytes: number): string {
@@ -112,7 +136,7 @@ export default function DashboardPage() {
 
   const auditQuery = useQuery<{ data: AuditEntry[] }>({
     queryKey: ['audit', 'recent'],
-    queryFn: () => api.get('/audit?limit=5'),
+    queryFn: () => api.get('/audit?per_page=5'),
   })
 
   const stats = statsQuery.data
@@ -273,12 +297,12 @@ export default function DashboardPage() {
                   className="flex items-center justify-between py-2 border-b border-[var(--border)] last:border-0"
                 >
                   <div className="flex-1 min-w-0">
-                    <span className="text-xs font-mono text-[var(--accent)]">{entry.username}</span>
+                    <span className="text-xs font-mono text-[var(--accent)]">{entry.user_id ? entry.user_id.slice(0, 8) : 'system'}</span>
                     <span className="text-xs text-[var(--text-muted)] mx-2">—</span>
-                    <span className="text-xs font-mono text-[var(--text-secondary)]">{entry.action}</span>
+                    <span className="text-xs font-mono text-[var(--text-secondary)]">{formatAction(entry.action)}</span>
                   </div>
                   <span className="text-xs font-mono text-[var(--text-muted)] ml-2 shrink-0">
-                    {new Date(entry.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </span>
                 </div>
               ))}

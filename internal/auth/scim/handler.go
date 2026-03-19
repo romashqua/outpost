@@ -302,6 +302,17 @@ func dbUserToSCIM(id uuid.UUID, username, email, firstName, lastName string, isA
 
 // --- User Endpoints ---
 
+// @Summary List SCIM users
+// @Description Return a paginated list of SCIM 2.0 User resources (RFC 7644 section 3.4.2).
+// @Tags SCIM
+// @Produce json
+// @Param startIndex query int false "1-based start index" default(1)
+// @Param count query int false "Maximum number of results" default(100)
+// @Success 200 {object} SCIMListResponse
+// @Failure 401 {object} SCIMError
+// @Failure 500 {object} SCIMError
+// @Security SCIMBearerToken
+// @Router /scim/v2/Users [get]
 func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 	startIndex, count := parseSCIMPagination(r)
 	offset := startIndex - 1 // SCIM is 1-indexed
@@ -362,6 +373,18 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// @Summary Create SCIM user
+// @Description Provision a new user via SCIM 2.0 (RFC 7644 section 3.3).
+// @Tags SCIM
+// @Accept json
+// @Produce json
+// @Param body body CreateUserRequest true "SCIM User resource"
+// @Success 201 {object} SCIMUser
+// @Failure 400 {object} SCIMError
+// @Failure 401 {object} SCIMError
+// @Failure 409 {object} SCIMError
+// @Security SCIMBearerToken
+// @Router /scim/v2/Users [post]
 func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 	var req CreateUserRequest
 	if err := parseSCIMBody(r, &req); err != nil {
@@ -429,6 +452,17 @@ func (h *Handler) createUser(w http.ResponseWriter, r *http.Request) {
 	respondSCIM(w, http.StatusCreated, user)
 }
 
+// @Summary Get SCIM user
+// @Description Retrieve a single SCIM 2.0 User resource by ID.
+// @Tags SCIM
+// @Produce json
+// @Param id path string true "User UUID"
+// @Success 200 {object} SCIMUser
+// @Failure 400 {object} SCIMError
+// @Failure 401 {object} SCIMError
+// @Failure 404 {object} SCIMError
+// @Security SCIMBearerToken
+// @Router /scim/v2/Users/{id} [get]
 func (h *Handler) getUser(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -458,6 +492,19 @@ func (h *Handler) getUser(w http.ResponseWriter, r *http.Request) {
 	respondSCIM(w, http.StatusOK, dbUserToSCIM(id, username, email, firstName, lastName, isActive, externalID, createdAt, updatedAt))
 }
 
+// @Summary Replace SCIM user
+// @Description Fully replace a SCIM 2.0 User resource (RFC 7644 section 3.5.1).
+// @Tags SCIM
+// @Accept json
+// @Produce json
+// @Param id path string true "User UUID"
+// @Param body body CreateUserRequest true "SCIM User resource"
+// @Success 200 {object} SCIMUser
+// @Failure 400 {object} SCIMError
+// @Failure 401 {object} SCIMError
+// @Failure 404 {object} SCIMError
+// @Security SCIMBearerToken
+// @Router /scim/v2/Users/{id} [put]
 func (h *Handler) replaceUser(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -516,6 +563,19 @@ func (h *Handler) replaceUser(w http.ResponseWriter, r *http.Request) {
 	respondSCIM(w, http.StatusOK, dbUserToSCIM(id, req.UserName, email, firstName, lastName, isActive, externalID, createdAt, updatedAt))
 }
 
+// @Summary Patch SCIM user
+// @Description Apply partial updates to a SCIM 2.0 User resource (RFC 7644 section 3.5.2).
+// @Tags SCIM
+// @Accept json
+// @Produce json
+// @Param id path string true "User UUID"
+// @Param body body SCIMPatchOp true "SCIM PatchOp request"
+// @Success 200 {object} SCIMUser
+// @Failure 400 {object} SCIMError
+// @Failure 401 {object} SCIMError
+// @Failure 404 {object} SCIMError
+// @Security SCIMBearerToken
+// @Router /scim/v2/Users/{id} [patch]
 func (h *Handler) patchUser(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -657,6 +717,17 @@ func patchValueToEmails(value any) ([]SCIMEmail, error) {
 	return emails, nil
 }
 
+// @Summary Delete SCIM user
+// @Description Deactivate a user via SCIM 2.0 DELETE (sets is_active=false).
+// @Tags SCIM
+// @Param id path string true "User UUID"
+// @Success 204 "No Content"
+// @Failure 400 {object} SCIMError
+// @Failure 401 {object} SCIMError
+// @Failure 404 {object} SCIMError
+// @Failure 500 {object} SCIMError
+// @Security SCIMBearerToken
+// @Router /scim/v2/Users/{id} [delete]
 func (h *Handler) deleteUser(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -728,6 +799,17 @@ func (h *Handler) loadGroupMembers(ctx context.Context, groupID uuid.UUID) ([]SC
 	return members, rows.Err()
 }
 
+// @Summary List SCIM groups
+// @Description Return a paginated list of SCIM 2.0 Group resources with members.
+// @Tags SCIM
+// @Produce json
+// @Param startIndex query int false "1-based start index" default(1)
+// @Param count query int false "Maximum number of results" default(100)
+// @Success 200 {object} SCIMListResponse
+// @Failure 401 {object} SCIMError
+// @Failure 500 {object} SCIMError
+// @Security SCIMBearerToken
+// @Router /scim/v2/Groups [get]
 func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
 	startIndex, count := parseSCIMPagination(r)
 	offset := startIndex - 1
@@ -786,6 +868,18 @@ func (h *Handler) listGroups(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// @Summary Create SCIM group
+// @Description Provision a new group via SCIM 2.0 with optional initial members.
+// @Tags SCIM
+// @Accept json
+// @Produce json
+// @Param body body object true "SCIM Group resource with displayName and optional members"
+// @Success 201 {object} SCIMGroup
+// @Failure 400 {object} SCIMError
+// @Failure 401 {object} SCIMError
+// @Failure 409 {object} SCIMError
+// @Security SCIMBearerToken
+// @Router /scim/v2/Groups [post]
 func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Schemas     []string     `json:"schemas"`
@@ -841,6 +935,18 @@ func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
 	respondSCIM(w, http.StatusCreated, dbGroupToSCIM(id, body.DisplayName, createdAt, members))
 }
 
+// @Summary Get SCIM group
+// @Description Retrieve a single SCIM 2.0 Group resource by ID with members.
+// @Tags SCIM
+// @Produce json
+// @Param id path string true "Group UUID"
+// @Success 200 {object} SCIMGroup
+// @Failure 400 {object} SCIMError
+// @Failure 401 {object} SCIMError
+// @Failure 404 {object} SCIMError
+// @Failure 500 {object} SCIMError
+// @Security SCIMBearerToken
+// @Router /scim/v2/Groups/{id} [get]
 func (h *Handler) getGroup(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -870,6 +976,20 @@ func (h *Handler) getGroup(w http.ResponseWriter, r *http.Request) {
 	respondSCIM(w, http.StatusOK, dbGroupToSCIM(id, name, createdAt, members))
 }
 
+// @Summary Replace SCIM group
+// @Description Fully replace a SCIM 2.0 Group resource including its member list.
+// @Tags SCIM
+// @Accept json
+// @Produce json
+// @Param id path string true "Group UUID"
+// @Param body body object true "SCIM Group resource with displayName and members"
+// @Success 200 {object} SCIMGroup
+// @Failure 400 {object} SCIMError
+// @Failure 401 {object} SCIMError
+// @Failure 404 {object} SCIMError
+// @Failure 500 {object} SCIMError
+// @Security SCIMBearerToken
+// @Router /scim/v2/Groups/{id} [put]
 func (h *Handler) replaceGroup(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -935,6 +1055,19 @@ func (h *Handler) replaceGroup(w http.ResponseWriter, r *http.Request) {
 	respondSCIM(w, http.StatusOK, dbGroupToSCIM(id, body.DisplayName, createdAt, members))
 }
 
+// @Summary Patch SCIM group
+// @Description Apply partial updates to a SCIM 2.0 Group resource (add/remove/replace members or displayName).
+// @Tags SCIM
+// @Accept json
+// @Produce json
+// @Param id path string true "Group UUID"
+// @Param body body SCIMPatchOp true "SCIM PatchOp request"
+// @Success 200 {object} SCIMGroup
+// @Failure 400 {object} SCIMError
+// @Failure 401 {object} SCIMError
+// @Failure 404 {object} SCIMError
+// @Security SCIMBearerToken
+// @Router /scim/v2/Groups/{id} [patch]
 func (h *Handler) patchGroup(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -1158,6 +1291,17 @@ func patchValueToMembers(value any) ([]SCIMMember, error) {
 	return members, nil
 }
 
+// @Summary Delete SCIM group
+// @Description Permanently delete a SCIM 2.0 Group resource and remove all member associations.
+// @Tags SCIM
+// @Param id path string true "Group UUID"
+// @Success 204 "No Content"
+// @Failure 400 {object} SCIMError
+// @Failure 401 {object} SCIMError
+// @Failure 404 {object} SCIMError
+// @Failure 500 {object} SCIMError
+// @Security SCIMBearerToken
+// @Router /scim/v2/Groups/{id} [delete]
 func (h *Handler) deleteGroup(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -1183,6 +1327,14 @@ func (h *Handler) deleteGroup(w http.ResponseWriter, r *http.Request) {
 
 // --- Discovery Endpoints ---
 
+// @Summary Get SCIM ServiceProviderConfig
+// @Description Return the SCIM 2.0 Service Provider Configuration (RFC 7643 section 5).
+// @Tags SCIM
+// @Produce json
+// @Success 200 {object} object
+// @Failure 401 {object} SCIMError
+// @Security SCIMBearerToken
+// @Router /scim/v2/ServiceProviderConfig [get]
 func (h *Handler) serviceProviderConfig(w http.ResponseWriter, r *http.Request) {
 	_ = r
 	respondSCIM(w, http.StatusOK, map[string]any{
@@ -1221,6 +1373,14 @@ func (h *Handler) serviceProviderConfig(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// @Summary Get SCIM Schemas
+// @Description Return the SCIM 2.0 schema definitions for User and Group resources.
+// @Tags SCIM
+// @Produce json
+// @Success 200 {object} SCIMListResponse
+// @Failure 401 {object} SCIMError
+// @Security SCIMBearerToken
+// @Router /scim/v2/Schemas [get]
 func (h *Handler) schemas(w http.ResponseWriter, r *http.Request) {
 	_ = r
 	respondSCIM(w, http.StatusOK, SCIMListResponse{

@@ -5,6 +5,7 @@ import {
   Building2, Search, Pencil, Trash2, BarChart3, Plus, ArrowLeft,
   Users, Network, Router, Link2, Unlink, ChevronRight,
 } from 'lucide-react'
+import CheckboxItem from '@/components/CheckboxItem'
 import Table from '@/components/ui/Table'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
@@ -46,6 +47,7 @@ interface TenantNetwork {
   id: string
   name: string
   cidr: string
+  dns: string[]
   is_active: boolean
 }
 
@@ -53,6 +55,7 @@ interface TenantGateway {
   id: string
   name: string
   endpoint: string
+  health_status: string
   is_online: boolean
 }
 
@@ -785,15 +788,7 @@ export default function TenantsPage() {
               onChange={(e) => setEditForm({ ...editForm, max_networks: parseInt(e.target.value) || 0 })}
             />
           </div>
-          <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
-            <input
-              type="checkbox"
-              checked={editForm.is_active}
-              onChange={(e) => setEditForm({ ...editForm, is_active: e.target.checked })}
-              className="rounded"
-            />
-            {t('status.active')}
-          </label>
+          <CheckboxItem compact checked={editForm.is_active} onChange={(v) => setEditForm({ ...editForm, is_active: v })} label={t('status.active')} />
           {updateMutation.error && (
             <p className="text-sm text-[var(--danger)]">
               {(updateMutation.error as Error).message}

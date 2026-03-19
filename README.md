@@ -75,7 +75,7 @@ docker compose -f deploy/docker/docker-compose.yml up -d
 | Фича | Описание |
 |---|---|
 | **WireGuard-туннели** | Kernel и userspace с автоматическим управлением ключами |
-| **Site-to-Site** | Full mesh и hub-spoke топологии с BGP-lite обменом маршрутами |
+| **Site-to-Site** | Full mesh и hub-spoke топологии с автоматической синхронизацией маршрутов |
 | **NAT Traversal** | Встроенные STUN/TURN relay-серверы для ограниченных сетей |
 | **Smart Routes** | Селективная маршрутизация доменов/CIDR через прокси (SOCKS5, HTTP, Shadowsocks, VLESS) |
 | **Real-time синхронизация** | gRPC bidirectional streaming между core и gateway |
@@ -118,6 +118,8 @@ docker compose -f deploy/docker/docker-compose.yml up -d
 | **Мультитенантность** | MSP/reseller-режим с полной изоляцией организаций |
 | **Встроенный PKI** | Автоматическая ротация ключей WireGuard без простоя |
 | **Интерактивная карта сети** | SVG-визуализация всей VPN-топологии |
+| **Gateway HA** | Multi-gateway failover с автоматическим мониторингом здоровья и переключением |
+| **Горизонтальное масштабирование** | Multi-core за LB без etcd — PG + Redis Pub/Sub, zero overhead при 1 core |
 | **Email-уведомления** | Настраиваемый SMTP для MFA, enrollment, алертов (i18n) |
 | **Prometheus-метрики** | Полная observability с готовыми дашбордами |
 | **Docker & Kubernetes** | docker-compose для разработки, Helm-чарты для продакшена |
@@ -135,22 +137,23 @@ docker compose -f deploy/docker/docker-compose.yml up -d
                    +--------+--------+
                             |
                    +--------+--------+
-                   |  outpost-core   |  API сервер, OIDC-провайдер,
-                   |  :8080  HTTP    |  админ-панель, gRPC хаб
-                   |  :50051 gRPC    |  React UI (go:embed)
+                   |  Load Balancer  |  L4/L7 (nginx, envoy, HAProxy)
                    +---+--------+---+
                        |        |
-              gRPC streaming  gRPC streaming
-                       |        |
               +--------+--+  +--+--------+
-              |  gateway  |  |  gateway  |     N gateway-ов
-              | :51820/udp|  | :51821/udp|     на каждый сайт
-              | WireGuard |  | WireGuard |
-              +-----------+  +-----------+
-                    |              |
-              +-----+-----+  +----+------+
-              |  Клиенты   |  |  Клиенты  |
-              +-----------+  +-----------+
+              | core-1    |  | core-2    |   N core-ов (stateless)
+              | :8080 HTTP|  | :8080 HTTP|   Redis Pub/Sub для
+              | :50051 gRPC  | :50051 gRPC   cross-core событий
+              +---+----+--+  +--+----+---+
+                  |    |        |    |
+         gRPC streaming     gRPC streaming
+                  |    |        |    |
+              +---+--+ +--+  +-+--+ +---+
+              | GW-1 | | GW-2 |   | GW-3 |  N gateway-ов
+              |:51820| |:51820|   |:51820|  на каждую сеть
+              +------+ +------+   +------+
+                 |        |          |
+              Клиенты  Клиенты    Клиенты
 ```
 
 | Компонент | Роль | Порты |
@@ -161,7 +164,7 @@ docker compose -f deploy/docker/docker-compose.yml up -d
 | `outpost-client` | Кроссплатформенный VPN-клиент с MFA и posture-отчётами | — |
 | `outpostctl` | CLI-утилита управления и автоматизации | — |
 
-> Подробнее — [docs/architecture.md](docs/architecture.md)
+**Масштабирование:** Core полностью stateless — любое количество экземпляров за LB. PostgreSQL — единственный источник истины. Redis Pub/Sub координирует события между core-инстансами (peer updates, firewall changes). Никакого etcd или внешнего consensus — PG advisory locks для singleton-задач (health monitor, cron). Подробнее — [docs/architecture.md](docs/architecture.md)
 
 ---
 
@@ -229,6 +232,8 @@ SCIM 2.0:     /scim/v2/Users, /scim/v2/Groups (bearer token auth)
 | **Smart Routing (прокси)** | Да | Нет | Нет | Нет | Нет |
 | **Встроенный PKI / ротация ключей** | Да | Нет | Нет | Да | Нет |
 | **Интерактивная карта сети** | Да | Нет | Нет | Нет | Нет |
+| **Gateway HA (failover)** | Да | Нет | Нет | Да (DERP) | Нет |
+| **Горизонтальное масштабирование** | Да (без etcd) | Нет | Нет | Да (платно) | Нет |
 | **Self-Hosted** | Да | Да | Да | Ограниченно (Headscale) | Да |
 | **MFA на уровне протокола** | Да | Да | Нет | Нет | Нет |
 | **NAT Traversal** | В разработке | Нет | Да | Да (DERP) | Нет |

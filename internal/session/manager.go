@@ -282,6 +282,15 @@ func (m *Manager) Routes() chi.Router {
 	return r
 }
 
+// @Summary List active sessions
+// @Description Return all active sessions for the authenticated user.
+// @Tags Sessions
+// @Produce json
+// @Success 200 {array} Session
+// @Failure 401 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /sessions [get]
 func (m *Manager) listHandler(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
@@ -298,6 +307,18 @@ func (m *Manager) listHandler(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, sessions)
 }
 
+// @Summary Revoke a session
+// @Description Revoke a specific session by ID. The session must belong to the authenticated user.
+// @Tags Sessions
+// @Param id path string true "Session ID"
+// @Success 204 "Session revoked"
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /sessions/{id} [delete]
 func (m *Manager) revokeHandler(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
@@ -330,6 +351,14 @@ func (m *Manager) revokeHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// @Summary Revoke all sessions
+// @Description Revoke all active sessions for the authenticated user.
+// @Tags Sessions
+// @Success 204 "All sessions revoked"
+// @Failure 401 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /sessions [delete]
 func (m *Manager) revokeAllHandler(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {

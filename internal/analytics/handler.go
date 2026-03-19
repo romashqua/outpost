@@ -37,6 +37,18 @@ func (h *Handler) Routes() chi.Router {
 	return r
 }
 
+// @Summary Bandwidth over time
+// @Description Return bandwidth usage aggregated into time buckets for the given range.
+// @Tags Analytics
+// @Produce json
+// @Param from query string false "Start time in RFC3339 format (default: 24h ago)"
+// @Param to query string false "End time in RFC3339 format (default: now)"
+// @Param bucket query string false "Bucket duration, e.g. 1h, 15m (default: 1h)"
+// @Success 200 {array} BandwidthBucket
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /analytics/bandwidth [get]
 func (h *Handler) bandwidth(w http.ResponseWriter, r *http.Request) {
 	from, to, err := parseTimeRange(r)
 	if err != nil {
@@ -64,6 +76,18 @@ func (h *Handler) bandwidth(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, data)
 }
 
+// @Summary Top users by traffic
+// @Description Return the top users ranked by total bandwidth for the given time range.
+// @Tags Analytics
+// @Produce json
+// @Param from query string false "Start time in RFC3339 format (default: 24h ago)"
+// @Param to query string false "End time in RFC3339 format (default: now)"
+// @Param limit query int false "Maximum number of users to return (1-100, default: 10)"
+// @Success 200 {array} UserBandwidth
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /analytics/top-users [get]
 func (h *Handler) topUsers(w http.ResponseWriter, r *http.Request) {
 	from, to, err := parseTimeRange(r)
 	if err != nil {
@@ -87,6 +111,17 @@ func (h *Handler) topUsers(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, data)
 }
 
+// @Summary Connections heatmap
+// @Description Return connection counts grouped by hour for heatmap visualization.
+// @Tags Analytics
+// @Produce json
+// @Param from query string false "Start time in RFC3339 format (default: 24h ago)"
+// @Param to query string false "End time in RFC3339 format (default: now)"
+// @Success 200 {array} HourlyConnections
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /analytics/connections-heatmap [get]
 func (h *Handler) connectionsHeatmap(w http.ResponseWriter, r *http.Request) {
 	from, to, err := parseTimeRange(r)
 	if err != nil {
@@ -111,6 +146,17 @@ type summaryResponse struct {
 	UniqueDevices int   `json:"unique_devices"`
 }
 
+// @Summary Analytics summary
+// @Description Return aggregated summary statistics including total bytes, flows, unique users, and devices.
+// @Tags Analytics
+// @Produce json
+// @Param from query string false "Start time in RFC3339 format (default: 24h ago)"
+// @Param to query string false "End time in RFC3339 format (default: now)"
+// @Success 200 {object} summaryResponse
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /analytics/summary [get]
 func (h *Handler) summary(w http.ResponseWriter, r *http.Request) {
 	from, to, err := parseTimeRange(r)
 	if err != nil {

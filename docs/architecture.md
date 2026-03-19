@@ -87,6 +87,7 @@ The VPN client. Cross-platform (Linux, macOS, Windows) with MFA support, device 
 - Establishing WireGuard tunnels
 - Device posture reporting (OS version, disk encryption, antivirus, screen lock)
 - Tunnel lifecycle management (connect, disconnect, reconnect)
+- Multi-gateway HA failover (automatic endpoint switching on handshake loss)
 
 **Source:** `cmd/outpost-client/main.go` + `internal/client/`
 
@@ -193,7 +194,7 @@ PostgreSQL 17 with the `pgcrypto` extension. All IDs are UUIDs. Timestamps are `
 | `user_roles` | User-role many-to-many association |
 | `networks` | WireGuard networks (CIDR, DNS, port, keepalive) |
 | `devices` | WireGuard peers (public key, assigned IP, approval status) |
-| `gateways` | WireGuard gateways (endpoint, public key, token hash, last seen) |
+| `gateways` | WireGuard gateways (endpoint, public key, token hash, last seen, health_status, consecutive_failures) |
 | `network_acls` | Group-based network access ACLs |
 | `sessions` | User sessions (indexed by user_id and expires_at) |
 | `settings` | Application settings in key-value format (JSONB) |
@@ -383,6 +384,42 @@ Client loses VPN connectivity immediately
 Client must re-authenticate with MFA to reconnect
 ```
 
+## Gateway High Availability
+
+Outpost supports multi-gateway deployments for eliminating single points of failure. Multiple gateways can serve the same network, and clients automatically failover when a gateway becomes unresponsive.
+
+```
+                     outpost-core
+                          │
+              ┌───────────┼───────────┐
+              │           │           │
+        heartbeat    heartbeat    heartbeat
+        (30s)        (30s)        (30s)
+              │           │           │
+       ┌──────▼──┐  ┌─────▼───┐  ┌───▼──────┐
+       │gateway-1│  │gateway-2│  │gateway-3 │
+       │pri: 100 │  │pri: 90  │  │pri: 80   │
+       │healthy  │  │healthy  │  │unhealthy │
+       └────┬────┘  └────┬────┘  └──────────┘
+            │             │
+     VPN clients failover automatically
+     from gateway-1 to gateway-2
+     if no handshake for 45s
+```
+
+**Health monitoring flow:**
+1. Each gateway sends a heartbeat every 30 seconds via gRPC stream
+2. Core updates `last_seen`, sets `health_status = 'healthy'`, resets `consecutive_failures = 0`
+3. `MonitorGatewayHealth()` goroutine runs every 60 seconds, checks for stale gateways (`last_seen > 90s`)
+4. Stale gateways get `consecutive_failures++`; after 3 failures → `health_status = 'unhealthy'`
+5. On transition to unhealthy, core pushes a FullResync to peer gateways on the same network
+
+**Client-side failover flow:**
+1. Client receives ordered list of gateways at enrollment (sorted by priority DESC)
+2. Health ticker (15s) checks WireGuard last handshake time
+3. If no handshake for >45s (3 consecutive checks), client switches peer endpoint to next gateway
+4. WireGuard peer is reconfigured in-place without tearing down the TUN interface
+
 ## Network Topology
 
 ### Docker Compose Networks
@@ -442,6 +479,122 @@ Audit logs are available via `GET /api/v1/audit` with filtering and export capab
 All components use the Go `slog` package with configurable level and format:
 - Levels: `debug`, `info`, `warn`, `error`
 - Formats: `json` (production), `text` (development)
+
+## Horizontal Scaling (Multi-Core)
+
+Outpost is designed to run multiple `outpost-core` instances behind a load balancer for both performance and fault tolerance. No etcd or external consensus system is required — PostgreSQL and Redis (already in the stack) provide all necessary coordination.
+
+### What already scales without changes
+
+| Component | Why it scales |
+|-----------|--------------|
+| HTTP API | Fully stateless — all state lives in PostgreSQL. Any core can serve any request. |
+| Gateways | Already reconnect with exponential backoff when the gRPC stream drops. If one core goes down, gateways reconnect to another. |
+| Sessions | Already stored in Redis (shared across cores). |
+| JWT auth | Symmetric HMAC-SHA256 — any core with the same `OUTPOST_JWT_SECRET` can validate tokens. |
+| Frontend | Static SPA served via `go:embed` — no server-side state. |
+| Database | PostgreSQL is the single source of truth. Connection pooling via pgx is per-core. |
+
+### What needs Redis Pub/Sub (one change)
+
+The `StreamHub` holds gRPC streams in memory. When Core-1 approves a device, only gateways connected to Core-1 receive the `PeerUpdate`. Gateways connected to Core-2 don't know about it until the next periodic FullResync.
+
+**Solution:** When a core broadcasts a peer/firewall/config update, it also publishes the event to a Redis Pub/Sub channel (`outpost:events`). Other cores subscribe to this channel and forward the event to their locally connected gateways.
+
+```
+Admin approves device on Core-1
+    → Core-1 writes to PostgreSQL
+    → Core-1 sends PeerUpdate to its gateways (StreamHub)
+    → Core-1 publishes event to Redis "outpost:events"
+    → Core-2 receives event from Redis
+    → Core-2 sends PeerUpdate to its gateways (StreamHub)
+```
+
+If a Redis Pub/Sub message is lost (Redis is fire-and-forget), the existing periodic FullResync ensures eventual consistency. This gives us strong consistency in the common case and eventual consistency as a fallback.
+
+### Singleton tasks (leader election)
+
+Some goroutines must run on exactly one core to avoid duplicate work:
+
+| Task | Current | Multi-core solution |
+|------|---------|-------------------|
+| `MonitorGatewayHealth` | Runs on the single core | `pg_try_advisory_lock(1)` — only one core acquires |
+| `managePeerStatsPartitions` | Runs on the single core | `pg_try_advisory_lock(2)` — only one core acquires |
+| Token blacklist cleanup | Runs on the single core | `pg_try_advisory_lock(3)` — only one core acquires |
+
+PostgreSQL advisory locks are released automatically when the connection drops, so if the leader core dies, another core acquires the lock on the next tick.
+
+### Rate limiting
+
+The in-memory `ipRateLimiter` must move to Redis (`INCR` + `EXPIRE`) so that rate limits are enforced globally across all cores, not per-core.
+
+### Deployment topology
+
+```
+                    Load Balancer (L4 for gRPC, L7 for HTTP)
+                         │
+              ┌──────────┼──────────┐
+              │          │          │
+         ┌────▼───┐ ┌────▼───┐ ┌────▼───┐
+         │Core-1  │ │Core-2  │ │Core-3  │
+         │StreamHub│ │StreamHub│ │StreamHub│
+         └──┬───┬─┘ └──┬───┬─┘ └──┬───┬─┘
+            │   │       │   │       │   │
+            │   └───────┤   ├───────┘   │
+            │     Redis Pub/Sub         │
+            │           │               │
+        ┌───▼──┐   ┌───▼──┐       ┌───▼──┐
+        │ GW-1 │   │ GW-2 │       │ GW-3 │
+        └──────┘   └──────┘       └──────┘
+
+         ┌──────────┐    ┌────────┐
+         │PostgreSQL│    │ Redis  │
+         │ (truth)  │    │(pubsub)│
+         └──────────┘    └────────┘
+```
+
+**Small (dev/testing):** 1 core, 1 gateway, 1 PG, 1 Redis — works as-is, no changes needed.
+
+**HA (production):** 2–3 cores behind a load balancer, 2+ gateways per network, PostgreSQL with streaming replica, Redis Sentinel.
+
+**Load balancer requirements:**
+- HTTP: standard L7 (nginx, HAProxy, cloud ALB)
+- gRPC: L4 or gRPC-aware L7 (envoy, nginx with `grpc_pass`, cloud NLB)
+- Gateway gRPC connections are long-lived; use connection-based (L4) balancing, not per-request
+
+### Why not etcd / NATS / Kafka?
+
+| Option | Verdict | Reason |
+|--------|---------|--------|
+| etcd | Overkill | 3+ nodes for quorum, TLS certs, compaction — massive operational burden for what we need |
+| NATS | Unnecessary | Adds a new dependency; Redis Pub/Sub covers our use case |
+| Kafka | Way overkill | We need fire-and-forget event notification, not durable streaming |
+| Redis Pub/Sub | Chosen | Already deployed, zero new dependencies, simple, adequate with FullResync fallback |
+| PostgreSQL LISTEN/NOTIFY | Alternative | Works but 8KB payload limit; Redis is more flexible and already handles sessions |
+
+### TLS for gRPC
+
+In production multi-core deployments, gRPC traffic between gateways and cores should use TLS:
+
+```bash
+# Generate CA and certificates
+outpostctl pki generate-ca --out /etc/outpost/pki/
+outpostctl pki generate-cert --ca /etc/outpost/pki/ca.crt --ca-key /etc/outpost/pki/ca.key \
+    --cn outpost-core --san "core-1.outpost.local,core-2.outpost.local" \
+    --out /etc/outpost/pki/core.crt --key-out /etc/outpost/pki/core.key
+outpostctl pki generate-cert --ca /etc/outpost/pki/ca.crt --ca-key /etc/outpost/pki/ca.key \
+    --cn outpost-gateway --out /etc/outpost/pki/gw.crt --key-out /etc/outpost/pki/gw.key
+```
+
+Environment variables:
+- `OUTPOST_GRPC_TLS_CERT` — path to core TLS certificate
+- `OUTPOST_GRPC_TLS_KEY` — path to core TLS private key
+- `OUTPOST_GRPC_TLS_CA` — path to CA certificate (for gateway verification)
+- `OUTPOST_GATEWAY_TLS_CERT` — gateway certificate
+- `OUTPOST_GATEWAY_TLS_KEY` — gateway private key
+- `OUTPOST_GATEWAY_TLS_CA` — CA certificate (for core verification)
+
+When TLS env vars are set, gRPC server uses `credentials.NewTLS()` instead of `grpc.Creds(insecure)`. Gateways verify the core certificate against the CA. Mutual TLS (mTLS) is supported — core verifies gateway certificates when `OUTPOST_GRPC_TLS_CA` is set.
 
 ## Technology Decisions
 

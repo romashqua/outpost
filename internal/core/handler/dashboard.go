@@ -5,15 +5,14 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type DashboardHandler struct {
-	pool *pgxpool.Pool
+	pool DB
 	log  *slog.Logger
 }
 
-func NewDashboardHandler(pool *pgxpool.Pool) *DashboardHandler {
+func NewDashboardHandler(pool DB) *DashboardHandler {
 	return &DashboardHandler{pool: pool, log: slog.Default().With("handler", "dashboard")}
 }
 

@@ -14,7 +14,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pquerna/otp/totp"
 
 	"github.com/romashqua/outpost/internal/auth"
@@ -26,7 +25,7 @@ type PasswordResetMailer interface {
 }
 
 type AuthHandler struct {
-	pool           *pgxpool.Pool
+	pool DB
 	jwtSecret      string
 	log            *slog.Logger
 	mailer         PasswordResetMailer
@@ -34,7 +33,7 @@ type AuthHandler struct {
 	tokenBlacklist auth.TokenBlacklist
 }
 
-func NewAuthHandler(pool *pgxpool.Pool, jwtSecret string, opts ...func(*AuthHandler)) *AuthHandler {
+func NewAuthHandler(pool DB, jwtSecret string, opts ...func(*AuthHandler)) *AuthHandler {
 	h := &AuthHandler{pool: pool, jwtSecret: jwtSecret, log: slog.Default()}
 	for _, o := range opts {
 		o(h)
@@ -137,7 +136,7 @@ func (h *AuthHandler) login(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		// Constant-time: always run bcrypt to prevent timing-based user enumeration.
-		_ = auth.CheckPassword("$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl0UhmRMM7pNmuj9iesVaFnHa", req.Password)
+		_ = auth.CheckPassword("$2a$12$VYht5JiYLLqWVBUHEOrGsOjf1ZcehRmAtxBmDxopSzrxfEiC3WVn2", req.Password)
 		respondError(w, http.StatusUnauthorized, "invalid credentials")
 		return
 	}

@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2, Route, ChevronDown, ChevronRight } from 'lucide-react'
+import { Plus, Trash2, Route, ChevronDown, ChevronRight, Pencil } from 'lucide-react'
 import { api } from '@/api/client'
 import { useToastStore } from '@/store/toast'
 import Card from '@/components/ui/Card'
@@ -60,6 +60,8 @@ export default function SmartRoutesPage() {
   const [showAddEntry, setShowAddEntry] = useState<string | null>(null)
   const [deleteRouteId, setDeleteRouteId] = useState<string | null>(null)
   const [deleteProxyId, setDeleteProxyId] = useState<string | null>(null)
+  const [editRouteTarget, setEditRouteTarget] = useState<SmartRoute | null>(null)
+  const [editRouteForm, setEditRouteForm] = useState({ name: '', description: '' })
   const [expandedRoute, setExpandedRoute] = useState<string | null>(null)
 
   const [routeForm, setRouteForm] = useState({ name: '', description: '' })
@@ -94,6 +96,19 @@ export default function SmartRoutesPage() {
       setShowCreateRoute(false)
       setRouteForm({ name: '', description: '' })
       addToast(t('smartRoutes.routeCreated'), 'success')
+    },
+    onError: (err) => addToast((err as Error).message, 'error'),
+  })
+
+  const updateRouteMutation = useMutation({
+    mutationFn: (payload: { id: string; name: string; description?: string }) => {
+      const { id, ...rest } = payload
+      return api.put(`/smart-routes/${id}`, rest)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['smart-routes'] })
+      setEditRouteTarget(null)
+      addToast(t('smartRoutes.routeUpdated'), 'success')
     },
     onError: (err) => addToast((err as Error).message, 'error'),
   })
@@ -237,6 +252,18 @@ export default function SmartRoutesPage() {
             title={t('smartRoutes.addEntry')}
           >
             <Plus size={16} />
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              updateRouteMutation.reset()
+              setEditRouteForm({ name: row.name, description: row.description || '' })
+              setEditRouteTarget(row)
+            }}
+            className="text-[var(--text-muted)] hover:text-[var(--accent)] transition-colors"
+            title={t('common.edit')}
+          >
+            <Pencil size={16} />
           </button>
           <button
             onClick={(e) => { e.stopPropagation(); deleteRouteMutation.reset(); setDeleteRouteId(row.id) }}
@@ -468,6 +495,48 @@ export default function SmartRoutesPage() {
             </Button>
             <Button type="submit" disabled={createRouteMutation.isPending}>
               {createRouteMutation.isPending ? t('common.loading') : t('common.create')}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Edit Route Modal */}
+      <Modal open={!!editRouteTarget} title={t('smartRoutes.editRoute')} onClose={() => setEditRouteTarget(null)}>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (editRouteTarget) updateRouteMutation.mutate({
+              id: editRouteTarget.id,
+              name: editRouteForm.name,
+              description: editRouteForm.description || undefined,
+            })
+          }}
+          className="flex flex-col gap-4"
+        >
+          <Input
+            label={t('common.name')}
+            value={editRouteForm.name}
+            onChange={(e) => setEditRouteForm({ ...editRouteForm, name: e.target.value })}
+            placeholder="e.g. bypass-blocks"
+            required
+          />
+          <Input
+            label={t('common.description')}
+            value={editRouteForm.description}
+            onChange={(e) => setEditRouteForm({ ...editRouteForm, description: e.target.value })}
+            placeholder="Optional description"
+          />
+          {updateRouteMutation.isError && (
+            <p className="text-sm text-[var(--danger)]">
+              {(updateRouteMutation.error as Error).message}
+            </p>
+          )}
+          <div className="flex justify-end gap-2 mt-2">
+            <Button variant="ghost" type="button" onClick={() => setEditRouteTarget(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button type="submit" disabled={updateRouteMutation.isPending}>
+              {updateRouteMutation.isPending ? t('common.loading') : t('common.save')}
             </Button>
           </div>
         </form>

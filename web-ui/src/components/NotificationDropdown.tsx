@@ -72,16 +72,30 @@ function formatAction(action: string, resource: string, details: Record<string, 
   const name = (details?.name as string) || (details?.username as string) || ''
   const suffix = name ? ` "${name}"` : ''
 
+  // Semantic events (e.g. "device.approved", "gateway.connected")
   if (a === 'create' || a === 'insert') return `${t('notifications.created')} ${resource}${suffix}`
   if (a === 'update') return `${t('notifications.updated')} ${resource}${suffix}`
   if (a === 'delete') return `${t('notifications.deleted')} ${resource}${suffix}`
-  if (a.includes('approve')) return `${t('notifications.deviceApproved')}${suffix}`
-  if (a.includes('revoke')) return `${t('notifications.deviceRevoked')}${suffix}`
-  if (a.includes('login')) return t('notifications.userLoggedIn')
-  if (a.includes('logout')) return t('notifications.userLoggedOut')
+  if (a === 'device.approved') return `${t('notifications.deviceApproved')}${suffix}`
+  if (a === 'device.revoked') return `${t('notifications.deviceRevoked')}${suffix}`
+  if (a === 'gateway.connected') return `${t('notifications.gatewayConnected')}${suffix}`
+  if (a === 'gateway.disconnected') return `${t('notifications.gatewayDisconnected')}${suffix}`
+
+  // Middleware format: "METHOD /api/v1/resource/..."
+  const m = a.match(/^(post|put|delete|patch)\s+\/api\/v1\/(\w[\w-]*)/)
+  if (m) {
+    const [, method, res] = m
+    const resName = res.replace(/-/g, ' ')
+    if (a.includes('/login')) return t('notifications.userLoggedIn')
+    if (a.includes('/logout')) return t('notifications.userLoggedOut')
+    if (a.includes('/approve')) return `${t('notifications.deviceApproved')}${suffix}`
+    if (a.includes('/revoke')) return `${t('notifications.deviceRevoked')}${suffix}`
+    if (method === 'post') return `${t('notifications.created')} ${resName}${suffix}`
+    if (method === 'delete') return `${t('notifications.deleted')} ${resName}${suffix}`
+    if (method === 'put' || method === 'patch') return `${t('notifications.updated')} ${resName}${suffix}`
+  }
+
   if (a.includes('mfa_fail')) return t('notifications.mfaFailed')
-  if (a.includes('gateway') && a.includes('connect')) return `${t('notifications.gatewayConnected')}${suffix}`
-  if (a.includes('gateway') && a.includes('disconnect')) return `${t('notifications.gatewayDisconnected')}${suffix}`
 
   return `${action} ${resource}${suffix}`
 }

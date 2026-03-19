@@ -4,17 +4,16 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // HealthHandler provides health check endpoints for liveness and readiness probes.
 type HealthHandler struct {
-	pool *pgxpool.Pool
+	pool DB
 }
 
 // NewHealthHandler creates a HealthHandler. The pool may be nil if only
 // liveness checks are needed.
-func NewHealthHandler(pool *pgxpool.Pool) *HealthHandler {
+func NewHealthHandler(pool DB) *HealthHandler {
 	return &HealthHandler{pool: pool}
 }
 

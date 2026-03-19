@@ -12,7 +12,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/romashqua/outpost/internal/auth"
 )
@@ -25,14 +24,14 @@ type Mailer interface {
 
 // UserHandler provides CRUD endpoints for user management.
 type UserHandler struct {
-	pool   *pgxpool.Pool
+	pool DB
 	log    *slog.Logger
 	mailer Mailer
 }
 
 // NewUserHandler creates a UserHandler backed by the given connection pool.
 // An optional mailer can be provided to send welcome emails on user creation.
-func NewUserHandler(pool *pgxpool.Pool, logger *slog.Logger, mailer ...Mailer) *UserHandler {
+func NewUserHandler(pool DB, logger *slog.Logger, mailer ...Mailer) *UserHandler {
 	l := slog.Default()
 	if logger != nil {
 		l = logger

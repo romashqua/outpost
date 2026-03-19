@@ -35,6 +35,14 @@ func (h *Handler) Routes() chi.Router {
 	return r
 }
 
+// @Summary Full compliance report
+// @Description Run all compliance checks and return a full report covering SOC2, ISO27001, and GDPR.
+// @Tags Compliance
+// @Produce json
+// @Success 200 {object} ComplianceReport
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /compliance/report [get]
 func (h *Handler) report(w http.ResponseWriter, r *http.Request) {
 	report, err := h.checker.RunAllChecks(r.Context())
 	if err != nil {
@@ -44,6 +52,14 @@ func (h *Handler) report(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, report)
 }
 
+// @Summary SOC2 compliance checks
+// @Description Run SOC2-specific compliance checks and return the results.
+// @Tags Compliance
+// @Produce json
+// @Success 200 {array} ComplianceCheck
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /compliance/soc2 [get]
 func (h *Handler) soc2(w http.ResponseWriter, r *http.Request) {
 	checks, err := h.checker.RunSOC2Checks(r.Context())
 	if err != nil {
@@ -53,6 +69,14 @@ func (h *Handler) soc2(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, checks)
 }
 
+// @Summary ISO27001 compliance checks
+// @Description Run ISO27001-specific compliance checks and return the results.
+// @Tags Compliance
+// @Produce json
+// @Success 200 {array} ComplianceCheck
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /compliance/iso27001 [get]
 func (h *Handler) iso27001(w http.ResponseWriter, r *http.Request) {
 	checks, err := h.checker.RunISO27001Checks(r.Context())
 	if err != nil {
@@ -62,6 +86,14 @@ func (h *Handler) iso27001(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, checks)
 }
 
+// @Summary GDPR compliance checks
+// @Description Run GDPR-specific compliance checks and return the results.
+// @Tags Compliance
+// @Produce json
+// @Success 200 {array} ComplianceCheck
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /compliance/gdpr [get]
 func (h *Handler) gdpr(w http.ResponseWriter, r *http.Request) {
 	checks, err := h.checker.RunGDPRChecks(r.Context())
 	if err != nil {

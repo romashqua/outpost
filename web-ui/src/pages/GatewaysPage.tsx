@@ -5,10 +5,10 @@ import { Plus, Pencil, Trash2, Copy, Check, Search } from 'lucide-react'
 import { api } from '@/api/client'
 import { useToastStore } from '@/store/toast'
 import Table from '@/components/ui/Table'
-import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
 import Modal from '@/components/ui/Modal'
 import Input from '@/components/ui/Input'
+import CheckboxItem from '@/components/CheckboxItem'
 
 interface Network {
   id: string
@@ -31,6 +31,7 @@ interface Gateway {
   wireguard_pubkey: string
   endpoint: string
   is_active: boolean
+  health_status: string
   priority: number
   last_seen: string | null
   created_at: string
@@ -265,37 +266,15 @@ export default function GatewaysPage() {
           />
         )}
         <div className="max-h-48 overflow-y-auto space-y-1">
-          {filtered.map((n) => {
-            const checked = selectedIds.includes(n.id)
-            return (
-              <label
-                key={n.id}
-                className={`flex items-center gap-3 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${
-                  checked
-                    ? 'border-[var(--accent)]/30 bg-[var(--accent)]/5'
-                    : 'border-[var(--border)] bg-[var(--bg-tertiary)] hover:border-[var(--accent)]/50'
-                }`}
-              >
-                <span
-                  className={`flex-shrink-0 w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${
-                    checked
-                      ? 'border-[var(--accent)] bg-[var(--accent)]'
-                      : 'border-[var(--text-muted)]/40 bg-transparent'
-                  }`}
-                >
-                  {checked && <Check size={10} className="text-[var(--bg-primary)]" strokeWidth={3} />}
-                </span>
-                <input
-                  type="checkbox"
-                  className="sr-only"
-                  checked={checked}
-                  onChange={() => onToggle(n.id)}
-                />
-                <span className="font-mono text-sm text-[var(--text-primary)]">{n.name}</span>
-                <span className="text-xs text-[var(--text-muted)] ml-auto font-mono">{n.address}</span>
-              </label>
-            )
-          })}
+          {filtered.map((n) => (
+            <CheckboxItem
+              key={n.id}
+              checked={selectedIds.includes(n.id)}
+              onChange={() => onToggle(n.id)}
+              label={n.name}
+              suffix={<span className="text-xs text-[var(--text-muted)] font-mono">{n.address}</span>}
+            />
+          ))}
           {filtered.length === 0 && (
             <p className="text-center py-4 text-xs text-[var(--text-muted)]">{t('gateways.noNetworks')}</p>
           )}
@@ -346,15 +325,42 @@ export default function GatewaysPage() {
       ),
     },
     {
-      key: 'is_active',
+      key: 'health_status',
       header: t('gateways.health'),
       render: (row: Gateway) => {
-        const variant = row.is_active ? 'online' : 'offline'
-        const label = row.is_active ? 'healthy' : 'offline'
+        const status = row.health_status || 'unknown'
+        const dotColor: Record<string, string> = {
+          healthy: '#00ff88',
+          degraded: '#ffaa00',
+          unhealthy: '#ff4444',
+          unknown: '#666666',
+        }
+        const color = dotColor[status] ?? dotColor.unknown
+        const pulse = status === 'healthy'
         return (
-          <Badge variant={variant} pulse>
-            {t(`status.${label}`)}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <span
+              className="relative flex h-2.5 w-2.5"
+              title={status}
+            >
+              {pulse && (
+                <span
+                  className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-50"
+                  style={{ backgroundColor: color }}
+                />
+              )}
+              <span
+                className="relative inline-flex h-2.5 w-2.5 rounded-full"
+                style={{ backgroundColor: color }}
+              />
+            </span>
+            <span className="font-mono text-xs" style={{ color }}>
+              {status}
+            </span>
+            <span className="font-mono text-xs text-[var(--text-muted)]">
+              {formatLastSeen(row.last_seen)}
+            </span>
+          </div>
         )
       },
     },
@@ -364,13 +370,6 @@ export default function GatewaysPage() {
       sortable: true,
       render: (row: Gateway) => (
         <span className="font-mono text-xs text-[var(--text-muted)]">{row.priority}</span>
-      ),
-    },
-    {
-      key: 'last_seen',
-      header: t('gateways.lastSeen'),
-      render: (row: Gateway) => (
-        <span className="font-mono text-xs text-[var(--text-muted)]">{formatLastSeen(row.last_seen)}</span>
       ),
     },
     {

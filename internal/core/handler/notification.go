@@ -2,11 +2,12 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/romashqua/outpost/internal/auth"
 )
@@ -14,11 +15,11 @@ import (
 // NotificationHandler provides endpoints for in-app notifications
 // sourced from the audit_log table.
 type NotificationHandler struct {
-	pool *pgxpool.Pool
+	pool DB
 }
 
 // NewNotificationHandler creates a NotificationHandler backed by the given connection pool.
-func NewNotificationHandler(pool *pgxpool.Pool) *NotificationHandler {
+func NewNotificationHandler(pool DB) *NotificationHandler {
 	return &NotificationHandler{pool: pool}
 }
 
@@ -40,16 +41,36 @@ type notificationItem struct {
 	UserID    *string   `json:"user_id,omitempty"`
 }
 
-// notificationActions defines which audit actions are surfaced as notifications.
-var notificationActions = []string{
-	"CREATE", "DELETE", "UPDATE",
-	"device.approved", "device.revoked",
-	"login", "logout", "mfa_failed",
-	"gateway.connected", "gateway.disconnected",
+// notificationActionPatterns defines SQL LIKE patterns for audit actions surfaced as notifications.
+// Middleware logs actions as "METHOD /api/v1/...", semantic events use dotted names.
+var notificationActionPatterns = []string{
+	"POST /api/v1/auth/login",
+	"POST /api/v1/auth/logout",
+	"POST /api/v1/devices%",
+	"DELETE /api/v1/devices%",
+	"POST /api/v1/users%",
+	"DELETE /api/v1/users%",
+	"POST /api/v1/networks%",
+	"DELETE /api/v1/networks%",
+	"POST /api/v1/gateways%",
+	"DELETE /api/v1/gateways%",
+	"PUT /api/v1/settings%",
+	"gateway.connected",
+	"gateway.disconnected",
+	"device.approved",
+	"device.revoked",
 }
 
-// list returns recent notifications (audit events) for the current user.
-// Admins see all events; regular users see only their own.
+// @Summary List notifications
+// @Description Return recent audit-log events as notifications. Admins see all events; regular users see only their own.
+// @Tags Notifications
+// @Produce json
+// @Param limit query int false "Max items to return (1-100, default 30)"
+// @Success 200 {object} map[string]any
+// @Failure 401 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /notifications [get]
 func (h *NotificationHandler) list(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
@@ -62,21 +83,25 @@ func (h *NotificationHandler) list(w http.ResponseWriter, r *http.Request) {
 		limit = 30
 	}
 
+	// Build action filter from notification patterns.
+	actionFilter := buildActionFilter()
+
 	var query string
 	var args []any
 
 	if claims.IsAdmin {
-		query = `SELECT id, timestamp, action, resource, details, user_id::text
+		query = fmt.Sprintf(`SELECT id, timestamp, action, resource, details, user_id::text
 			FROM audit_log
+			WHERE (%s)
 			ORDER BY timestamp DESC
-			LIMIT $1`
+			LIMIT $1`, actionFilter)
 		args = []any{limit}
 	} else {
-		query = `SELECT id, timestamp, action, resource, details, user_id::text
+		query = fmt.Sprintf(`SELECT id, timestamp, action, resource, details, user_id::text
 			FROM audit_log
-			WHERE user_id = $1
+			WHERE user_id = $1 AND (%s)
 			ORDER BY timestamp DESC
-			LIMIT $2`
+			LIMIT $2`, actionFilter)
 		args = []any{claims.UserID, limit}
 	}
 
@@ -115,7 +140,16 @@ func (h *NotificationHandler) list(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// unreadCount returns the number of audit events newer than the provided `since` timestamp.
+// @Summary Get unread notification count
+// @Description Return the number of audit events newer than the given timestamp.
+// @Tags Notifications
+// @Produce json
+// @Param since query string false "RFC3339 timestamp (default: 24h ago)"
+// @Success 200 {object} map[string]any
+// @Failure 401 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /notifications/unread-count [get]
 func (h *NotificationHandler) unreadCount(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetUserFromContext(r.Context())
 	if !ok {
@@ -134,12 +168,15 @@ func (h *NotificationHandler) unreadCount(w http.ResponseWriter, r *http.Request
 	var count int
 	var err error
 
+	actionFilter := buildActionFilter()
+
 	if claims.IsAdmin {
 		err = h.pool.QueryRow(r.Context(),
-			`SELECT COUNT(*) FROM audit_log WHERE timestamp > $1`, since).Scan(&count)
+			fmt.Sprintf(`SELECT COUNT(*) FROM audit_log WHERE timestamp > $1 AND (%s)`, actionFilter),
+			since).Scan(&count)
 	} else {
 		err = h.pool.QueryRow(r.Context(),
-			`SELECT COUNT(*) FROM audit_log WHERE user_id = $1 AND timestamp > $2`,
+			fmt.Sprintf(`SELECT COUNT(*) FROM audit_log WHERE user_id = $1 AND timestamp > $2 AND (%s)`, actionFilter),
 			claims.UserID, since).Scan(&count)
 	}
 
@@ -153,9 +190,28 @@ func (h *NotificationHandler) unreadCount(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// markRead is a no-op endpoint that the frontend calls to record the "last read" timestamp.
-// The actual tracking is done client-side via localStorage, but this endpoint exists
-// for future server-side tracking.
+// @Summary Mark notifications as read
+// @Description Record that the user has seen notifications up to now. Currently a no-op placeholder for future server-side tracking.
+// @Tags Notifications
+// @Produce json
+// @Success 200 {object} map[string]any
+// @Security BearerAuth
+// @Router /notifications/mark-read [post]
 func (h *NotificationHandler) markRead(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+}
+
+// buildActionFilter returns a SQL condition that matches only notification-worthy actions.
+// The patterns use LIKE for prefix matching (e.g. "POST /api/v1/devices%")
+// and exact match for semantic events (e.g. "gateway.connected").
+func buildActionFilter() string {
+	var conditions []string
+	for _, p := range notificationActionPatterns {
+		if strings.Contains(p, "%") {
+			conditions = append(conditions, fmt.Sprintf("action LIKE '%s'", p))
+		} else {
+			conditions = append(conditions, fmt.Sprintf("action = '%s'", p))
+		}
+	}
+	return strings.Join(conditions, " OR ")
 }

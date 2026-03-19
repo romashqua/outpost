@@ -14,7 +14,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/romashqua/outpost/internal/auth"
 	"github.com/romashqua/outpost/internal/wireguard"
 )
@@ -32,14 +31,14 @@ type DeviceMailer interface {
 
 // DeviceHandler provides endpoints for managing WireGuard devices (peers).
 type DeviceHandler struct {
-	pool     *pgxpool.Pool
+	pool DB
 	log      *slog.Logger
 	notifier PeerNotifier
 	mailer   DeviceMailer
 }
 
 // NewDeviceHandler creates a DeviceHandler backed by the given connection pool.
-func NewDeviceHandler(pool *pgxpool.Pool, logger ...*slog.Logger) *DeviceHandler {
+func NewDeviceHandler(pool DB, logger ...*slog.Logger) *DeviceHandler {
 	l := slog.Default()
 	if len(logger) > 0 && logger[0] != nil {
 		l = logger[0]
@@ -68,6 +67,7 @@ func (h *DeviceHandler) Routes() chi.Router {
 	r.Post("/enroll", h.enroll)
 	r.Route("/{id}", func(r chi.Router) {
 		r.Get("/", h.get)
+		r.Put("/", h.update)
 		r.Get("/config", h.downloadConfig)
 		r.Post("/send-config", h.sendConfig)
 		r.Delete("/", h.delete)
@@ -104,20 +104,30 @@ type enrollRequest struct {
 	WireguardPubkey string `json:"wireguard_pubkey"`
 }
 
+type gatewayEndpointResponse struct {
+	ID              string `json:"id"`
+	Endpoint        string `json:"endpoint"`
+	ServerPublicKey string `json:"server_public_key"`
+	Priority        int    `json:"priority"`
+	HealthStatus    string `json:"health_status"`
+}
+
 type enrollResponse struct {
-	DeviceID           uuid.UUID `json:"device_id"`
-	Address            string    `json:"address"`
-	DNS                []string  `json:"dns"`
-	Endpoint           string    `json:"endpoint"`
-	ServerPublicKey    string    `json:"server_public_key"`
-	AllowedIPs         []string  `json:"allowed_ips"`
-	PersistentKeepalive int      `json:"persistent_keepalive"`
+	DeviceID           uuid.UUID                 `json:"device_id"`
+	Address            string                    `json:"address"`
+	DNS                []string                  `json:"dns"`
+	Endpoint           string                    `json:"endpoint"`
+	ServerPublicKey    string                    `json:"server_public_key"`
+	AllowedIPs         []string                  `json:"allowed_ips"`
+	PersistentKeepalive int                      `json:"persistent_keepalive"`
+	Gateways           []gatewayEndpointResponse `json:"gateways,omitempty"`
 }
 
 type configResponse struct {
-	Config     string `json:"config"`
-	PrivateKey string `json:"private_key"`
-	PublicKey  string `json:"public_key"`
+	Config     string                    `json:"config"`
+	PrivateKey string                    `json:"private_key"`
+	PublicKey  string                    `json:"public_key"`
+	Gateways   []gatewayEndpointResponse `json:"gateways,omitempty"`
 }
 
 // @Summary List all devices
@@ -449,6 +459,72 @@ func (h *DeviceHandler) get(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, d)
 }
 
+type updateDeviceRequest struct {
+	Name *string `json:"name,omitempty"`
+}
+
+// @Summary Update device
+// @Description Update a device's name. Non-admins can only update their own devices.
+// @Tags Devices
+// @Accept json
+// @Produce json
+// @Param id path string true "Device ID (UUID)"
+// @Param body body updateDeviceRequest true "Update data"
+// @Success 200 {object} deviceResponse
+// @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /devices/{id} [put]
+func (h *DeviceHandler) update(w http.ResponseWriter, r *http.Request) {
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var req updateDeviceRequest
+	if err := parseBody(r, &req); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if req.Name == nil {
+		respondError(w, http.StatusBadRequest, "no fields to update")
+		return
+	}
+
+	// Verify ownership: non-admins can only update their own devices.
+	claims, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		respondError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	var d deviceResponse
+	err = h.pool.QueryRow(r.Context(),
+		`UPDATE devices SET name = COALESCE($1, name), updated_at = now()
+		 WHERE id = $2 AND (user_id = $3 OR $4 = true)
+		 RETURNING id, user_id, name, wireguard_pubkey, assigned_ip, is_approved,
+		           last_handshake, network_id, created_at, updated_at`,
+		req.Name, id, claims.UserID, claims.IsAdmin,
+	).Scan(&d.ID, &d.UserID, &d.Name, &d.WireguardPubkey, &d.AssignedIP,
+		&d.IsApproved, &d.LastHandshake, &d.NetworkID, &d.CreatedAt, &d.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			respondError(w, http.StatusNotFound, "device not found")
+			return
+		}
+		h.log.Error("failed to update device", "error", err, "id", id)
+		respondError(w, http.StatusInternalServerError, "failed to update device")
+		return
+	}
+
+	h.log.Info("device updated", "id", id, "name", *req.Name)
+	respondJSON(w, http.StatusOK, d)
+}
+
 // @Summary Delete device
 // @Description Delete a device by ID. Non-admins can only delete their own devices.
 // @Tags Devices
@@ -593,7 +669,7 @@ func (h *DeviceHandler) revoke(w http.ResponseWriter, r *http.Request) {
 }
 
 // @Summary Enroll device
-// @Description Self-service device enrollment. Auto-approves and returns connection parameters.
+// @Description Self-service device enrollment. Auto-approves and returns connection parameters including a list of all healthy gateways for HA failover (sorted by priority DESC). The primary gateway is also returned in the top-level endpoint/server_public_key fields for backward compatibility.
 // @Tags Devices
 // @Accept json
 // @Produce json
@@ -626,8 +702,7 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find the best active gateway and its network for enrollment.
-	// Use gateway_networks junction table to pick the correct network.
+	// Find all active gateways with their networks for enrollment (HA support).
 	var err error
 	var networkCIDR string
 	var tunnelCIDR *string
@@ -636,29 +711,74 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 	var gatewayEndpoint, gatewayPubkey string
 	var gatewayPublicIP *string
 	var networkPort int
-	err = h.pool.QueryRow(r.Context(),
-		`SELECT g.endpoint, g.wireguard_pubkey, host(g.public_ip),
+
+	// Fetch all active gateways for HA failover list.
+	gwRows, err := h.pool.Query(r.Context(),
+		`SELECT g.id::text, g.endpoint, g.wireguard_pubkey, host(g.public_ip),
+		        g.priority, g.health_status,
 		        n.id, n.address::text, n.tunnel_cidr::text, n.dns, n.port
 		 FROM gateways g
 		 JOIN gateway_networks gn ON gn.gateway_id = g.id
 		 JOIN networks n ON n.id = gn.network_id AND n.is_active = true
 		 WHERE g.is_active = true
-		 ORDER BY g.priority DESC, g.created_at
-		 LIMIT 1`,
-	).Scan(&gatewayEndpoint, &gatewayPubkey, &gatewayPublicIP,
-		&networkID, &networkCIDR, &tunnelCIDR, &networkDNS, &networkPort)
+		 ORDER BY g.priority DESC, g.created_at`)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to read gateway/network configuration")
+		return
+	}
+	defer gwRows.Close()
+
+	var allGateways []gatewayEndpointResponse
+	var primarySet bool
+	for gwRows.Next() {
+		var gwID, gwEndpoint, gwPubkey string
+		var gwPublicIP *string
+		var gwPriority int
+		var gwHealth string
+		var nID uuid.UUID
+		var nCIDR string
+		var nTunnelCIDR *string
+		var nDNS []string
+		var nPort int
+		if err := gwRows.Scan(&gwID, &gwEndpoint, &gwPubkey, &gwPublicIP,
+			&gwPriority, &gwHealth,
+			&nID, &nCIDR, &nTunnelCIDR, &nDNS, &nPort); err != nil {
+			continue
+		}
+		// Build client-facing endpoint.
+		ep := gwEndpoint
+		if gwPublicIP != nil && *gwPublicIP != "" {
+			ep = fmt.Sprintf("%s:%d", *gwPublicIP, nPort)
+		}
+		allGateways = append(allGateways, gatewayEndpointResponse{
+			ID:              gwID,
+			Endpoint:        ep,
+			ServerPublicKey: gwPubkey,
+			Priority:        gwPriority,
+			HealthStatus:    gwHealth,
+		})
+		// Use first (highest priority) as primary for backward compat.
+		if !primarySet {
+			gatewayEndpoint = gwEndpoint
+			gatewayPubkey = gwPubkey
+			gatewayPublicIP = gwPublicIP
+			networkID = nID
+			networkCIDR = nCIDR
+			tunnelCIDR = nTunnelCIDR
+			networkDNS = nDNS
+			networkPort = nPort
+			primarySet = true
+		}
+	}
+	if !primarySet {
+		respondError(w, http.StatusUnprocessableEntity, "no active gateway with an active network — create and activate a gateway first")
+		return
+	}
+
 	// Determine IP allocation subnet: tunnel_cidr (VPN overlay) or address (legacy).
 	allocCIDR := networkCIDR
 	if tunnelCIDR != nil && *tunnelCIDR != "" {
 		allocCIDR = *tunnelCIDR
-	}
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			respondError(w, http.StatusUnprocessableEntity, "no active gateway with an active network — create and activate a gateway first")
-			return
-		}
-		respondError(w, http.StatusInternalServerError, "failed to read gateway/network configuration")
-		return
 	}
 	if len(networkDNS) == 0 {
 		networkDNS = []string{"1.1.1.1", "8.8.8.8"}
@@ -740,6 +860,7 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 					ServerPublicKey:     gatewayPubkey,
 					AllowedIPs:          []string{networkCIDR},
 					PersistentKeepalive: 25,
+					Gateways:            allGateways,
 				}
 				h.log.Info("device re-enrolled (existing pubkey)", "device_id", existingID, "address", existingIP)
 				respondJSON(w, http.StatusOK, resp)
@@ -773,6 +894,7 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 		ServerPublicKey:     gatewayPubkey,
 		AllowedIPs:          []string{networkCIDR},
 		PersistentKeepalive: 25,
+		Gateways:            allGateways,
 	}
 
 	// Notify gateways about the new peer (enroll auto-approves).
@@ -785,7 +907,7 @@ func (h *DeviceHandler) enroll(w http.ResponseWriter, r *http.Request) {
 }
 
 // @Summary Download device config
-// @Description Generate and return a WireGuard configuration file for the device.
+// @Description Generate and return a WireGuard configuration file for the device. Includes all healthy gateways for the device's network for HA failover support.
 // @Tags Devices
 // @Produce json
 // @Param id path string true "Device ID (UUID)"
@@ -854,46 +976,71 @@ func (h *DeviceHandler) downloadConfig(w http.ResponseWriter, r *http.Request) {
 		networkDNS = []string{"1.1.1.1", "8.8.8.8"}
 	}
 
-	// Get the gateway endpoint and public key.
-	// Prefer gateway that serves this device's network, fallback to any active gateway.
-	// Use public_ip for client-facing endpoint when available.
+	// Get all active gateways for this device's network (HA support).
+	// Prefer gateways that serve this device's network, fallback to any active gateway.
 	var gatewayEndpoint, gatewayPubkey string
-	var dlGatewayPublicIP *string
-	var dlNetworkPort int
+	var dlClientEndpoint string
+	var dlGateways []gatewayEndpointResponse
+
+	gwQuery := `SELECT g.id::text, g.endpoint, g.wireguard_pubkey, host(g.public_ip),
+	                   g.priority, g.health_status, COALESCE(n.port, 51820)
+	            FROM gateways g
+	            JOIN gateway_networks gn ON gn.gateway_id = g.id
+	            JOIN networks n ON n.id = gn.network_id
+	            WHERE gn.network_id = $1 AND g.is_active = true
+	            ORDER BY g.priority DESC, g.created_at`
+	var gwArgs []any
 	if deviceNetworkID != nil {
-		err = h.pool.QueryRow(r.Context(),
-			`SELECT g.endpoint, g.wireguard_pubkey, host(g.public_ip), n.port
-			 FROM gateways g
-			 JOIN gateway_networks gn ON gn.gateway_id = g.id
-			 JOIN networks n ON n.id = gn.network_id
-			 WHERE gn.network_id = $1 AND g.is_active = true
-			 ORDER BY g.priority DESC, g.created_at LIMIT 1`, *deviceNetworkID,
-		).Scan(&gatewayEndpoint, &gatewayPubkey, &dlGatewayPublicIP, &dlNetworkPort)
+		gwArgs = []any{*deviceNetworkID}
+	} else {
+		gwQuery = `SELECT g.id::text, g.endpoint, g.wireguard_pubkey, host(g.public_ip),
+		                  g.priority, g.health_status, COALESCE(n.port, 51820)
+		           FROM gateways g
+		           LEFT JOIN networks n ON n.id = g.network_id
+		           WHERE g.is_active = true
+		           ORDER BY g.priority DESC, g.created_at`
+		gwArgs = nil
 	}
-	if gatewayEndpoint == "" {
-		err = h.pool.QueryRow(r.Context(),
-			`SELECT g.endpoint, g.wireguard_pubkey, host(g.public_ip), COALESCE(n.port, 51820)
-			 FROM gateways g
-			 LEFT JOIN networks n ON n.id = g.network_id
-			 WHERE g.is_active = true
-			 ORDER BY g.priority DESC, g.created_at LIMIT 1`,
-		).Scan(&gatewayEndpoint, &gatewayPubkey, &dlGatewayPublicIP, &dlNetworkPort)
-	}
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			respondError(w, http.StatusUnprocessableEntity, "no active gateway available — create and activate a gateway first")
-			return
-		}
+	gwRows, gwErr := h.pool.Query(r.Context(), gwQuery, gwArgs...)
+	if gwErr != nil {
 		respondError(w, http.StatusInternalServerError, "failed to read gateway configuration")
 		return
 	}
-	// For client-facing endpoint, prefer public_ip + port over internal endpoint.
-	dlClientEndpoint := gatewayEndpoint
-	if dlGatewayPublicIP != nil && *dlGatewayPublicIP != "" {
-		if dlNetworkPort == 0 {
-			dlNetworkPort = 51820
+	for gwRows.Next() {
+		var gwID, gwEndpoint, gwPubkey string
+		var gwPublicIP *string
+		var gwPriority int
+		var gwHealth string
+		var gwPort int
+		if err := gwRows.Scan(&gwID, &gwEndpoint, &gwPubkey, &gwPublicIP,
+			&gwPriority, &gwHealth, &gwPort); err != nil {
+			continue
 		}
-		dlClientEndpoint = fmt.Sprintf("%s:%d", *dlGatewayPublicIP, dlNetworkPort)
+		ep := gwEndpoint
+		if gwPublicIP != nil && *gwPublicIP != "" {
+			if gwPort == 0 {
+				gwPort = 51820
+			}
+			ep = fmt.Sprintf("%s:%d", *gwPublicIP, gwPort)
+		}
+		dlGateways = append(dlGateways, gatewayEndpointResponse{
+			ID:              gwID,
+			Endpoint:        ep,
+			ServerPublicKey: gwPubkey,
+			Priority:        gwPriority,
+			HealthStatus:    gwHealth,
+		})
+		// Use first (highest priority) as primary.
+		if gatewayEndpoint == "" {
+			gatewayEndpoint = gwEndpoint
+			gatewayPubkey = gwPubkey
+			dlClientEndpoint = ep
+		}
+	}
+	gwRows.Close()
+	if gatewayEndpoint == "" {
+		respondError(w, http.StatusUnprocessableEntity, "no active gateway available — create and activate a gateway first")
+		return
 	}
 
 	// Look up the device's stored private key (set at creation time).
@@ -955,6 +1102,7 @@ func (h *DeviceHandler) downloadConfig(w http.ResponseWriter, r *http.Request) {
 		Config:     configText,
 		PrivateKey: privateKey,
 		PublicKey:  publicKey,
+		Gateways:   dlGateways,
 	}
 
 	respondJSON(w, http.StatusOK, resp)

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Shield, Plus, Trash2, Settings2 } from 'lucide-react'
+import CheckboxItem from '@/components/CheckboxItem'
 import Card from '@/components/ui/Card'
 import Button from '@/components/ui/Button'
 import Badge from '@/components/ui/Badge'
@@ -569,26 +570,11 @@ export default function ZTNAPage() {
             />
 
             <div className="space-y-2">
-              <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
-                <input type="checkbox" checked={policyForm.require_disk_encryption} onChange={(e) => setPolicyForm({ ...policyForm, require_disk_encryption: e.target.checked })} className="rounded border-[var(--border)]" />
-                {t('ztna.requireDiskEncryption')}
-              </label>
-              <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
-                <input type="checkbox" checked={policyForm.require_screen_lock} onChange={(e) => setPolicyForm({ ...policyForm, require_screen_lock: e.target.checked })} className="rounded border-[var(--border)]" />
-                {t('ztna.requireScreenLock')}
-              </label>
-              <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
-                <input type="checkbox" checked={policyForm.require_antivirus} onChange={(e) => setPolicyForm({ ...policyForm, require_antivirus: e.target.checked })} className="rounded border-[var(--border)]" />
-                {t('ztna.requireAntivirus')}
-              </label>
-              <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
-                <input type="checkbox" checked={policyForm.require_firewall} onChange={(e) => setPolicyForm({ ...policyForm, require_firewall: e.target.checked })} className="rounded border-[var(--border)]" />
-                {t('ztna.requireFirewall')}
-              </label>
-              <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
-                <input type="checkbox" checked={policyForm.require_mfa} onChange={(e) => setPolicyForm({ ...policyForm, require_mfa: e.target.checked })} className="rounded border-[var(--border)]" />
-                {t('ztna.requireMfa')}
-              </label>
+              <CheckboxItem compact checked={policyForm.require_disk_encryption} onChange={(v) => setPolicyForm({ ...policyForm, require_disk_encryption: v })} label={t('ztna.requireDiskEncryption')} />
+              <CheckboxItem compact checked={policyForm.require_screen_lock} onChange={(v) => setPolicyForm({ ...policyForm, require_screen_lock: v })} label={t('ztna.requireScreenLock')} />
+              <CheckboxItem compact checked={policyForm.require_antivirus} onChange={(v) => setPolicyForm({ ...policyForm, require_antivirus: v })} label={t('ztna.requireAntivirus')} />
+              <CheckboxItem compact checked={policyForm.require_firewall} onChange={(v) => setPolicyForm({ ...policyForm, require_firewall: v })} label={t('ztna.requireFirewall')} />
+              <CheckboxItem compact checked={policyForm.require_mfa} onChange={(v) => setPolicyForm({ ...policyForm, require_mfa: v })} label={t('ztna.requireMfa')} />
             </div>
           </div>
 
@@ -601,21 +587,18 @@ export default function ZTNAPage() {
               {networks.length === 0 ? (
                 <span className="text-xs text-[var(--text-muted)] px-1">{t('common.loading')}</span>
               ) : networks.map((n) => (
-                <label key={n.id} className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer px-1 py-0.5 hover:bg-[var(--bg-tertiary)] rounded">
-                  <input
-                    type="checkbox"
-                    checked={policyForm.network_ids.includes(n.id)}
-                    onChange={(e) => {
-                      const ids = e.target.checked
-                        ? [...policyForm.network_ids, n.id]
-                        : policyForm.network_ids.filter((id) => id !== n.id)
-                      setPolicyForm({ ...policyForm, network_ids: ids })
-                    }}
-                    className="rounded border-[var(--border)]"
-                  />
-                  <span className="font-mono text-xs">{n.name}</span>
-                  <span className="text-xs text-[var(--text-muted)]">({n.address})</span>
-                </label>
+                <CheckboxItem
+                  key={n.id}
+                  checked={policyForm.network_ids.includes(n.id)}
+                  onChange={(v) => {
+                    const ids = v
+                      ? [...policyForm.network_ids, n.id]
+                      : policyForm.network_ids.filter((id) => id !== n.id)
+                    setPolicyForm({ ...policyForm, network_ids: ids })
+                  }}
+                  label={n.name}
+                  suffix={<span className="text-xs text-[var(--text-muted)] font-mono">{n.address}</span>}
+                />
               ))}
             </div>
             <span className="text-xs text-[var(--text-muted)]">{t('ztna.networksHint')}</span>
@@ -819,24 +802,8 @@ function TrustConfigModal({
         </div>
 
         <div className="space-y-2 mt-2">
-          <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
-            <input
-              type="checkbox"
-              checked={form.auto_restrict_below_medium}
-              onChange={(e) => setForm({ ...form, auto_restrict_below_medium: e.target.checked })}
-              className="rounded border-[var(--border)]"
-            />
-            {t('ztna.autoRestrict')}
-          </label>
-          <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
-            <input
-              type="checkbox"
-              checked={form.auto_block_below_low}
-              onChange={(e) => setForm({ ...form, auto_block_below_low: e.target.checked })}
-              className="rounded border-[var(--border)]"
-            />
-            {t('ztna.autoBlock')}
-          </label>
+          <CheckboxItem compact checked={form.auto_restrict_below_medium} onChange={(v) => setForm({ ...form, auto_restrict_below_medium: v })} label={t('ztna.autoRestrict')} />
+          <CheckboxItem compact checked={form.auto_block_below_low} onChange={(v) => setForm({ ...form, auto_block_below_low: v })} label={t('ztna.autoBlock')} />
         </div>
 
         <div className="flex justify-end gap-2 mt-4">

@@ -301,6 +301,14 @@ func generateSecret() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// @Summary List webhook subscriptions
+// @Description Return all webhook subscriptions ordered by creation date.
+// @Tags Webhooks
+// @Produce json
+// @Success 200 {array} Subscription
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /webhooks [get]
 func (d *Dispatcher) listSubscriptions(w http.ResponseWriter, r *http.Request) {
 	rows, err := d.pool.Query(r.Context(),
 		`SELECT id, url, secret, events, is_active, created_at
@@ -334,6 +342,17 @@ type createSubscriptionRequest struct {
 	Events []string `json:"events"`
 }
 
+// @Summary Create webhook subscription
+// @Description Create a new webhook subscription. If secret is empty or "auto", a random secret is generated. The secret is returned only in this response.
+// @Tags Webhooks
+// @Accept json
+// @Produce json
+// @Param body body createSubscriptionRequest true "Subscription details"
+// @Success 201 {object} map[string]any
+// @Failure 400 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /webhooks [post]
 func (d *Dispatcher) createSubscription(w http.ResponseWriter, r *http.Request) {
 	var req createSubscriptionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -388,6 +407,16 @@ func (d *Dispatcher) createSubscription(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// @Summary Get webhook subscription
+// @Description Return a single webhook subscription by ID.
+// @Tags Webhooks
+// @Produce json
+// @Param id path string true "Subscription ID (UUID)"
+// @Success 200 {object} Subscription
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /webhooks/{id} [get]
 func (d *Dispatcher) getSubscription(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if _, err := uuid.Parse(id); err != nil {
@@ -409,6 +438,16 @@ func (d *Dispatcher) getSubscription(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, sub)
 }
 
+// @Summary Delete webhook subscription
+// @Description Delete a webhook subscription by ID.
+// @Tags Webhooks
+// @Param id path string true "Subscription ID (UUID)"
+// @Success 204 "No Content"
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /webhooks/{id} [delete]
 func (d *Dispatcher) deleteSubscription(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if _, err := uuid.Parse(id); err != nil {
@@ -433,6 +472,17 @@ func (d *Dispatcher) deleteSubscription(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// @Summary Test webhook subscription
+// @Description Send a test event to the subscription's URL to verify delivery.
+// @Tags Webhooks
+// @Produce json
+// @Param id path string true "Subscription ID (UUID)"
+// @Success 200 {object} map[string]string
+// @Failure 400 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Failure 502 {object} map[string]string
+// @Security BearerAuth
+// @Router /webhooks/{id}/test [post]
 func (d *Dispatcher) testSubscription(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if _, err := uuid.Parse(id); err != nil {

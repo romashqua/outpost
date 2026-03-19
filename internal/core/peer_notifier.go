@@ -145,6 +145,17 @@ func (n *hubPeerNotifier) RefreshFirewallForGroup(groupID string) {
 	}
 }
 
+// RefreshFirewallForGateways recomputes and pushes firewall configs to the given gateways.
+// Used when a network is deleted (gateway IDs captured before cascade delete).
+func (n *hubPeerNotifier) RefreshFirewallForGateways(gatewayIDs []string) {
+	ctx := context.Background()
+	for _, gwID := range gatewayIDs {
+		if fwConfig := buildFirewallConfigFromPool(ctx, n.pool, n.logger, gwID); fwConfig != nil {
+			n.hub.SendFirewallUpdate(gwID, fwConfig)
+		}
+	}
+}
+
 // NotifySmartRouteUpdate pushes updated smart route configs to all gateways
 // serving networks associated with the given smart route.
 func (n *hubPeerNotifier) NotifySmartRouteUpdate(smartRouteID string) {
@@ -169,6 +180,53 @@ func (n *hubPeerNotifier) NotifySmartRouteUpdate(smartRouteID string) {
 		srConfig := fetchSmartRoutesForGateway(ctx, n.pool, n.logger, gwID)
 		n.hub.SendSmartRouteUpdate(gwID, srConfig)
 	}
+}
+
+// hubGatewayNetworkNotifier handles gateway network change events by
+// recomputing S2S routes and firewall rules for the affected gateway.
+type hubGatewayNetworkNotifier struct {
+	hub    *StreamHub
+	pool   *pgxpool.Pool
+	logger *slog.Logger
+}
+
+func (n *hubGatewayNetworkNotifier) NotifyGatewayNetworksChanged(gatewayID string) {
+	ctx := context.Background()
+
+	// 1. Refresh firewall rules for the gateway itself.
+	if fwConfig := buildFirewallConfigFromPool(ctx, n.pool, n.logger, gatewayID); fwConfig != nil {
+		n.hub.SendFirewallUpdate(gatewayID, fwConfig)
+	}
+
+	// 2. Refresh S2S configs for this gateway and all its S2S tunnel peers.
+	// Find all tunnels this gateway participates in.
+	rows, err := n.pool.Query(ctx,
+		`SELECT DISTINCT m2.gateway_id::text
+		 FROM s2s_tunnel_members m1
+		 JOIN s2s_tunnel_members m2 ON m2.tunnel_id = m1.tunnel_id
+		 JOIN s2s_tunnels t ON t.id = m1.tunnel_id
+		 WHERE m1.gateway_id::text = $1 AND t.is_active = true`, gatewayID)
+	if err != nil {
+		n.logger.Warn("failed to find S2S peers for gateway network change", "gateway_id", gatewayID, "error", err)
+		return
+	}
+	defer rows.Close()
+
+	var peerGWs []string
+	for rows.Next() {
+		var gwID string
+		if err := rows.Scan(&gwID); err == nil {
+			peerGWs = append(peerGWs, gwID)
+		}
+	}
+
+	// Push updated S2S config to each affected gateway.
+	s2sNotifier := &hubS2SNotifier{hub: n.hub, pool: n.pool}
+	for _, gwID := range peerGWs {
+		s2sNotifier.NotifyS2SUpdate(gwID, "", "network_change")
+	}
+
+	n.logger.Info("gateway networks changed, notified S2S peers", "gateway_id", gatewayID, "peer_count", len(peerGWs))
 }
 
 // hubS2SNotifier adapts StreamHub to the handler.S2SNotifier interface.

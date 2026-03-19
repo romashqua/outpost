@@ -10,7 +10,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/romashqua/outpost/internal/auth"
 )
@@ -23,13 +22,13 @@ type FirewallRefresher interface {
 
 // GroupHandler provides CRUD endpoints for group management and ACL assignment.
 type GroupHandler struct {
-	pool      *pgxpool.Pool
+	pool DB
 	log       *slog.Logger
 	refresher FirewallRefresher
 }
 
 // NewGroupHandler creates a GroupHandler backed by the given connection pool.
-func NewGroupHandler(pool *pgxpool.Pool, logger ...*slog.Logger) *GroupHandler {
+func NewGroupHandler(pool DB, logger ...*slog.Logger) *GroupHandler {
 	l := slog.Default()
 	if len(logger) > 0 && logger[0] != nil {
 		l = logger[0]

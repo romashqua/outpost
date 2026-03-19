@@ -95,6 +95,7 @@
     "groupCreated": "Group created",
     "groupUpdated": "Group updated",
     "groupDeleted": "Group deleted",
+    "saving": "Saving...",
     "memberAdded": "Member added",
     "memberRemoved": "Member removed",
     "aclAdded": "Network access added",
@@ -158,7 +159,10 @@
     "selectGateway": "Select a gateway...",
     "noGateways": "No gateways available",
     "gatewayHint": "Device will connect through this gateway and access its networks",
-    "gatewayNetworks": "Gateway networks"
+    "gatewayNetworks": "Gateway networks",
+    "editDevice": "Edit Device",
+    "deviceUpdated": "Device updated",
+    "saving": "Saving..."
   },
   "networks": {
     "title": "Network Management",
@@ -179,7 +183,10 @@
     "failedToLoad": "Failed to load networks",
     "confirmDelete": "Are you sure you want to delete this network? This action cannot be undone.",
     "networkCreated": "Network created",
+    "networkUpdated": "Network updated",
     "networkDeleted": "Network deleted",
+    "editNetwork": "Edit Network",
+    "saving": "Saving...",
     "tunnelCidr": "Tunnel CIDR",
     "tunnelCidrHint": "Separate VPN overlay subnet for client IPs (e.g. 10.10.0.0/24). If empty, the network address is used for both client IPs and routing.",
     "cidrHint": "Target network address in CIDR notation, e.g. 10.129.0.0/24 — goes into AllowedIPs. Host bits must not be set.",
@@ -225,7 +232,10 @@
     "nameRequired": "Gateway name is required",
     "endpointRequired": "Endpoint is required",
     "endpointHint": "IP or hostname with optional port (default: 51820)",
-    "networkColumn": "Networks"
+    "networkColumn": "Networks",
+    "searchNetworks": "Search networks...",
+    "status": "Status",
+    "saving": "Saving..."
   },
   "s2s": {
     "title": "Site-to-Site Tunnels",
@@ -276,7 +286,10 @@
     "invalidCidr": "Invalid CIDR format (e.g. 10.0.0.0/24)",
     "gatewayRequired": "Gateway is required",
     "routeDestination": "Destination CIDR",
-    "metric": "Metric"
+    "metric": "Metric",
+    "editTunnel": "Edit Tunnel",
+    "tunnelUpdated": "Tunnel updated",
+    "saving": "Saving..."
   },
   "analytics": {
     "title": "Traffic Analytics",
@@ -375,7 +388,9 @@
     "confirmDeleteProxy": "Are you sure you want to delete this proxy server? This action cannot be undone.",
     "noEntriesClickAdd": "No entries yet. Click + to add one.",
     "via": "via",
-    "invalidPort": "Port must be between 1 and 65535"
+    "invalidPort": "Port must be between 1 and 65535",
+    "editRoute": "Edit Route Group",
+    "routeUpdated": "Route group updated"
   },
   "ztna": {
     "title": "Zero Trust Network Access",
@@ -481,6 +496,10 @@
     "webauthnCredentials": "Security Keys",
     "registerKey": "Register New Key",
     "noCredentials": "No security keys registered",
+    "keyName": "Key name",
+    "keyRegistered": "Security key registered",
+    "registering": "Registering...",
+    "registerKeyDescription": "Insert your security key and give it a name. You'll be prompted by your browser to touch or verify the key.",
     "confirmDisableTotp": "Are you sure you want to disable TOTP? This will reduce your account security.",
     "enable": "Enable",
     "issuerUrl": "Issuer URL",
@@ -498,6 +517,7 @@
     "totpQrAlt": "TOTP QR Code",
     "eventsLabel": "Events",
     "createdLabel": "Created",
+    "webhooks": "Webhooks & Integrations",
     "webhooksTitle": "Webhooks & Integrations",
     "webhooksDescription": "Outbound webhooks for event notifications (HMAC-SHA256 signed)",
     "addWebhook": "Add Webhook",
@@ -572,7 +592,8 @@
     "test": "Test",
     "add": "Add",
     "close": "Close",
-    "error": "Error"
+    "error": "Error",
+    "saving": "Saving..."
   },
   "status": {
     "active": "Active",
@@ -740,7 +761,7 @@
       },
       "routeManagement": {
         "title": "Route Management",
-        "content": "Routes define which subnets are reachable through the S2S tunnel.\n\n1. In tunnel details, go to the **Routes** tab\n2. Click **Add Route**\n3. Enter the **CIDR** (e.g. `192.168.1.0/24`) and optional description\n\nRoutes are exchanged between members using a BGP-lite protocol. When a route is added, all member gateways update their WireGuard `AllowedIPs` and routing tables automatically."
+        "content": "Routes define which subnets are reachable through the S2S tunnel.\n\n1. In tunnel details, go to the **Routes** tab\n2. Click **Add Route**\n3. Enter the **CIDR** (e.g. `192.168.1.0/24`) and optional description\n\nRoutes are automatically synchronized to all tunnel members via the control plane. When a route is added, all member gateways update their WireGuard `AllowedIPs` and routing tables automatically."
       },
       "allowedDomains": {
         "title": "Allowed Domains",

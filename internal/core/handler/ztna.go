@@ -9,20 +9,19 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/romashqua/outpost/internal/auth"
 	"github.com/romashqua/outpost/internal/ztna"
 )
 
 // ZTNAHandler provides endpoints for Zero Trust Network Access.
 type ZTNAHandler struct {
-	pool      *pgxpool.Pool
+	pool DB
 	log       *slog.Logger
 	refresher FirewallRefresher
 }
 
 // NewZTNAHandler creates a ZTNAHandler.
-func NewZTNAHandler(pool *pgxpool.Pool, logger ...*slog.Logger) *ZTNAHandler {
+func NewZTNAHandler(pool DB, logger ...*slog.Logger) *ZTNAHandler {
 	l := slog.Default()
 	if len(logger) > 0 && logger[0] != nil {
 		l = logger[0]

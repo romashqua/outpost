@@ -308,18 +308,21 @@ func (s *gatewayService) handlePeerStats(ctx context.Context, gatewayID string, 
 	for _, ps := range stats.GetPeers() {
 		pubkey := ps.GetPublicKey()
 
-		// Update last_handshake if present.
+		// Update last_handshake if present — scoped to gateway's networks to prevent
+		// a compromised gateway from updating devices in other networks.
 		if ps.GetLastHandshake() != nil {
 			ht := ps.GetLastHandshake().AsTime()
 			if !ht.IsZero() {
 				_, _ = s.pool.Exec(ctx,
-					`UPDATE devices SET last_handshake = $1 WHERE wireguard_pubkey = $2`,
-					ht, pubkey,
+					`UPDATE devices SET last_handshake = $1
+					 WHERE wireguard_pubkey = $2
+					   AND network_id IN (SELECT network_id FROM gateway_networks WHERE gateway_id = $3::uuid)`,
+					ht, pubkey, gatewayID,
 				)
 			}
 		}
 
-		// Record peer stats (for bandwidth chart).
+		// Record peer stats (for bandwidth chart) — scoped to gateway's networks.
 		var endpoint string
 		if ps.GetEndpoint() != "" {
 			endpoint = ps.GetEndpoint()
@@ -334,18 +337,22 @@ func (s *gatewayService) handlePeerStats(ctx context.Context, gatewayID string, 
 		_, err := s.pool.Exec(ctx,
 			`INSERT INTO peer_stats (gateway_id, device_id, rx_bytes, tx_bytes, last_handshake, endpoint)
 			 SELECT $1::uuid, d.id, $3, $4, $5, $6
-			 FROM devices d WHERE d.wireguard_pubkey = $2`,
+			 FROM devices d
+			 WHERE d.wireguard_pubkey = $2
+			   AND d.network_id IN (SELECT network_id FROM gateway_networks WHERE gateway_id = $1::uuid)`,
 			gatewayID, pubkey, ps.GetRxBytes(), ps.GetTxBytes(), lastHS, endpoint,
 		)
 		if err != nil {
 			s.logger.Warn("failed to insert peer_stats", "pubkey", pubkey, "error", err)
 		}
 
-		// Record flow record (for analytics/bandwidth chart on dashboard).
+		// Record flow record (for analytics/bandwidth chart on dashboard) — scoped to gateway's networks.
 		_, err = s.pool.Exec(ctx,
 			`INSERT INTO flow_records (gateway_id, device_id, user_id, src_ip, dst_ip, protocol, dst_port, bytes_sent, bytes_recv)
 			 SELECT $1::uuid, d.id, d.user_id, COALESCE(d.assigned_ip, '0.0.0.0'::inet), '0.0.0.0'::inet, 'wg', 0, $3, $4
-			 FROM devices d WHERE d.wireguard_pubkey = $2`,
+			 FROM devices d
+			 WHERE d.wireguard_pubkey = $2
+			   AND d.network_id IN (SELECT network_id FROM gateway_networks WHERE gateway_id = $1::uuid)`,
 			gatewayID, pubkey, ps.GetTxBytes(), ps.GetRxBytes(),
 		)
 		if err != nil {
@@ -569,9 +576,83 @@ func (s *gatewayService) Heartbeat(ctx context.Context, req *gatewayv1.Heartbeat
 	s.logger.Debug("gateway heartbeat", "gateway_id", authenticatedGwID)
 
 	if _, err := s.pool.Exec(ctx,
-		`UPDATE gateways SET last_seen = now() WHERE id::text = $1`, authenticatedGwID); err != nil {
+		`UPDATE gateways SET last_seen = now(), health_status = 'healthy', consecutive_failures = 0
+		 WHERE id = $1::uuid`, authenticatedGwID); err != nil {
 		s.logger.Error("failed to update gateway last_seen", "gateway_id", authenticatedGwID, "error", err)
 	}
 
 	return &emptypb.Empty{}, nil
+}
+
+// MonitorGatewayHealth periodically checks gateway liveness and marks unhealthy
+// gateways based on last_seen timestamps. Should be run as a goroutine.
+// Deprecated: use monitorGatewayHealthTick with runWithLeaderLock instead.
+func MonitorGatewayHealth(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, hub *StreamHub) {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			monitorGatewayHealthTick(ctx, pool, logger, hub)
+		}
+	}
+}
+
+// monitorGatewayHealthTick performs a single health check pass: increments
+// failure counters for stale gateways and marks them unhealthy after 3 failures.
+func monitorGatewayHealthTick(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, hub *StreamHub) {
+	// Increment failures for gateways that haven't been seen in 90 seconds.
+	_, _ = pool.Exec(ctx,
+		`UPDATE gateways
+		 SET consecutive_failures = consecutive_failures + 1
+		 WHERE is_active = true
+		   AND last_seen < now() - interval '90 seconds'
+		   AND health_status != 'unhealthy'`)
+
+	// Mark as unhealthy after 3 consecutive failures (~4.5 min without heartbeat).
+	rows, err := pool.Query(ctx,
+		`UPDATE gateways
+		 SET health_status = 'unhealthy'
+		 WHERE is_active = true
+		   AND consecutive_failures >= 3
+		   AND health_status != 'unhealthy'
+		 RETURNING id::text`)
+	if err != nil {
+		return
+	}
+	for rows.Next() {
+		var gwID string
+		if rows.Scan(&gwID) == nil {
+			logger.Warn("gateway marked unhealthy", "gateway_id", gwID)
+			pushResyncForPeersOfGateway(ctx, pool, logger, hub, gwID)
+		}
+	}
+	rows.Close()
+}
+
+// pushResyncForPeersOfGateway sends a full resync to all healthy gateways
+// that share networks with the unhealthy gateway, so clients get updated endpoint lists.
+func pushResyncForPeersOfGateway(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, hub *StreamHub, unhealthyGwID string) {
+	rows, err := pool.Query(ctx,
+		`SELECT DISTINCT g2.id::text
+		 FROM gateway_networks gn1
+		 JOIN gateway_networks gn2 ON gn2.network_id = gn1.network_id
+		 JOIN gateways g2 ON g2.id = gn2.gateway_id
+		 WHERE gn1.gateway_id::text = $1
+		   AND g2.id::text != $1
+		   AND g2.is_active = true
+		   AND g2.health_status = 'healthy'`, unhealthyGwID)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var peerGwID string
+		if rows.Scan(&peerGwID) == nil {
+			logger.Info("pushing resync to healthy peer gateway", "gateway_id", peerGwID, "reason", "peer_unhealthy")
+		}
+	}
 }

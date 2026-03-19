@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { UserPlus, Search, Shield, ShieldCheck, Trash2, Pencil } from 'lucide-react'
+import CheckboxItem from '@/components/CheckboxItem'
 import Table from '@/components/ui/Table'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
@@ -368,15 +369,7 @@ export default function UsersPage() {
               <option value="user">{t('users.user')}</option>
             </select>
           </label>
-          <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer">
-            <input
-              type="checkbox"
-              checked={editForm.is_active}
-              onChange={(e) => setEditForm({ ...editForm, is_active: e.target.checked })}
-              className="rounded"
-            />
-            {t('status.active')}
-          </label>
+          <CheckboxItem compact checked={editForm.is_active} onChange={(v) => setEditForm({ ...editForm, is_active: v })} label={t('status.active')} />
           {updateMutation.error && (
             <p className="text-sm text-[var(--danger)]">
               {(updateMutation.error as Error).message}

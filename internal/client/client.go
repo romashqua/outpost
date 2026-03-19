@@ -132,14 +132,24 @@ type enrollmentRequest struct {
 	Name      string `json:"name"`
 }
 
+// GatewayEndpoint represents one gateway available for failover.
+type GatewayEndpoint struct {
+	ID           string `json:"id"`
+	Endpoint     string `json:"endpoint"`
+	ServerKey    string `json:"server_public_key"`
+	Priority     int    `json:"priority"`
+	HealthStatus string `json:"health_status"`
+}
+
 type enrollmentResponse struct {
-	DeviceID   string          `json:"device_id"`
-	AllowedIPs []string        `json:"allowed_ips"`
-	DNS        []string        `json:"dns"`
-	Endpoint   string          `json:"endpoint"`
-	ServerKey  string          `json:"server_public_key"`
-	Address    string          `json:"address"`
-	Networks   []NetworkConfig `json:"networks"`
+	DeviceID   string            `json:"device_id"`
+	AllowedIPs []string          `json:"allowed_ips"`
+	DNS        []string          `json:"dns"`
+	Endpoint   string            `json:"endpoint"`
+	ServerKey  string            `json:"server_public_key"`
+	Address    string            `json:"address"`
+	Networks   []NetworkConfig   `json:"networks"`
+	Gateways   []GatewayEndpoint `json:"gateways"`
 }
 
 // NetworkConfig represents a VPN network available to the client.

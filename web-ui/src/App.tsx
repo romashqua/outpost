@@ -20,6 +20,16 @@ import DocsPage from '@/pages/DocsPage'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
+  const isInitialized = useAuthStore((s) => s.isInitialized)
+
+  if (!isInitialized) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[#0a0a0f]">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#00ff88] border-t-transparent" />
+      </div>
+    )
+  }
+
   if (!isAuthenticated) return <Navigate to="/login" replace />
   return <>{children}</>
 }

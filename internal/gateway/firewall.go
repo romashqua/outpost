@@ -92,6 +92,11 @@ func (fm *FirewallManager) Apply(config *commonv1.FirewallConfig) error {
 		}
 	}
 
+	// Flush conntrack entries for source IPs that now have DROP rules.
+	// This ensures existing connections are torn down immediately instead of
+	// persisting through the ESTABLISHED,RELATED rule.
+	fm.flushConntrackForDroppedSources(config)
+
 	fm.logger.Info("firewall rules applied", "total", len(config.GetRules()), "applied", applied)
 	return nil
 }
@@ -144,6 +149,31 @@ func detectDefaultInterface() string {
 		}
 	}
 	return ""
+}
+
+// flushConntrackForDroppedSources removes conntrack entries for source IPs
+// that have DROP rules, so existing connections are killed immediately.
+func (fm *FirewallManager) flushConntrackForDroppedSources(config *commonv1.FirewallConfig) {
+	seen := make(map[string]bool)
+	for _, rule := range config.GetRules() {
+		if rule.GetAction() != commonv1.FirewallRule_ACTION_DROP {
+			continue
+		}
+		src := rule.GetSource()
+		if src == "" || seen[src] {
+			continue
+		}
+		seen[src] = true
+		// Strip CIDR suffix for conntrack (e.g. "10.10.0.2/32" → "10.10.0.2").
+		ip := strings.Split(src, "/")[0]
+		cmd := exec.Command("conntrack", "-D", "-s", ip)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			// conntrack -D returns error if no entries found — that's fine.
+			fm.logger.Debug("conntrack flush", "ip", ip, "output", strings.TrimSpace(string(out)))
+		} else {
+			fm.logger.Info("flushed conntrack entries", "ip", ip)
+		}
+	}
 }
 
 // run executes an iptables command.

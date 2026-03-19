@@ -62,7 +62,21 @@ func (h *AuditHandler) Routes() chi.Router {
 	return r
 }
 
-// listAuditLogs handles GET / with pagination and filtering.
+// @Summary List audit logs
+// @Description Return paginated audit log entries with optional filtering by user, action, resource, and time range.
+// @Tags Audit
+// @Produce json
+// @Param page query int false "Page number (default 1)"
+// @Param per_page query int false "Items per page (1-1000, default 50)"
+// @Param user_id query string false "Filter by user ID"
+// @Param action query string false "Filter by action"
+// @Param resource query string false "Filter by resource"
+// @Param from query string false "Start time (RFC3339)"
+// @Param to query string false "End time (RFC3339)"
+// @Success 200 {object} AuditListResponse
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /audit [get]
 func (h *AuditHandler) listAuditLogs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -81,7 +95,7 @@ func (h *AuditHandler) listAuditLogs(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch page.
 	dataQuery := fmt.Sprintf(
-		"SELECT id, timestamp, user_id::text, action, resource, details, ip_address, user_agent FROM audit_log%s ORDER BY timestamp DESC LIMIT $%d OFFSET $%d",
+		"SELECT id, timestamp, user_id::text, action, resource, details, COALESCE(host(ip_address), ''), COALESCE(user_agent, '') FROM audit_log%s ORDER BY timestamp DESC LIMIT $%d OFFSET $%d",
 		where, len(args)+1, len(args)+2,
 	)
 	args = append(args, perPage, offset)
@@ -126,13 +140,26 @@ func (h *AuditHandler) listAuditLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// exportAuditLogs handles GET /export, returning CSV or JSON based on ?format= query param.
+// @Summary Export audit logs
+// @Description Export audit log entries as CSV or JSON (up to 50,000 rows). Supports the same filters as list.
+// @Tags Audit
+// @Produce json,text/csv
+// @Param format query string false "Export format: json (default) or csv"
+// @Param user_id query string false "Filter by user ID"
+// @Param action query string false "Filter by action"
+// @Param resource query string false "Filter by resource"
+// @Param from query string false "Start time (RFC3339)"
+// @Param to query string false "End time (RFC3339)"
+// @Success 200 {array} AuditEntry
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /audit/export [get]
 func (h *AuditHandler) exportAuditLogs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	where, args := buildWhereClause(r)
 	// Limit export to 50,000 rows to prevent OOM on large audit logs.
-	query := "SELECT id, timestamp, user_id::text, action, resource, details, ip_address, user_agent FROM audit_log" + where + " ORDER BY timestamp DESC LIMIT 50000"
+	query := "SELECT id, timestamp, user_id::text, action, resource, details, COALESCE(host(ip_address), ''), COALESCE(user_agent, '') FROM audit_log" + where + " ORDER BY timestamp DESC LIMIT 50000"
 
 	rows, err := h.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -205,7 +232,19 @@ func (h *AuditHandler) writeCSV(w http.ResponseWriter, entries []AuditEntry) {
 	}
 }
 
-// auditStats handles GET /stats, returning event counts grouped by action and time bucket.
+// @Summary Audit log statistics
+// @Description Return event counts grouped by action and hourly time bucket. Supports the same filters as list.
+// @Tags Audit
+// @Produce json
+// @Param user_id query string false "Filter by user ID"
+// @Param action query string false "Filter by action"
+// @Param resource query string false "Filter by resource"
+// @Param from query string false "Start time (RFC3339)"
+// @Param to query string false "End time (RFC3339)"
+// @Success 200 {array} AuditStat
+// @Failure 500 {object} map[string]string
+// @Security BearerAuth
+// @Router /audit/stats [get]
 func (h *AuditHandler) auditStats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 

@@ -195,6 +195,14 @@ func (sp *ServiceProvider) Routes() chi.Router {
 	return r
 }
 
+// @Summary SAML SP Metadata
+// @Description Serve the SAML 2.0 Service Provider metadata XML document.
+// @Tags SAML
+// @Produce application/samlmetadata+xml
+// @Success 200 {string} string "SP metadata XML"
+// @Failure 500 {string} string "internal server error"
+// @Router /saml/metadata [get]
+//
 // handleMetadata serves the SP metadata XML document using the crewjam/saml library.
 func (sp *ServiceProvider) handleMetadata(w http.ResponseWriter, r *http.Request) {
 	_ = r
@@ -220,6 +228,13 @@ func (sp *ServiceProvider) handleMetadata(w http.ResponseWriter, r *http.Request
 	_, _ = w.Write(data)
 }
 
+// @Summary SAML Login
+// @Description Initiate the SAML 2.0 authentication flow by redirecting to the Identity Provider.
+// @Tags SAML
+// @Success 302 "Redirect to IDP SSO endpoint"
+// @Failure 500 {string} string "SAML not configured or failed to initiate login"
+// @Router /saml/login [get]
+//
 // handleLogin initiates the SAML authentication flow by redirecting to the IDP.
 func (sp *ServiceProvider) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if sp.sp == nil {
@@ -253,6 +268,17 @@ func (sp *ServiceProvider) handleLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, redirectURL.String(), http.StatusFound)
 }
 
+// @Summary SAML Assertion Consumer Service
+// @Description Process the SAML 2.0 Response posted by the Identity Provider, validate the assertion, upsert the user, and redirect with a JWT session token.
+// @Tags SAML
+// @Accept application/x-www-form-urlencoded
+// @Param SAMLResponse formData string true "Base64-encoded SAML Response from the IDP"
+// @Success 302 "Redirect to frontend with JWT token"
+// @Failure 400 {string} string "Missing or malformed SAMLResponse"
+// @Failure 401 {string} string "Authentication failed"
+// @Failure 500 {string} string "SAML not configured or internal error"
+// @Router /saml/acs [post]
+//
 // handleACS processes the SAML Response posted by the IDP.
 func (sp *ServiceProvider) handleACS(w http.ResponseWriter, r *http.Request) {
 	if sp.sp == nil {
@@ -318,6 +344,14 @@ func (sp *ServiceProvider) handleACS(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, redirectURL, http.StatusFound)
 }
 
+// @Summary SAML Single Logout
+// @Description Initiate SAML 2.0 Single Logout by building a LogoutRequest and redirecting to the IDP SLO endpoint. Falls back to local logout if IDP SLO is unavailable.
+// @Tags SAML
+// @Param name_id query string false "SAML NameID (used if no Bearer token provided)"
+// @Success 302 "Redirect to IDP SLO endpoint or login page"
+// @Failure 500 {string} string "SAML not configured"
+// @Router /saml/logout [get]
+//
 // handleLogout handles SAML Single Logout (SLO).
 func (sp *ServiceProvider) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if sp.sp == nil {

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus, Trash2, Pencil } from 'lucide-react'
 import Table from '@/components/ui/Table'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
@@ -73,6 +73,9 @@ export default function NetworksPage() {
   const addToast = useToastStore((s) => s.addToast)
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Network | null>(null)
+  const [editTarget, setEditTarget] = useState<Network | null>(null)
+  const [editForm, setEditForm] = useState<CreateNetworkPayload>({ name: '', address: '', tunnel_cidr: '', dns: '', port: 51820, keepalive: 25 })
+  const [editCidrError, setEditCidrError] = useState<string | null>(null)
   const [cidrError, setCidrError] = useState<string | null>(null)
 
   const [formData, setFormData] = useState<CreateNetworkPayload>({
@@ -128,6 +131,73 @@ export default function NetworksPage() {
       addToast((err as Error).message, 'error')
     },
   })
+
+  const updateMutation = useMutation({
+    mutationFn: (payload: CreateNetworkPayload & { id: string }) => {
+      const { id, ...rest } = payload
+      const body: Record<string, unknown> = { name: rest.name, address: rest.address }
+      if (rest.tunnel_cidr?.trim()) {
+        body.tunnel_cidr = rest.tunnel_cidr.trim()
+      }
+      if (rest.dns) {
+        body.dns = rest.dns.split(',').map((s) => s.trim()).filter(Boolean)
+      } else {
+        body.dns = []
+      }
+      body.port = rest.port || 51820
+      body.keepalive = rest.keepalive || 25
+      return api.put(`/networks/${id}`, body)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['networks'] })
+      setEditTarget(null)
+      addToast(t('networks.networkUpdated'), 'success')
+    },
+    onError: (err) => {
+      addToast((err as Error).message, 'error')
+    },
+  })
+
+  const handleEditCidrChange = (value: string) => {
+    setEditForm({ ...editForm, address: value })
+    if (value.length > 0 && value.includes('/')) {
+      const result = validateCIDR(value)
+      if (!result.valid) {
+        if (result.error === 'hostBits' && result.suggestion) {
+          setEditCidrError(t('networks.cidrHostBits', { suggestion: result.suggestion }))
+        } else {
+          setEditCidrError(t('networks.cidrInvalid'))
+        }
+      } else {
+        setEditCidrError(null)
+      }
+    } else {
+      setEditCidrError(null)
+    }
+  }
+
+  const handleEditCidrFix = () => {
+    const result = validateCIDR(editForm.address)
+    if (!result.valid && result.suggestion) {
+      setEditForm({ ...editForm, address: result.suggestion })
+      setEditCidrError(null)
+    }
+  }
+
+  const handleEditSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editTarget) return
+    const result = validateCIDR(editForm.address)
+    if (!result.valid) {
+      if (result.suggestion) {
+        setEditCidrError(t('networks.cidrHostBits', { suggestion: result.suggestion }))
+      } else {
+        setEditCidrError(t('networks.cidrInvalid'))
+      }
+      return
+    }
+    updateMutation.mutate({ ...editForm, id: editTarget.id })
+  }
 
   const handleCidrChange = (value: string) => {
     setFormData({ ...formData, address: value })
@@ -235,17 +305,39 @@ export default function NetworksPage() {
       key: 'actions',
       header: '',
       render: (row: Network) => (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={(e) => {
-            e.stopPropagation()
-            deleteMutation.reset()
-            setDeleteTarget(row)
-          }}
-        >
-          <Trash2 size={14} className="text-[var(--danger)]" />
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation()
+              updateMutation.reset()
+              setEditCidrError(null)
+              setEditForm({
+                name: row.name,
+                address: row.address,
+                tunnel_cidr: row.tunnel_cidr || '',
+                dns: row.dns && row.dns.length > 0 ? row.dns.join(', ') : '',
+                port: row.port,
+                keepalive: row.keepalive,
+              })
+              setEditTarget(row)
+            }}
+          >
+            <Pencil size={14} className="text-[var(--accent)]" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={(e) => {
+              e.stopPropagation()
+              deleteMutation.reset()
+              setDeleteTarget(row)
+            }}
+          >
+            <Trash2 size={14} className="text-[var(--danger)]" />
+          </Button>
+        </div>
       ),
     },
   ]
@@ -361,6 +453,95 @@ export default function NetworksPage() {
             </Button>
             <Button type="submit" disabled={createMutation.isPending}>
               {createMutation.isPending ? t('networks.creating') : t('common.create')}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Edit Network Modal */}
+      <Modal open={!!editTarget} onClose={() => setEditTarget(null)} title={t('networks.editNetwork')}>
+        <form className="flex flex-col gap-4" onSubmit={handleEditSubmit}>
+          <Input
+            label={t('networks.name')}
+            placeholder="corp-moscow"
+            value={editForm.name}
+            onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+            required
+          />
+          <div>
+            <Input
+              label={t('networks.address')}
+              placeholder="10.0.0.0/24"
+              value={editForm.address}
+              onChange={(e) => handleEditCidrChange(e.target.value)}
+              required
+            />
+            {editCidrError && (
+              <div className="mt-1 flex items-center gap-2">
+                <p className="text-xs text-[var(--danger)]">{editCidrError}</p>
+                {editForm.address && validateCIDR(editForm.address).suggestion && (
+                  <button
+                    type="button"
+                    className="text-xs text-[var(--accent)] underline hover:no-underline"
+                    onClick={handleEditCidrFix}
+                  >
+                    {t('networks.fixCidr')}
+                  </button>
+                )}
+              </div>
+            )}
+            <p className="text-[10px] text-[var(--text-muted)] mt-1">
+              {t('networks.cidrHint')}
+            </p>
+          </div>
+          <div>
+            <Input
+              label={t('networks.tunnelCidr')}
+              placeholder="10.10.0.0/24"
+              value={editForm.tunnel_cidr}
+              onChange={(e) => setEditForm({ ...editForm, tunnel_cidr: e.target.value })}
+            />
+            <p className="text-[10px] text-[var(--text-muted)] mt-1">
+              {t('networks.tunnelCidrHint')}
+            </p>
+          </div>
+          <Input
+            label={t('networks.dns')}
+            placeholder="1.1.1.1, 8.8.8.8"
+            value={editForm.dns}
+            onChange={(e) => setEditForm({ ...editForm, dns: e.target.value })}
+          />
+          <div className="grid grid-cols-2 gap-4">
+            <Input
+              label={t('networks.port')}
+              placeholder="51820"
+              type="number"
+              value={editForm.port}
+              onChange={(e) =>
+                setEditForm({ ...editForm, port: e.target.value ? Number(e.target.value) : 51820 })
+              }
+            />
+            <Input
+              label={t('networks.keepalive')}
+              placeholder="25"
+              type="number"
+              value={editForm.keepalive}
+              onChange={(e) =>
+                setEditForm({ ...editForm, keepalive: e.target.value ? Number(e.target.value) : 25 })
+              }
+            />
+          </div>
+          {updateMutation.isError && (
+            <p className="text-sm text-[var(--danger)]">
+              {(updateMutation.error as Error).message}
+            </p>
+          )}
+          <div className="flex gap-3 justify-end mt-2">
+            <Button variant="secondary" type="button" onClick={() => setEditTarget(null)}>
+              {t('common.cancel')}
+            </Button>
+            <Button type="submit" disabled={updateMutation.isPending}>
+              {updateMutation.isPending ? t('networks.saving') : t('common.save')}
             </Button>
           </div>
         </form>

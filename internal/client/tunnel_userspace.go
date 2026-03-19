@@ -189,6 +189,65 @@ func buildIpcConfig(cfg wg.InterfaceConfig) (string, error) {
 	return b.String(), nil
 }
 
+// buildIpcPeerConfig formats a single peer update in UAPI IPC format (for macOS failover).
+func buildIpcPeerConfig(p wg.PeerConfig) (string, error) {
+	pubKey, err := wgtypes.ParseKey(p.PublicKey)
+	if err != nil {
+		return "", fmt.Errorf("parse public key: %w", err)
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "public_key=%s\n", hex.EncodeToString(pubKey[:]))
+	if p.Endpoint != "" {
+		fmt.Fprintf(&b, "endpoint=%s\n", p.Endpoint)
+	}
+	for _, cidr := range p.AllowedIPs {
+		fmt.Fprintf(&b, "allowed_ip=%s\n", cidr)
+	}
+	if p.PersistentKeepalive > 0 {
+		fmt.Fprintf(&b, "persistent_keepalive_interval=%d\n", p.PersistentKeepalive)
+	}
+	return b.String(), nil
+}
+
+// buildWgctrlPeerConfig converts a single peer to wgctrl format (for Linux failover).
+func buildWgctrlPeerConfig(p wg.PeerConfig) (*wgtypes.Config, error) {
+	pubKey, err := wgtypes.ParseKey(p.PublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("parse public key: %w", err)
+	}
+
+	var allowedIPs []net.IPNet
+	for _, cidr := range p.AllowedIPs {
+		_, ipnet, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
+		allowedIPs = append(allowedIPs, *ipnet)
+	}
+
+	peerCfg := wgtypes.PeerConfig{
+		PublicKey:         pubKey,
+		UpdateOnly:        true,
+		ReplaceAllowedIPs: true,
+		AllowedIPs:        allowedIPs,
+	}
+	if p.Endpoint != "" {
+		addr, err := net.ResolveUDPAddr("udp", p.Endpoint)
+		if err == nil {
+			peerCfg.Endpoint = addr
+		}
+	}
+	if p.PersistentKeepalive > 0 {
+		ka := time.Duration(p.PersistentKeepalive) * time.Second
+		peerCfg.PersistentKeepaliveInterval = &ka
+	}
+
+	return &wgtypes.Config{
+		Peers: []wgtypes.PeerConfig{peerCfg},
+	}, nil
+}
+
 // buildWgctrlConfig converts our config to wgctrl format (for Linux kernel WireGuard).
 func buildWgctrlConfig(cfg wg.InterfaceConfig) (*wgtypes.Config, error) {
 	privKey, err := wgtypes.ParseKey(cfg.PrivateKey)

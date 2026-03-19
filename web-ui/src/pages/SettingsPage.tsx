@@ -2,6 +2,8 @@ import { useState, useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { clsx } from 'clsx'
+import { startRegistration } from '@simplewebauthn/browser'
+import CheckboxItem from '@/components/CheckboxItem'
 import Card from '@/components/ui/Card'
 import Input from '@/components/ui/Input'
 import Button from '@/components/ui/Button'
@@ -390,16 +392,13 @@ function IntegrationsTab() {
             </label>
             <div className="flex flex-col gap-1 max-h-48 overflow-y-auto rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-2">
               {availableEvents.map((evt) => (
-                <label key={evt.value} className="flex items-center gap-2 text-sm text-[var(--text-secondary)] cursor-pointer px-1 py-0.5 hover:bg-[var(--bg-tertiary)] rounded">
-                  <input
-                    type="checkbox"
-                    checked={formEvents.includes(evt.value) || (evt.value !== '*' && formEvents.includes('*'))}
-                    onChange={() => toggleEvent(evt.value)}
-                    className="rounded border-[var(--border)]"
-                  />
-                  <code className="text-xs font-mono text-[var(--accent)]">{evt.value}</code>
-                  <span className="text-xs text-[var(--text-muted)]">— {t(evt.labelKey)}</span>
-                </label>
+                <CheckboxItem
+                  key={evt.value}
+                  checked={formEvents.includes(evt.value) || (evt.value !== '*' && formEvents.includes('*'))}
+                  onChange={() => toggleEvent(evt.value)}
+                  label={evt.value}
+                  description={`— ${t(evt.labelKey)}`}
+                />
               ))}
             </div>
           </div>
@@ -560,6 +559,38 @@ export default function SettingsPage() {
     onError: (err) => addToast((err as Error).message, 'error'),
   })
 
+  const [showRegisterKeyModal, setShowRegisterKeyModal] = useState(false)
+  const [keyName, setKeyName] = useState('')
+  const [registeringKey, setRegisteringKey] = useState(false)
+
+  const handleRegisterWebAuthn = useCallback(async () => {
+    setRegisteringKey(true)
+    try {
+      // Step 1: Begin registration — get creation options from server.
+      // Server returns { publicKey: { ... } }, simplewebauthn expects the inner object.
+      const resp = await api.post<{ publicKey: unknown }>('/mfa/webauthn/register/begin', {})
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const optionsJSON = (resp as any).publicKey ?? resp
+
+      // Step 2: Call WebAuthn browser API.
+      const attestation = await startRegistration({ optionsJSON })
+
+      // Step 3: Finish registration — send attestation to server for verification.
+      const name = keyName || 'Security Key'
+      await api.post(`/mfa/webauthn/register/finish?name=${encodeURIComponent(name)}`, attestation)
+
+      queryClient.invalidateQueries({ queryKey: ['webauthn-credentials'] })
+      refetchMfaStatus()
+      setShowRegisterKeyModal(false)
+      setKeyName('')
+      addToast(t('settings.keyRegistered', 'Security key registered'), 'success')
+    } catch (err) {
+      addToast((err as Error).message || 'Registration failed', 'error')
+    } finally {
+      setRegisteringKey(false)
+    }
+  }, [keyName, queryClient, refetchMfaStatus, addToast, t])
+
   const smtpConnected = !!(settings.smtpHost && settings.smtpPort)
   const oidcConnected = settings.oidcEnabled && !!settings.oidcIssuerUrl
   const ldapConnected = settings.ldapEnabled && !!settings.ldapServerUrl
@@ -653,18 +684,7 @@ export default function SettingsPage() {
           {activeTab === 'auth' && (
             <form className="flex flex-col gap-6 max-w-lg" onSubmit={handleSave}>
               {/* MFA */}
-              <div className="flex items-center gap-3">
-                <input
-                  type="checkbox"
-                  id="mfa-required"
-                  checked={settings.mfaRequired}
-                  onChange={(e) => update('mfaRequired', e.target.checked)}
-                  className="h-4 w-4 rounded border-[var(--border)] bg-[var(--bg-secondary)] accent-[var(--accent)]"
-                />
-                <label htmlFor="mfa-required" className="text-sm text-[var(--text-secondary)]">
-                  {t('settings.mfaRequired')}
-                </label>
-              </div>
+              <CheckboxItem compact checked={settings.mfaRequired} onChange={(v) => update('mfaRequired', v)} label={t('settings.mfaRequired')} />
 
               {/* OIDC Section */}
               <div className="border border-[var(--border)] rounded-lg p-4 space-y-4">
@@ -674,14 +694,7 @@ export default function SettingsPage() {
                     <Badge variant={oidcConnected ? 'online' : 'offline'} pulse>
                       {oidcConnected ? t('status.active') : t('status.inactive')}
                     </Badge>
-                    <input
-                      type="checkbox"
-                      id="oidc-enabled"
-                      checked={settings.oidcEnabled}
-                      onChange={(e) => update('oidcEnabled', e.target.checked)}
-                      className="h-4 w-4 rounded border-[var(--border)] bg-[var(--bg-secondary)] accent-[var(--accent)]"
-                    />
-                    <label htmlFor="oidc-enabled" className="text-xs text-[var(--text-muted)]">{t('settings.enable')}</label>
+                    <CheckboxItem compact checked={settings.oidcEnabled} onChange={(v) => update('oidcEnabled', v)} label={t('settings.enable')} />
                   </div>
                 </div>
                 <Input
@@ -719,14 +732,7 @@ export default function SettingsPage() {
                     <Badge variant={ldapConnected ? 'online' : 'offline'} pulse>
                       {ldapConnected ? t('status.active') : t('status.inactive')}
                     </Badge>
-                    <input
-                      type="checkbox"
-                      id="ldap-enabled"
-                      checked={settings.ldapEnabled}
-                      onChange={(e) => update('ldapEnabled', e.target.checked)}
-                      className="h-4 w-4 rounded border-[var(--border)] bg-[var(--bg-secondary)] accent-[var(--accent)]"
-                    />
-                    <label htmlFor="ldap-enabled" className="text-xs text-[var(--text-muted)]">{t('settings.enable')}</label>
+                    <CheckboxItem compact checked={settings.ldapEnabled} onChange={(v) => update('ldapEnabled', v)} label={t('settings.enable')} />
                   </div>
                 </div>
                 <Input
@@ -763,14 +769,7 @@ export default function SettingsPage() {
                     <Badge variant={samlConnected ? 'online' : 'offline'} pulse>
                       {samlConnected ? t('status.active') : t('status.inactive')}
                     </Badge>
-                    <input
-                      type="checkbox"
-                      id="saml-enabled"
-                      checked={settings.samlEnabled}
-                      onChange={(e) => update('samlEnabled', e.target.checked)}
-                      className="h-4 w-4 rounded border-[var(--border)] bg-[var(--bg-secondary)] accent-[var(--accent)]"
-                    />
-                    <label htmlFor="saml-enabled" className="text-xs text-[var(--text-muted)]">{t('settings.enable')}</label>
+                    <CheckboxItem compact checked={settings.samlEnabled} onChange={(v) => update('samlEnabled', v)} label={t('settings.enable')} />
                   </div>
                 </div>
                 <Input
@@ -1037,7 +1036,7 @@ export default function SettingsPage() {
               <div className="border border-[var(--border)] rounded-lg p-4 space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-medium text-[var(--text-primary)] font-mono">{t('settings.webauthnCredentials')}</h3>
-                  <Button variant="secondary" size="sm" disabled>
+                  <Button variant="secondary" size="sm" onClick={() => setShowRegisterKeyModal(true)}>
                     {t('settings.registerKey')}
                   </Button>
                 </div>
@@ -1070,6 +1069,33 @@ export default function SettingsPage() {
                   </div>
                 )}
               </div>
+
+              {/* Register WebAuthn Key Modal */}
+              <Modal
+                open={showRegisterKeyModal}
+                onClose={() => { setShowRegisterKeyModal(false); setKeyName('') }}
+                title={t('settings.registerKey')}
+              >
+                <div className="space-y-4">
+                  <p className="text-sm text-[var(--text-secondary)]">
+                    {t('settings.registerKeyDescription', 'Insert your security key and give it a name. You\'ll be prompted by your browser to touch or verify the key.')}
+                  </p>
+                  <Input
+                    label={t('settings.keyName', 'Key name')}
+                    value={keyName}
+                    onChange={(e) => setKeyName(e.target.value)}
+                    placeholder="e.g. YubiKey 5"
+                  />
+                  <div className="flex gap-3 justify-end">
+                    <Button variant="secondary" onClick={() => { setShowRegisterKeyModal(false); setKeyName('') }}>
+                      {t('common.cancel')}
+                    </Button>
+                    <Button onClick={handleRegisterWebAuthn} disabled={registeringKey}>
+                      {registeringKey ? t('settings.registering', 'Registering...') : t('settings.registerKey')}
+                    </Button>
+                  </div>
+                </div>
+              </Modal>
 
               {/* Disable TOTP Confirmation Modal */}
               <Modal
