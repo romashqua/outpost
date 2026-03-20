@@ -1,7 +1,10 @@
 package handler
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -833,10 +836,18 @@ func (h *ZTNAHandler) reportPosture(w http.ResponseWriter, r *http.Request) {
 
 	// Refresh firewall rules so ZTNA enforcement takes effect immediately.
 	if h.refresher != nil {
-		h.refresher.RefreshFirewallForUser(ownerID)
+		go h.refresher.RefreshFirewallForUser(ownerID)
 	}
 
-	h.log.Info("posture reported", "device_id", deviceID, "score", score)
+	// Check if device is blocked by ZTNA policies and include in response
+	// so the client can show an immediate notification to the user.
+	blocked, reason := h.checkDeviceZTNABlock(r.Context(), deviceID, score, calcErr == nil, result)
+	if blocked {
+		resp["ztna_blocked"] = true
+		resp["ztna_reason"] = reason
+	}
+
+	h.log.Info("posture reported", "device_id", deviceID, "score", score, "ztna_blocked", blocked)
 	respondJSON(w, http.StatusOK, resp)
 }
 
@@ -860,4 +871,110 @@ func (h *ZTNAHandler) loadTrustConfig(r *http.Request) ztna.TrustScoreConfig {
 		return ztna.DefaultTrustScoreConfig()
 	}
 	return config
+}
+
+// checkDeviceZTNABlock evaluates whether a device is blocked by ZTNA policies
+// (auto-block/restrict thresholds or explicit deny/restrict policies).
+// Returns (blocked, reason).
+func (h *ZTNAHandler) checkDeviceZTNABlock(ctx context.Context, deviceID uuid.UUID, postureScore int, hasTrust bool, trustResult *ztna.TrustScoreResult) (bool, string) {
+	// 1. Check global auto-block/restrict thresholds.
+	var autoRestrict, autoBlock bool
+	_ = h.pool.QueryRow(ctx,
+		`SELECT auto_restrict_below_medium, auto_block_below_low FROM trust_score_config WHERE id = 1`,
+	).Scan(&autoRestrict, &autoBlock)
+
+	if hasTrust && trustResult != nil {
+		level := string(trustResult.Level)
+		if autoBlock && (level == "critical" || level == "low") {
+			return true, "Device trust score is too low (auto-block policy). Contact your administrator."
+		}
+		if autoRestrict && level == "critical" {
+			return true, "Device trust score is critical (auto-restrict policy). Contact your administrator."
+		}
+	}
+
+	// 2. Evaluate active ZTNA deny/restrict policies.
+	rows, err := h.pool.Query(ctx,
+		`SELECT name, conditions, action, network_ids FROM ztna_policies
+		 WHERE is_active = true AND action IN ('deny', 'restrict')
+		 ORDER BY priority ASC`)
+	if err != nil {
+		return false, ""
+	}
+	defer rows.Close()
+
+	// Fetch device posture for condition checks.
+	var diskEncrypted, screenLock, antivirus, firewall, mfaEnabled bool
+	_ = h.pool.QueryRow(ctx,
+		`SELECT COALESCE(dp.disk_encrypted, false), COALESCE(dp.screen_lock, false),
+		        COALESCE(dp.antivirus, false), COALESCE(dp.firewall, false),
+		        COALESCE(u.mfa_enabled, false)
+		 FROM devices d
+		 JOIN users u ON u.id = d.user_id
+		 LEFT JOIN LATERAL (
+		     SELECT disk_encrypted, screen_lock, antivirus, firewall
+		     FROM device_posture WHERE device_id = d.id ORDER BY checked_at DESC LIMIT 1
+		 ) dp ON true
+		 WHERE d.id = $1`, deviceID,
+	).Scan(&diskEncrypted, &screenLock, &antivirus, &firewall, &mfaEnabled)
+
+	trustScore := 0
+	if hasTrust && trustResult != nil {
+		trustScore = trustResult.Score
+	}
+
+	for rows.Next() {
+		var policyName string
+		var condJSON []byte
+		var action string
+		var networkIDs []string
+		if err := rows.Scan(&policyName, &condJSON, &action, &networkIDs); err != nil {
+			continue
+		}
+
+		var cond struct {
+			MinTrustScore         *int  `json:"min_trust_score"`
+			RequireDiskEncryption *bool `json:"require_disk_encryption"`
+			RequireScreenLock     *bool `json:"require_screen_lock"`
+			RequireAntivirus      *bool `json:"require_antivirus"`
+			RequireFirewall       *bool `json:"require_firewall"`
+			RequireMFA            *bool `json:"require_mfa"`
+		}
+		if err := json.Unmarshal(condJSON, &cond); err != nil {
+			continue
+		}
+
+		failed := false
+		var failReason string
+		if cond.MinTrustScore != nil && trustScore < *cond.MinTrustScore {
+			failed = true
+			failReason = fmt.Sprintf("trust score %d below minimum %d", trustScore, *cond.MinTrustScore)
+		}
+		if cond.RequireDiskEncryption != nil && *cond.RequireDiskEncryption && !diskEncrypted {
+			failed = true
+			failReason = "disk encryption is required but not enabled"
+		}
+		if cond.RequireScreenLock != nil && *cond.RequireScreenLock && !screenLock {
+			failed = true
+			failReason = "screen lock is required but not enabled"
+		}
+		if cond.RequireAntivirus != nil && *cond.RequireAntivirus && !antivirus {
+			failed = true
+			failReason = "antivirus is required but not active"
+		}
+		if cond.RequireFirewall != nil && *cond.RequireFirewall && !firewall {
+			failed = true
+			failReason = "firewall is required but not enabled"
+		}
+		if cond.RequireMFA != nil && *cond.RequireMFA && !mfaEnabled {
+			failed = true
+			failReason = "MFA is required but not enabled"
+		}
+
+		if failed {
+			return true, fmt.Sprintf("ZTNA policy '%s' violation: %s. Contact your administrator.", policyName, failReason)
+		}
+	}
+
+	return false, ""
 }

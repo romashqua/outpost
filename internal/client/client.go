@@ -216,40 +216,54 @@ func CollectPosture() *DevicePosture {
 	return posture
 }
 
+// PostureResult holds the server response from a posture report.
+type PostureResult struct {
+	ZTNABlocked bool   `json:"ztna_blocked"`
+	ZTNAReason  string `json:"ztna_reason"`
+	TrustScore  int    `json:"trust_score"`
+	TrustLevel  string `json:"trust_level"`
+}
+
 // ReportPosture collects device posture and sends it to the server for ZTNA trust scoring.
-func (c *Client) ReportPosture(ctx context.Context) error {
+// Returns the posture result including ZTNA block status.
+func (c *Client) ReportPosture(ctx context.Context) (*PostureResult, error) {
 	if c.deviceID == "" {
-		return fmt.Errorf("device not enrolled, cannot report posture")
+		return nil, fmt.Errorf("device not enrolled, cannot report posture")
 	}
 
 	posture := CollectPosture()
 
 	report := map[string]any{
-		"device_id":          c.deviceID,
-		"os_type":            posture.OSType,
-		"os_version":         posture.OSVersion,
-		"disk_encrypted":     posture.DiskEncrypted,
+		"device_id":           c.deviceID,
+		"os_type":             posture.OSType,
+		"os_version":          posture.OSVersion,
+		"disk_encrypted":      posture.DiskEncrypted,
 		"screen_lock_enabled": posture.ScreenLockEnabled,
-		"antivirus_active":   posture.AntivirusActive,
-		"firewall_enabled":   posture.FirewallEnabled,
+		"antivirus_active":    posture.AntivirusActive,
+		"firewall_enabled":    posture.FirewallEnabled,
 	}
 
 	body, err := json.Marshal(report)
 	if err != nil {
-		return fmt.Errorf("marshal posture report: %w", err)
+		return nil, fmt.Errorf("marshal posture report: %w", err)
 	}
 
 	resp, err := c.doRequest(ctx, http.MethodPost, "/api/v1/ztna/posture", body, true)
 	if err != nil {
-		return fmt.Errorf("report posture: %w", err)
+		return nil, fmt.Errorf("report posture: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return c.readError(resp)
+		return nil, c.readError(resp)
 	}
 
-	return nil
+	var result PostureResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode posture response: %w", err)
+	}
+
+	return &result, nil
 }
 
 // --- Session Management ---

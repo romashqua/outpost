@@ -218,6 +218,15 @@ func cmdConnect(c *client.Client, logger *slog.Logger) {
 			if err := doLogin(ctx, c); err != nil {
 				logger.Error("re-authentication failed", "error", err)
 			}
+		case client.TunnelZTNABlocked:
+			reason := tm.ZTNABlockReason()
+			fmt.Printf("\n%s%s✗ ZTNA POLICY VIOLATION%s\n", cli.Red, cli.Bold, cli.Reset)
+			if reason != "" {
+				fmt.Printf("  %s%s%s\n", cli.Yellow, reason, cli.Reset)
+			} else {
+				fmt.Printf("  %sYour device does not meet security requirements. Contact your administrator.%s\n", cli.Yellow, cli.Reset)
+			}
+			fmt.Printf("  %sVPN tunnel has been disconnected.%s\n\n", cli.Muted, cli.Reset)
 		case client.TunnelDisconnected:
 			fmt.Printf("%s%s✗%s VPN disconnected\n", cli.Red, cli.Bold, cli.Reset)
 		}

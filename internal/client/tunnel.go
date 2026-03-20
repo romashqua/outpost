@@ -22,6 +22,7 @@ const (
 	TunnelConnected
 	TunnelReconnecting
 	TunnelMFARequired
+	TunnelZTNABlocked
 )
 
 func (s TunnelState) String() string {
@@ -36,6 +37,8 @@ func (s TunnelState) String() string {
 		return "reconnecting"
 	case TunnelMFARequired:
 		return "mfa_required"
+	case TunnelZTNABlocked:
+		return "ztna_blocked"
 	default:
 		return "unknown"
 	}
@@ -59,8 +62,18 @@ type TunnelManager struct {
 	currentGateway int               // index into gateways slice
 	allowedIPs     []string          // for peer reconfiguration on failover
 
+	// ZTNA block info (set when posture check indicates device is blocked).
+	ztnaBlockReason string
+
 	// Callbacks for state changes.
 	onStateChange func(TunnelState)
+}
+
+// ZTNABlockReason returns the reason the device was blocked by ZTNA policy.
+func (tm *TunnelManager) ZTNABlockReason() string {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+	return tm.ztnaBlockReason
 }
 
 // wgDeviceCloser is the interface for an in-process wireguard-go device.
@@ -212,8 +225,11 @@ func (tm *TunnelManager) RunSessionLoop(ctx context.Context, postureInterval tim
 
 	// Send initial posture report immediately on connect.
 	if tm.State() == TunnelConnected {
-		if err := tm.client.ReportPosture(ctx); err != nil {
+		if result, err := tm.client.ReportPosture(ctx); err != nil {
 			tm.logger.Warn("initial posture report failed", "error", err)
+		} else if result != nil && result.ZTNABlocked {
+			tm.handleZTNABlock(result.ZTNAReason)
+			return
 		}
 	}
 
@@ -225,8 +241,11 @@ func (tm *TunnelManager) RunSessionLoop(ctx context.Context, postureInterval tim
 			return
 		case <-postureTicker.C:
 			if tm.State() == TunnelConnected {
-				if err := tm.client.ReportPosture(ctx); err != nil {
+				if result, err := tm.client.ReportPosture(ctx); err != nil {
 					tm.logger.Warn("posture report failed", "error", err)
+				} else if result != nil && result.ZTNABlocked {
+					tm.handleZTNABlock(result.ZTNAReason)
+					return
 				}
 			}
 		case <-refreshTicker.C:
@@ -297,6 +316,25 @@ func (tm *TunnelManager) failoverToNextGateway() {
 			tm.logger.Error("failed to apply failover peer update", "error", err)
 		}
 	}
+}
+
+// handleZTNABlock disconnects the tunnel and sets the ZTNA blocked state
+// so the user sees an immediate notification about the policy violation.
+func (tm *TunnelManager) handleZTNABlock(reason string) {
+	tm.mu.Lock()
+	tm.ztnaBlockReason = reason
+	tm.mu.Unlock()
+
+	tm.logger.Warn("ZTNA policy violation — disconnecting tunnel",
+		"reason", reason,
+	)
+
+	// Tear down the tunnel immediately.
+	if err := tm.userspaceDown(); err != nil {
+		tm.logger.Error("failed to tear down tunnel after ZTNA block", "error", err)
+	}
+
+	tm.setState(TunnelZTNABlocked)
 }
 
 // getLastHandshake queries wgctrl for the most recent peer handshake time.

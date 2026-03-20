@@ -410,8 +410,9 @@ func (s *Server) setupHTTPRouter() chi.Router {
 			if s.mailer != nil {
 				userHandlerOpts = append(userHandlerOpts, s.mailer)
 			}
-			r.Mount("/users", handler.NewUserHandler(s.pool, s.logger, userHandlerOpts...).Routes())
 			fwRefresher := &hubPeerNotifier{hub: s.streamHub, pool: s.pool, logger: s.logger}
+			r.Mount("/users", handler.NewUserHandler(s.pool, s.logger, userHandlerOpts...).
+				WithNotifier(fwRefresher).WithFirewallRefresher(fwRefresher).Routes())
 			r.Mount("/groups", handler.NewGroupHandler(s.pool, s.logger).WithFirewallRefresher(fwRefresher).Routes())
 			r.Mount("/networks", handler.NewNetworkHandler(s.pool, s.logger).WithNetworkFirewallRefresher(fwRefresher).Routes())
 			devHandler := handler.NewDeviceHandler(s.pool, s.logger).WithNotifier(&hubPeerNotifier{hub: s.streamHub, pool: s.pool, logger: s.logger})

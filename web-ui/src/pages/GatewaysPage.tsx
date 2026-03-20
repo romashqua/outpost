@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Pencil, Trash2, Copy, Check, Search } from 'lucide-react'
+import { Plus, Pencil, Trash2, Copy, Check, Search, LayoutGrid, List, Shield } from 'lucide-react'
 import { api } from '@/api/client'
 import { useToastStore } from '@/store/toast'
 import Table from '@/components/ui/Table'
@@ -58,6 +58,7 @@ export default function GatewaysPage() {
   const [copiedToken, setCopiedToken] = useState(false)
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [editTarget, setEditTarget] = useState<Gateway | null>(null)
+  const [viewMode, setViewMode] = useState<'list' | 'cluster'>('list')
 
   // Form state (create)
   const [formName, setFormName] = useState('')
@@ -284,6 +285,117 @@ export default function GatewaysPage() {
     )
   }
 
+  function ClusterView({
+    gateways: gwList,
+    networks: netList,
+    onEdit,
+    onDelete,
+    formatLastSeen: fmtLastSeen,
+  }: {
+    gateways: Gateway[]
+    networks: Network[]
+    onEdit: (gw: Gateway) => void
+    onDelete: (id: string) => void
+    formatLastSeen: (ls: string | null) => string
+  }) {
+    // Group gateways by network — a gateway can appear in multiple clusters.
+    const clusters = new Map<string, { network: Network; gateways: Gateway[] }>()
+    for (const net of netList.filter(n => n.is_active)) {
+      clusters.set(net.id, { network: net, gateways: [] })
+    }
+    for (const gw of gwList) {
+      for (const nid of gw.network_ids ?? []) {
+        const cluster = clusters.get(nid)
+        if (cluster) cluster.gateways.push(gw)
+      }
+    }
+    // Also show unassigned gateways.
+    const assignedIds = new Set(gwList.filter(g => (g.network_ids ?? []).length > 0).map(g => g.id))
+    const unassigned = gwList.filter(g => !assignedIds.has(g.id))
+
+    const dotColor: Record<string, string> = {
+      healthy: '#00ff88',
+      degraded: '#ffaa00',
+      unhealthy: '#ff4444',
+      unknown: '#666666',
+    }
+
+    function GatewayCard({ gw }: { gw: Gateway }) {
+      const status = gw.health_status || 'unknown'
+      const color = dotColor[status] ?? dotColor.unknown
+      return (
+        <div className="flex items-center justify-between rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-3 hover:border-[var(--accent)]/30 transition-colors">
+          <div className="flex items-center gap-3">
+            <span className="relative flex h-2.5 w-2.5" title={status}>
+              {status === 'healthy' && (
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full opacity-50" style={{ backgroundColor: color }} />
+              )}
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
+            </span>
+            <div>
+              <div className="font-mono text-sm text-[var(--accent)]">{gw.name}</div>
+              <div className="font-mono text-xs text-[var(--text-muted)]">
+                {gw.endpoint} · {t('gateways.priority')} {gw.priority} · {fmtLastSeen(gw.last_seen)}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="sm" onClick={() => onEdit(gw)}>
+              <Pencil size={14} className="text-[var(--accent)]" />
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => onDelete(gw.id)}>
+              <Trash2 size={14} className="text-[var(--danger)]" />
+            </Button>
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <div className="space-y-6">
+        {[...clusters.values()].filter(c => c.gateways.length > 0).map(({ network, gateways: clusterGws }) => (
+          <div key={network.id} className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--border)] bg-[var(--bg-secondary)]">
+              <Shield size={16} className="text-[var(--accent)]" />
+              <div>
+                <span className="font-mono text-sm text-[var(--accent)]">{network.name}</span>
+                <span className="ml-2 font-mono text-xs text-[var(--text-muted)]">{network.address}</span>
+              </div>
+              <span className={`ml-auto rounded-full px-2 py-0.5 text-xs font-mono ${clusterGws.length > 1 ? 'bg-[var(--accent)]/10 text-[var(--accent)]' : 'bg-[var(--bg-tertiary)] text-[var(--text-muted)]'}`}>
+                {clusterGws.length > 1
+                  ? `HA · ${clusterGws.length} ${t('gateways.gatewayCount', 'gateways')}`
+                  : `1 ${t('gateways.gateway', 'gateway')}`}
+              </span>
+            </div>
+            <div className="p-3 space-y-2">
+              {clusterGws.sort((a, b) => b.priority - a.priority).map(gw => (
+                <GatewayCard key={gw.id} gw={gw} />
+              ))}
+            </div>
+          </div>
+        ))}
+        {unassigned.length > 0 && (
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] overflow-hidden">
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--border)] bg-[var(--bg-secondary)]">
+              <Shield size={16} className="text-[var(--text-muted)]" />
+              <span className="font-mono text-sm text-[var(--text-muted)]">{t('gateways.unassigned', 'Unassigned')}</span>
+            </div>
+            <div className="p-3 space-y-2">
+              {unassigned.map(gw => (
+                <GatewayCard key={gw.id} gw={gw} />
+              ))}
+            </div>
+          </div>
+        )}
+        {gwList.length === 0 && (
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-8 text-center text-[var(--text-muted)]">
+            {t('gateways.noGateways', 'No gateways yet. Create one to get started.')}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   const columns = [
     {
       key: 'name',
@@ -427,18 +539,53 @@ export default function GatewaysPage() {
           <span className="font-mono text-[var(--accent)] mr-2">&gt;_</span>
           {t('gateways.title')}
         </h1>
-        <Button onClick={() => { createMutation.reset(); resetForm(); setShowCreate(true) }}>
-          <Plus size={16} />
-          {t('common.create')}
-        </Button>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-0.5">
+            <button
+              onClick={() => setViewMode('list')}
+              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${viewMode === 'list' ? 'bg-[var(--accent)]/15 text-[var(--accent)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'}`}
+            >
+              <List size={14} />
+              {t('gateways.listView', 'List')}
+            </button>
+            <button
+              onClick={() => setViewMode('cluster')}
+              className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors ${viewMode === 'cluster' ? 'bg-[var(--accent)]/15 text-[var(--accent)]' : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'}`}
+            >
+              <LayoutGrid size={14} />
+              {t('gateways.clusterView', 'Clusters')}
+            </button>
+          </div>
+          <Button onClick={() => { createMutation.reset(); resetForm(); setShowCreate(true) }}>
+            <Plus size={16} />
+            {t('common.create')}
+          </Button>
+        </div>
       </div>
 
       {isLoading ? (
         <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-8 text-center text-[var(--text-muted)]">
           {t('gateways.loadingGateways')}
         </div>
-      ) : (
+      ) : viewMode === 'list' ? (
         <Table columns={columns} data={gateways} />
+      ) : (
+        <ClusterView
+          gateways={gateways}
+          networks={networks}
+          onEdit={(gw) => {
+            updateMutation.reset()
+            setEditName(gw.name)
+            setEditEndpoint(gw.endpoint)
+            setEditPublicIp(gw.public_ip || '')
+            setEditPriority(gw.priority.toString())
+            setEditNetworkIds(gw.network_ids ?? [])
+            setEditErrors({})
+            setEditTarget(gw)
+          }}
+          onDelete={(id) => { deleteMutation.reset(); setDeleteId(id) }}
+          formatLastSeen={formatLastSeen}
+        />
       )}
 
       {/* Create Modal */}

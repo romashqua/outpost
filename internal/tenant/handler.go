@@ -476,9 +476,13 @@ func (h *Handler) stats(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	rows, err := h.pool.Query(r.Context(),
-		`SELECT id, username, email, first_name, last_name, role, is_active, created_at
-		 FROM users WHERE tenant_id = $1 ORDER BY created_at DESC`, id)
+		`SELECT u.id, u.username, u.email, u.first_name, u.last_name,
+		        CASE WHEN u.is_admin THEN 'admin' ELSE 'user' END AS role,
+		        u.is_active, u.created_at
+		 FROM users u
+		 WHERE u.tenant_id = $1 ORDER BY u.created_at DESC`, id)
 	if err != nil {
+		h.log.Error("failed to query tenant users", "tenant_id", id, "error", err)
 		respondJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to query users", "message": "failed to query users"})
 		return
 	}
@@ -498,6 +502,7 @@ func (h *Handler) listUsers(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var u userRow
 		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.FirstName, &u.LastName, &u.Role, &u.IsActive, &u.CreatedAt); err != nil {
+			h.log.Error("failed to scan tenant user", "error", err)
 			respondJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to scan user", "message": "failed to scan user"})
 			return
 		}

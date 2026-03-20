@@ -367,16 +367,28 @@ func (s *gatewayService) handlePeerStats(ctx context.Context, gatewayID string, 
 //   - ACCEPT rules for networks the user's groups are allowed to access
 //   - A final DROP rule to block access to all other networks
 //
+// firewallResult holds the computed firewall config along with metadata
+// about blocked devices (for ZTNA peer removal).
+type firewallResult struct {
+	Config         *commonv1.FirewallConfig
+	BlockedPubkeys []string // WireGuard pubkeys of devices blocked by ZTNA (should be removed as peers)
+}
+
 // This is a method on gatewayService but the logic is also used by hubPeerNotifier
 // via the exported BuildFirewallConfig wrapper below.
 func (s *gatewayService) buildFirewallConfig(ctx context.Context, gatewayID string) *commonv1.FirewallConfig {
-	return buildFirewallConfigFromPool(ctx, s.pool, s.logger, gatewayID)
+	result := buildFirewallConfigFromPool(ctx, s.pool, s.logger, gatewayID)
+	if result == nil {
+		return nil
+	}
+	return result.Config
 }
 
 // buildFirewallConfigFromPool is the shared implementation used by both
 // gatewayService and hubPeerNotifier.
-func buildFirewallConfigFromPool(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, gatewayID string) *commonv1.FirewallConfig {
+func buildFirewallConfigFromPool(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger, gatewayID string) *firewallResult {
 	// Query all approved devices on this gateway with their ACL-allowed networks.
+	// Admin users (is_admin=true) automatically get access to ALL active networks.
 	rows, err := pool.Query(ctx,
 		`SELECT DISTINCT
 		     host(d.assigned_ip) AS device_ip,
@@ -387,6 +399,18 @@ func buildFirewallConfigFromPool(ctx context.Context, pool *pgxpool.Pool, logger
 		 JOIN network_acls a ON a.group_id = ug.group_id
 		 JOIN networks n ON n.id = a.network_id AND n.is_active = true
 		 WHERE gn.gateway_id::text = $1
+		   AND d.is_approved = true
+		   AND d.wireguard_pubkey != ''
+		 UNION
+		 SELECT DISTINCT
+		     host(d.assigned_ip) AS device_ip,
+		     n.address::text AS allowed_cidr
+		 FROM devices d
+		 JOIN gateway_networks gn ON gn.network_id = d.network_id
+		 JOIN users u ON u.id = d.user_id AND u.is_admin = true
+		 CROSS JOIN networks n
+		 WHERE gn.gateway_id::text = $1
+		   AND n.is_active = true
 		   AND d.is_approved = true
 		   AND d.wireguard_pubkey != ''
 		 ORDER BY device_ip, allowed_cidr`, gatewayID)
@@ -407,15 +431,16 @@ func buildFirewallConfigFromPool(ctx context.Context, pool *pgxpool.Pool, logger
 	}
 
 	// Fetch ALL approved devices on this gateway (for default-deny on devices without ACL).
+	// Also fetch pubkeys for ZTNA peer removal.
 	allRows, err := pool.Query(ctx,
-		`SELECT DISTINCT host(d.assigned_ip)
+		`SELECT DISTINCT host(d.assigned_ip), d.wireguard_pubkey
 		 FROM devices d
 		 JOIN gateway_networks gn ON gn.network_id = d.network_id
 		 WHERE gn.gateway_id::text = $1
 		   AND d.is_approved = true
 		   AND d.wireguard_pubkey != ''
 		 UNION
-		 SELECT host(d.assigned_ip)
+		 SELECT host(d.assigned_ip), d.wireguard_pubkey
 		 FROM devices d
 		 JOIN gateways g ON g.network_id = d.network_id
 		 WHERE g.id::text = $1
@@ -425,11 +450,13 @@ func buildFirewallConfigFromPool(ctx context.Context, pool *pgxpool.Pool, logger
 		logger.Warn("failed to fetch all devices for default-deny", "error", err)
 	}
 	var allDeviceIPs []string
+	devicePubkeys := make(map[string]string) // device_ip -> wireguard_pubkey
 	if allRows != nil {
 		for allRows.Next() {
-			var ip string
-			if err := allRows.Scan(&ip); err == nil {
+			var ip, pubkey string
+			if err := allRows.Scan(&ip, &pubkey); err == nil {
 				allDeviceIPs = append(allDeviceIPs, ip)
+				devicePubkeys[ip] = pubkey
 			}
 		}
 		allRows.Close()
@@ -463,9 +490,9 @@ func buildFirewallConfigFromPool(ctx context.Context, pool *pgxpool.Pool, logger
 		     COALESCE(ts.score, 0),
 		     COALESCE(ts.level, 'critical'),
 		     COALESCE(dp.disk_encrypted, false),
-		     COALESCE(dp.screen_lock_enabled, false),
-		     COALESCE(dp.antivirus_active, false),
-		     COALESCE(dp.firewall_enabled, false),
+		     COALESCE(dp.screen_lock, false),
+		     COALESCE(dp.antivirus, false),
+		     COALESCE(dp.firewall, false),
 		     COALESCE(u.mfa_enabled, false)
 		 FROM devices d
 		 JOIN gateway_networks gn ON gn.network_id = d.network_id
@@ -475,7 +502,7 @@ func buildFirewallConfigFromPool(ctx context.Context, pool *pgxpool.Pool, logger
 		     WHERE device_id = d.id ORDER BY evaluated_at DESC LIMIT 1
 		 ) ts ON true
 		 LEFT JOIN LATERAL (
-		     SELECT disk_encrypted, screen_lock_enabled, antivirus_active, firewall_enabled
+		     SELECT disk_encrypted, screen_lock, antivirus, firewall
 		     FROM device_posture WHERE device_id = d.id ORDER BY checked_at DESC LIMIT 1
 		 ) dp ON true
 		 WHERE gn.gateway_id::text = $1
@@ -618,11 +645,22 @@ func buildFirewallConfigFromPool(ctx context.Context, pool *pgxpool.Pool, logger
 		}
 	}
 
+	// Collect pubkeys of devices blocked by ZTNA for peer removal.
+	var blockedPubkeys []string
+	for ip := range blockedByZTNA {
+		if pk, ok := devicePubkeys[ip]; ok && pk != "" {
+			blockedPubkeys = append(blockedPubkeys, pk)
+		}
+	}
+
 	// Always return config with NAT enabled so gateway masquerades VPN traffic.
 	// Without masquerade, destination hosts cannot route replies back to VPN clients.
-	return &commonv1.FirewallConfig{
-		Rules:      rules,
-		NatEnabled: true,
+	return &firewallResult{
+		Config: &commonv1.FirewallConfig{
+			Rules:      rules,
+			NatEnabled: true,
+		},
+		BlockedPubkeys: blockedPubkeys,
 	}
 }
 

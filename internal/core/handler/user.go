@@ -22,11 +22,30 @@ type Mailer interface {
 	SendEnrollmentInvite(ctx context.Context, to, enrollURL, instanceName string) error
 }
 
+// UserPeerNotifier removes WireGuard peers when a user is deleted/deactivated.
+type UserPeerNotifier interface {
+	NotifyPeerRemove(pubkey string)
+}
+
 // UserHandler provides CRUD endpoints for user management.
 type UserHandler struct {
-	pool DB
-	log    *slog.Logger
-	mailer Mailer
+	pool      DB
+	log       *slog.Logger
+	mailer    Mailer
+	notifier  UserPeerNotifier
+	refresher FirewallRefresher
+}
+
+// WithNotifier sets the peer notifier for removing peers when users change.
+func (h *UserHandler) WithNotifier(n UserPeerNotifier) *UserHandler {
+	h.notifier = n
+	return h
+}
+
+// WithFirewallRefresher sets the firewall refresher for pushing ACL changes.
+func (h *UserHandler) WithFirewallRefresher(r FirewallRefresher) *UserHandler {
+	h.refresher = r
+	return h
 }
 
 // NewUserHandler creates a UserHandler backed by the given connection pool.
@@ -379,7 +398,37 @@ func (h *UserHandler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If user was deactivated, immediately remove all their WireGuard peers.
+	if req.IsActive != nil && !*req.IsActive {
+		go h.removeUserPeers(id.String())
+	}
+	// If admin status or active status changed, refresh firewall (ACL may differ).
+	if req.IsActive != nil || req.IsAdmin != nil {
+		if h.refresher != nil {
+			go h.refresher.RefreshFirewallForUser(id.String())
+		}
+	}
+
 	respondJSON(w, http.StatusOK, u)
+}
+
+// removeUserPeers fetches all device pubkeys for a user and removes them from gateways.
+func (h *UserHandler) removeUserPeers(userID string) {
+	if h.notifier == nil {
+		return
+	}
+	rows, err := h.pool.Query(context.Background(),
+		`SELECT wireguard_pubkey FROM devices WHERE user_id::text = $1 AND wireguard_pubkey != ''`, userID)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var pk string
+		if err := rows.Scan(&pk); err == nil {
+			h.notifier.NotifyPeerRemove(pk)
+		}
+	}
 }
 
 // @Summary Delete user
@@ -444,6 +493,20 @@ func (h *UserHandler) delete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Fetch device pubkeys BEFORE deletion for immediate peer removal.
+	var devicePubkeys []string
+	pubkeyRows, _ := tx.Query(ctx,
+		`SELECT wireguard_pubkey FROM devices WHERE user_id = $1 AND wireguard_pubkey != ''`, id)
+	if pubkeyRows != nil {
+		for pubkeyRows.Next() {
+			var pk string
+			if err := pubkeyRows.Scan(&pk); err == nil {
+				devicePubkeys = append(devicePubkeys, pk)
+			}
+		}
+		pubkeyRows.Close()
+	}
+
 	tag, err := tx.Exec(ctx,
 		`DELETE FROM users WHERE id = $1`, id)
 	if err != nil {
@@ -461,7 +524,14 @@ func (h *UserHandler) delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.log.Info("user deleted", "id", id)
+	// Immediately remove WireGuard peers for all user's devices.
+	if h.notifier != nil {
+		for _, pk := range devicePubkeys {
+			h.notifier.NotifyPeerRemove(pk)
+		}
+	}
+
+	h.log.Info("user deleted", "id", id, "peers_removed", len(devicePubkeys))
 	w.WriteHeader(http.StatusNoContent)
 }
 

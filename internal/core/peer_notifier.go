@@ -23,7 +23,7 @@ func (n *hubPeerNotifier) NotifyPeerAdd(pubkey string, allowedIPs []string) {
 	n.hub.BroadcastPeerUpdate(&gatewayv1.PeerUpdate{
 		Action: gatewayv1.PeerUpdate_ACTION_ADD,
 		Peer: &commonv1.Peer{
-			PublicKey:            pubkey,
+			PublicKey:           pubkey,
 			AllowedIps:          allowedIPs,
 			PersistentKeepalive: 25,
 		},
@@ -47,9 +47,7 @@ func (n *hubPeerNotifier) NotifyPeerRemove(pubkey string) {
 	// Recompute firewall rules for affected gateways.
 	ctx := context.Background()
 	for _, gwID := range gatewayIDs {
-		if fwConfig := buildFirewallConfigFromPool(ctx, n.pool, n.logger, gwID); fwConfig != nil {
-			n.hub.SendFirewallUpdate(gwID, fwConfig)
-		}
+		n.sendFirewallResult(gwID, buildFirewallConfigFromPool(ctx, n.pool, n.logger, gwID))
 	}
 }
 
@@ -59,9 +57,34 @@ func (n *hubPeerNotifier) refreshFirewallForPeer(pubkey string) {
 	gatewayIDs := n.findGatewaysForPeer(pubkey)
 	ctx := context.Background()
 	for _, gwID := range gatewayIDs {
-		if fwConfig := buildFirewallConfigFromPool(ctx, n.pool, n.logger, gwID); fwConfig != nil {
-			n.hub.SendFirewallUpdate(gwID, fwConfig)
+		n.sendFirewallResult(gwID, buildFirewallConfigFromPool(ctx, n.pool, n.logger, gwID))
+	}
+}
+
+// sendFirewallResult pushes a firewall config to the gateway and removes
+// any WireGuard peers that are blocked by ZTNA policies.
+func (n *hubPeerNotifier) sendFirewallResult(gatewayID string, result *firewallResult) {
+	if result == nil {
+		return
+	}
+	n.hub.SendFirewallUpdate(gatewayID, result.Config)
+	n.removeZTNABlockedPeers(result.BlockedPubkeys)
+}
+
+// removeZTNABlockedPeers sends PeerUpdate ACTION_REMOVE for all ZTNA-blocked devices.
+// This ensures immediate disconnection — the WireGuard peer is removed from the gateway,
+// not just blocked by iptables (which has ESTABLISHED/RELATED bypass).
+func (n *hubPeerNotifier) removeZTNABlockedPeers(pubkeys []string) {
+	for _, pk := range pubkeys {
+		n.hub.BroadcastPeerUpdate(&gatewayv1.PeerUpdate{
+			Action: gatewayv1.PeerUpdate_ACTION_REMOVE,
+			Peer:   &commonv1.Peer{PublicKey: pk},
+		})
+		preview := pk
+		if len(preview) > 8 {
+			preview = preview[:8] + "..."
 		}
+		n.logger.Info("ZTNA: removed WireGuard peer (policy violation)", "pubkey", preview)
 	}
 }
 
@@ -112,9 +135,7 @@ func (n *hubPeerNotifier) RefreshFirewallForUser(userID string) {
 		if err := rows.Scan(&gwID); err != nil {
 			continue
 		}
-		if fwConfig := buildFirewallConfigFromPool(ctx, n.pool, n.logger, gwID); fwConfig != nil {
-			n.hub.SendFirewallUpdate(gwID, fwConfig)
-		}
+		n.sendFirewallResult(gwID, buildFirewallConfigFromPool(ctx, n.pool, n.logger, gwID))
 	}
 }
 
@@ -139,9 +160,7 @@ func (n *hubPeerNotifier) RefreshFirewallForGroup(groupID string) {
 		if err := rows.Scan(&gwID); err != nil {
 			continue
 		}
-		if fwConfig := buildFirewallConfigFromPool(ctx, n.pool, n.logger, gwID); fwConfig != nil {
-			n.hub.SendFirewallUpdate(gwID, fwConfig)
-		}
+		n.sendFirewallResult(gwID, buildFirewallConfigFromPool(ctx, n.pool, n.logger, gwID))
 	}
 }
 
@@ -150,9 +169,7 @@ func (n *hubPeerNotifier) RefreshFirewallForGroup(groupID string) {
 func (n *hubPeerNotifier) RefreshFirewallForGateways(gatewayIDs []string) {
 	ctx := context.Background()
 	for _, gwID := range gatewayIDs {
-		if fwConfig := buildFirewallConfigFromPool(ctx, n.pool, n.logger, gwID); fwConfig != nil {
-			n.hub.SendFirewallUpdate(gwID, fwConfig)
-		}
+		n.sendFirewallResult(gwID, buildFirewallConfigFromPool(ctx, n.pool, n.logger, gwID))
 	}
 }
 
@@ -173,9 +190,7 @@ func (n *hubPeerNotifier) RefreshAllFirewalls() {
 		if err := rows.Scan(&gwID); err != nil {
 			continue
 		}
-		if fwConfig := buildFirewallConfigFromPool(ctx, n.pool, n.logger, gwID); fwConfig != nil {
-			n.hub.SendFirewallUpdate(gwID, fwConfig)
-		}
+		n.sendFirewallResult(gwID, buildFirewallConfigFromPool(ctx, n.pool, n.logger, gwID))
 	}
 	n.logger.Info("global firewall refresh triggered (ZTNA policy change)")
 }
@@ -218,8 +233,8 @@ func (n *hubGatewayNetworkNotifier) NotifyGatewayNetworksChanged(gatewayID strin
 	ctx := context.Background()
 
 	// 1. Refresh firewall rules for the gateway itself.
-	if fwConfig := buildFirewallConfigFromPool(ctx, n.pool, n.logger, gatewayID); fwConfig != nil {
-		n.hub.SendFirewallUpdate(gatewayID, fwConfig)
+	if result := buildFirewallConfigFromPool(ctx, n.pool, n.logger, gatewayID); result != nil {
+		n.hub.SendFirewallUpdate(gatewayID, result.Config)
 	}
 
 	// 2. Refresh S2S configs for this gateway and all its S2S tunnel peers.
