@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -441,31 +442,144 @@ func buildFirewallConfigFromPool(ctx context.Context, pool *pgxpool.Pool, logger
 		`SELECT auto_restrict_below_medium, auto_block_below_low
 		 FROM trust_score_config WHERE id = 1`).Scan(&autoRestrict, &autoBlock)
 
+	// Fetch latest trust scores + posture data for devices on this gateway.
+	type devicePosture struct {
+		IP             string
+		NetworkID      string
+		TrustScore     int
+		TrustLevel     string
+		DiskEncrypted  bool
+		ScreenLock     bool
+		Antivirus      bool
+		Firewall       bool
+		MFAEnabled     bool
+	}
+	devicePostures := make(map[string]*devicePosture) // ip -> posture
+
+	postureRows, err := pool.Query(ctx,
+		`SELECT DISTINCT ON (d.id)
+		     host(d.assigned_ip),
+		     d.network_id::text,
+		     COALESCE(ts.score, 0),
+		     COALESCE(ts.level, 'critical'),
+		     COALESCE(dp.disk_encrypted, false),
+		     COALESCE(dp.screen_lock_enabled, false),
+		     COALESCE(dp.antivirus_active, false),
+		     COALESCE(dp.firewall_enabled, false),
+		     COALESCE(u.mfa_enabled, false)
+		 FROM devices d
+		 JOIN gateway_networks gn ON gn.network_id = d.network_id
+		 JOIN users u ON u.id = d.user_id
+		 LEFT JOIN LATERAL (
+		     SELECT score, level FROM device_trust_scores
+		     WHERE device_id = d.id ORDER BY evaluated_at DESC LIMIT 1
+		 ) ts ON true
+		 LEFT JOIN LATERAL (
+		     SELECT disk_encrypted, screen_lock_enabled, antivirus_active, firewall_enabled
+		     FROM device_posture WHERE device_id = d.id ORDER BY checked_at DESC LIMIT 1
+		 ) dp ON true
+		 WHERE gn.gateway_id::text = $1
+		   AND d.is_approved = true
+		   AND d.wireguard_pubkey != ''
+		 ORDER BY d.id`, gatewayID)
+	if err == nil {
+		for postureRows.Next() {
+			var p devicePosture
+			if err := postureRows.Scan(&p.IP, &p.NetworkID, &p.TrustScore, &p.TrustLevel,
+				&p.DiskEncrypted, &p.ScreenLock, &p.Antivirus, &p.Firewall, &p.MFAEnabled); err != nil {
+				continue
+			}
+			devicePostures[p.IP] = &p
+		}
+		postureRows.Close()
+	}
+
+	// 1) Auto-block/restrict based on global trust config.
 	if autoRestrict || autoBlock {
-		// Fetch latest trust scores for devices on this gateway.
-		trustRows, err := pool.Query(ctx,
-			`SELECT DISTINCT ON (d.id) host(d.assigned_ip), ts.level
-			 FROM device_trust_scores ts
-			 JOIN devices d ON d.id = ts.device_id
-			 JOIN gateway_networks gn ON gn.network_id = d.network_id
-			 WHERE gn.gateway_id::text = $1
-			   AND d.is_approved = true
-			   AND d.wireguard_pubkey != ''
-			 ORDER BY d.id, ts.evaluated_at DESC`, gatewayID)
-		if err == nil {
-			for trustRows.Next() {
-				var ip, level string
-				if err := trustRows.Scan(&ip, &level); err != nil {
+		for ip, p := range devicePostures {
+			if autoBlock && (p.TrustLevel == "critical" || p.TrustLevel == "low") {
+				blockedByZTNA[ip] = true
+			} else if autoRestrict && p.TrustLevel == "critical" {
+				blockedByZTNA[ip] = true
+			}
+		}
+	}
+
+	// 2) Evaluate ZTNA policies (ztna_policies table).
+	// Policies with action="deny": if device FAILS any condition → block.
+	// Policies with action="restrict": if device FAILS any condition → block (same as deny for now).
+	// Policies with action="allow": skip (default behavior).
+	policyRows, err := pool.Query(ctx,
+		`SELECT conditions, action, network_ids FROM ztna_policies
+		 WHERE is_active = true AND action IN ('deny', 'restrict')
+		 ORDER BY priority ASC`)
+	if err == nil {
+		for policyRows.Next() {
+			var condJSON []byte
+			var action string
+			var networkIDs []string
+			if err := policyRows.Scan(&condJSON, &action, &networkIDs); err != nil {
+				continue
+			}
+
+			var cond struct {
+				MinTrustScore        *int  `json:"min_trust_score"`
+				RequireDiskEncryption *bool `json:"require_disk_encryption"`
+				RequireScreenLock     *bool `json:"require_screen_lock"`
+				RequireAntivirus      *bool `json:"require_antivirus"`
+				RequireFirewall       *bool `json:"require_firewall"`
+				RequireMFA            *bool `json:"require_mfa"`
+			}
+			if err := json.Unmarshal(condJSON, &cond); err != nil {
+				logger.Warn("failed to parse ztna policy conditions", "error", err)
+				continue
+			}
+
+			// Build network filter set (empty = applies to all networks).
+			netFilter := make(map[string]bool)
+			for _, nid := range networkIDs {
+				netFilter[nid] = true
+			}
+
+			for ip, p := range devicePostures {
+				if blockedByZTNA[ip] {
+					continue // already blocked
+				}
+
+				// Check if policy applies to this device's network.
+				if len(netFilter) > 0 && !netFilter[p.NetworkID] {
 					continue
 				}
-				if autoBlock && (level == "critical" || level == "low") {
+
+				// Evaluate conditions: device must PASS all, otherwise action applies.
+				failed := false
+				if cond.MinTrustScore != nil && p.TrustScore < *cond.MinTrustScore {
+					failed = true
+				}
+				if cond.RequireDiskEncryption != nil && *cond.RequireDiskEncryption && !p.DiskEncrypted {
+					failed = true
+				}
+				if cond.RequireScreenLock != nil && *cond.RequireScreenLock && !p.ScreenLock {
+					failed = true
+				}
+				if cond.RequireAntivirus != nil && *cond.RequireAntivirus && !p.Antivirus {
+					failed = true
+				}
+				if cond.RequireFirewall != nil && *cond.RequireFirewall && !p.Firewall {
+					failed = true
+				}
+				if cond.RequireMFA != nil && *cond.RequireMFA && !p.MFAEnabled {
+					failed = true
+				}
+
+				if failed {
 					blockedByZTNA[ip] = true
-				} else if autoRestrict && level == "critical" {
-					blockedByZTNA[ip] = true
+					logger.Info("ZTNA policy blocking device",
+						"ip", ip, "action", action, "trust_score", p.TrustScore)
 				}
 			}
-			trustRows.Close()
 		}
+		policyRows.Close()
 	}
 
 	var rules []*commonv1.FirewallRule

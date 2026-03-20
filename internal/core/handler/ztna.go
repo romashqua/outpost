@@ -241,6 +241,11 @@ func (h *ZTNAHandler) updateTrustConfig(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Push firewall update — changing thresholds/auto-block flags affects enforcement.
+	if h.refresher != nil {
+		go h.refresher.RefreshAllFirewalls()
+	}
+
 	respondJSON(w, http.StatusOK, config)
 }
 
@@ -409,6 +414,11 @@ func (h *ZTNAHandler) createPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Push firewall update to all gateways so the new policy takes effect immediately.
+	if h.refresher != nil {
+		go h.refresher.RefreshAllFirewalls()
+	}
+
 	respondJSON(w, http.StatusCreated, p)
 }
 
@@ -518,6 +528,11 @@ func (h *ZTNAHandler) updatePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Push firewall update to all gateways so the updated policy takes effect immediately.
+	if h.refresher != nil {
+		go h.refresher.RefreshAllFirewalls()
+	}
+
 	respondJSON(w, http.StatusOK, p)
 }
 
@@ -548,6 +563,11 @@ func (h *ZTNAHandler) deletePolicy(w http.ResponseWriter, r *http.Request) {
 	if tag.RowsAffected() == 0 {
 		respondError(w, http.StatusNotFound, "policy not found")
 		return
+	}
+
+	// Push firewall update to all gateways so the deleted policy is unenforced immediately.
+	if h.refresher != nil {
+		go h.refresher.RefreshAllFirewalls()
 	}
 
 	w.WriteHeader(http.StatusNoContent)

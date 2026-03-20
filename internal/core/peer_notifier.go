@@ -156,6 +156,30 @@ func (n *hubPeerNotifier) RefreshFirewallForGateways(gatewayIDs []string) {
 	}
 }
 
+// RefreshAllFirewalls recomputes and pushes firewall configs to ALL connected gateways.
+// Used when a global policy (ZTNA) changes that may affect all devices.
+func (n *hubPeerNotifier) RefreshAllFirewalls() {
+	ctx := context.Background()
+	rows, err := n.pool.Query(ctx,
+		`SELECT DISTINCT id::text FROM gateways WHERE is_active = true`)
+	if err != nil {
+		n.logger.Warn("failed to list gateways for global firewall refresh", "error", err)
+		return
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var gwID string
+		if err := rows.Scan(&gwID); err != nil {
+			continue
+		}
+		if fwConfig := buildFirewallConfigFromPool(ctx, n.pool, n.logger, gwID); fwConfig != nil {
+			n.hub.SendFirewallUpdate(gwID, fwConfig)
+		}
+	}
+	n.logger.Info("global firewall refresh triggered (ZTNA policy change)")
+}
+
 // NotifySmartRouteUpdate pushes updated smart route configs to all gateways
 // serving networks associated with the given smart route.
 func (n *hubPeerNotifier) NotifySmartRouteUpdate(smartRouteID string) {

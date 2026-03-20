@@ -18,6 +18,7 @@ import (
 type FirewallRefresher interface {
 	RefreshFirewallForUser(userID string)
 	RefreshFirewallForGroup(groupID string)
+	RefreshAllFirewalls()
 }
 
 // GroupHandler provides CRUD endpoints for group management and ACL assignment.
