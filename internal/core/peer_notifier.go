@@ -293,7 +293,7 @@ func (n *hubS2SNotifier) NotifyS2SUpdate(gatewayID string, tunnelID string, acti
 
 func (n *hubS2SNotifier) buildS2SConfigs(ctx context.Context, gatewayID string) []*gatewayv1.S2STunnelConfig {
 	rows, err := n.pool.Query(ctx,
-		`SELECT t.id, t.name, t.topology
+		`SELECT t.id, t.name, t.topology, m.private_key, m.listen_port
 		 FROM s2s_tunnels t
 		 JOIN s2s_tunnel_members m ON m.tunnel_id = t.id
 		 WHERE m.gateway_id::text = $1 AND t.is_active = true`, gatewayID)
@@ -305,13 +305,15 @@ func (n *hubS2SNotifier) buildS2SConfigs(ctx context.Context, gatewayID string) 
 	var configs []*gatewayv1.S2STunnelConfig
 	for rows.Next() {
 		var tunnelID, tunnelName, topology string
-		if err := rows.Scan(&tunnelID, &tunnelName, &topology); err != nil {
+		var privateKey *string
+		var listenPort int
+		if err := rows.Scan(&tunnelID, &tunnelName, &topology, &privateKey, &listenPort); err != nil {
 			continue
 		}
 
-		// Get all peers (other members of this tunnel).
+		// Get all peers — use S2S-specific public keys (fall back to gateway's main key).
 		peerRows, err := n.pool.Query(ctx,
-			`SELECT m.gateway_id, g.wireguard_pubkey, g.endpoint,
+			`SELECT m.gateway_id, COALESCE(m.public_key, g.wireguard_pubkey), g.endpoint,
 			        ARRAY(SELECT unnest(m.local_subnets)::text)
 			 FROM s2s_tunnel_members m
 			 JOIN gateways g ON g.id = m.gateway_id
@@ -338,11 +340,38 @@ func (n *hubS2SNotifier) buildS2SConfigs(ctx context.Context, gatewayID string) 
 		}
 		peerRows.Close()
 
-		configs = append(configs, &gatewayv1.S2STunnelConfig{
+		// Fetch manual routes and merge into peer AllowedIPs.
+		routeRows, err := n.pool.Query(ctx,
+			`SELECT destination::text, via_gateway::text FROM s2s_routes
+			 WHERE tunnel_id = $1 AND is_active = true
+			 ORDER BY metric ASC`, tunnelID)
+		if err == nil {
+			for routeRows.Next() {
+				var dest, viaGw string
+				if err := routeRows.Scan(&dest, &viaGw); err != nil {
+					continue
+				}
+				for _, p := range peers {
+					if p.GatewayId == viaGw {
+						p.AllowedIps = append(p.AllowedIps, dest)
+						break
+					}
+				}
+			}
+			routeRows.Close()
+		}
+
+		cfg := &gatewayv1.S2STunnelConfig{
 			TunnelId:      tunnelID,
 			InterfaceName: "wg-s2s-" + tunnelName,
 			Peers:         peers,
-		})
+			ListenPort:    int32(listenPort),
+		}
+		if privateKey != nil {
+			cfg.PrivateKey = *privateKey
+		}
+
+		configs = append(configs, cfg)
 	}
 
 	return configs

@@ -165,7 +165,7 @@ func (s *gatewayService) fetchPeers(ctx context.Context, gatewayID string) ([]*c
 // fetchS2STunnels returns S2S tunnel configs for a gateway.
 func (s *gatewayService) fetchS2STunnels(ctx context.Context, gatewayID string) []*gatewayv1.S2STunnelConfig {
 	rows, err := s.pool.Query(ctx,
-		`SELECT t.id, t.name, t.topology
+		`SELECT t.id, t.name, t.topology, m.private_key, m.listen_port
 		 FROM s2s_tunnels t
 		 JOIN s2s_tunnel_members m ON m.tunnel_id = t.id
 		 WHERE m.gateway_id::text = $1 AND t.is_active = true`, gatewayID)
@@ -178,12 +178,15 @@ func (s *gatewayService) fetchS2STunnels(ctx context.Context, gatewayID string) 
 	var configs []*gatewayv1.S2STunnelConfig
 	for rows.Next() {
 		var tunnelID, tunnelName, topology string
-		if err := rows.Scan(&tunnelID, &tunnelName, &topology); err != nil {
+		var privateKey *string
+		var listenPort int
+		if err := rows.Scan(&tunnelID, &tunnelName, &topology, &privateKey, &listenPort); err != nil {
 			continue
 		}
 
+		// Fetch peers — use S2S-specific public keys (not the gateway's main WG key).
 		peerRows, err := s.pool.Query(ctx,
-			`SELECT m.gateway_id, g.wireguard_pubkey, g.endpoint,
+			`SELECT m.gateway_id, COALESCE(m.public_key, g.wireguard_pubkey), g.endpoint,
 			        ARRAY(SELECT unnest(m.local_subnets)::text)
 			 FROM s2s_tunnel_members m
 			 JOIN gateways g ON g.id = m.gateway_id
@@ -210,11 +213,39 @@ func (s *gatewayService) fetchS2STunnels(ctx context.Context, gatewayID string) 
 		}
 		peerRows.Close()
 
-		configs = append(configs, &gatewayv1.S2STunnelConfig{
+		// Fetch manual routes for this tunnel and merge into peer AllowedIPs.
+		routeRows, err := s.pool.Query(ctx,
+			`SELECT destination::text, via_gateway::text FROM s2s_routes
+			 WHERE tunnel_id = $1 AND is_active = true
+			 ORDER BY metric ASC`, tunnelID)
+		if err == nil {
+			for routeRows.Next() {
+				var dest, viaGw string
+				if err := routeRows.Scan(&dest, &viaGw); err != nil {
+					continue
+				}
+				// Add route destination to the AllowedIPs of the via_gateway peer.
+				for _, p := range peers {
+					if p.GatewayId == viaGw {
+						p.AllowedIps = append(p.AllowedIps, dest)
+						break
+					}
+				}
+			}
+			routeRows.Close()
+		}
+
+		cfg := &gatewayv1.S2STunnelConfig{
 			TunnelId:      tunnelID,
 			InterfaceName: "wg-s2s-" + tunnelName,
 			Peers:         peers,
-		})
+			ListenPort:    int32(listenPort),
+		}
+		if privateKey != nil {
+			cfg.PrivateKey = *privateKey
+		}
+
+		configs = append(configs, cfg)
 	}
 
 	return configs
@@ -295,7 +326,7 @@ func (s *gatewayService) Sync(stream grpc.BidiStreamingServer[gatewayv1.GatewayE
 		case event.GetStats() != nil:
 			s.handlePeerStats(stream.Context(), gwID, event.GetStats())
 		case event.GetS2SHealth() != nil:
-			s.logger.Debug("received s2s health report")
+			s.handleS2SHealth(stream.Context(), gwID, event.GetS2SHealth())
 		case event.GetStatus() != nil:
 			s.logger.Debug("received gateway status",
 				"active_peers", event.GetStatus().GetActivePeers())
@@ -358,6 +389,42 @@ func (s *gatewayService) handlePeerStats(ctx context.Context, gatewayID string, 
 		)
 		if err != nil {
 			s.logger.Warn("failed to insert flow_record", "pubkey", pubkey, "error", err)
+		}
+	}
+}
+
+// handleS2SHealth persists S2S tunnel health reports from gateways.
+// Uses upsert to track per-peer health state and consecutive failures.
+func (s *gatewayService) handleS2SHealth(ctx context.Context, gatewayID string, report *gatewayv1.S2SHealthReport) {
+	tunnelID := report.GetTunnelId()
+	remoteGwID := report.GetRemoteGatewayId()
+	isHealthy := report.GetIsHealthy()
+	latencyMs := report.GetLatencyMs()
+
+	s.logger.Debug("processing s2s health report",
+		"gateway", gatewayID, "tunnel", tunnelID,
+		"remote_gateway", remoteGwID, "healthy", isHealthy,
+		"latency_ms", latencyMs)
+
+	if isHealthy {
+		_, err := s.pool.Exec(ctx,
+			`INSERT INTO s2s_tunnel_health (tunnel_id, gateway_id, remote_gateway_id, is_healthy, latency_ms, consecutive_failures, last_check_at, last_healthy_at)
+			 VALUES ($1::uuid, $2::uuid, $3::uuid, true, $4, 0, now(), now())
+			 ON CONFLICT (tunnel_id, gateway_id, remote_gateway_id)
+			 DO UPDATE SET is_healthy = true, latency_ms = $4, consecutive_failures = 0, last_check_at = now(), last_healthy_at = now()`,
+			tunnelID, gatewayID, remoteGwID, latencyMs)
+		if err != nil {
+			s.logger.Warn("failed to upsert s2s health (healthy)", "error", err)
+		}
+	} else {
+		_, err := s.pool.Exec(ctx,
+			`INSERT INTO s2s_tunnel_health (tunnel_id, gateway_id, remote_gateway_id, is_healthy, latency_ms, consecutive_failures, last_check_at)
+			 VALUES ($1::uuid, $2::uuid, $3::uuid, false, 0, 1, now())
+			 ON CONFLICT (tunnel_id, gateway_id, remote_gateway_id)
+			 DO UPDATE SET is_healthy = false, latency_ms = 0, consecutive_failures = s2s_tunnel_health.consecutive_failures + 1, last_check_at = now()`,
+			tunnelID, gatewayID, remoteGwID)
+		if err != nil {
+			s.logger.Warn("failed to upsert s2s health (unhealthy)", "error", err)
 		}
 	}
 }

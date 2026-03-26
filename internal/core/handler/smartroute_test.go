@@ -274,10 +274,10 @@ func TestSmartRouteAddEntry(t *testing.T) {
 	entryID := uuid.New()
 	now := time.Now()
 
-	mock.ExpectQuery(`INSERT INTO smart_route_entries`).
+	mock.ExpectQuery(`WITH inserted AS`).
 		WithArgs(routeID, "domain", "example.com", "direct", (*string)(nil), 100).
-		WillReturnRows(pgxmock.NewRows([]string{"id", "smart_route_id", "entry_type", "value", "action", "proxy_id", "priority", "created_at"}).
-			AddRow(entryID.String(), routeID.String(), "domain", "example.com", "direct", nil, 100, now))
+		WillReturnRows(pgxmock.NewRows([]string{"id", "smart_route_id", "entry_type", "value", "action", "proxy_id", "proxy_name", "priority", "created_at"}).
+			AddRow(entryID.String(), routeID.String(), "domain", "example.com", "direct", nil, nil, 100, now))
 
 	r := chi.NewRouter()
 	r.Post("/smart-routes/{id}/entries", h.addEntry)
@@ -537,10 +537,10 @@ func TestSmartRouteListNetworks(t *testing.T) {
 	routeID := uuid.New()
 	networkID := uuid.New()
 
-	mock.ExpectQuery(`SELECT nsr.network_id, nsr.smart_route_id, n.name`).
+	mock.ExpectQuery(`SELECT nsr.network_id, nsr.smart_route_id, n.name, n.address`).
 		WithArgs(routeID).
-		WillReturnRows(pgxmock.NewRows([]string{"network_id", "smart_route_id", "network_name"}).
-			AddRow(networkID.String(), routeID.String(), "MyNetwork"))
+		WillReturnRows(pgxmock.NewRows([]string{"network_id", "smart_route_id", "network_name", "network_address"}).
+			AddRow(networkID.String(), routeID.String(), "MyNetwork", "10.0.0.0/24"))
 
 	r := chi.NewRouter()
 	r.Get("/smart-routes/{id}/networks", h.listRouteNetworks)

@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/romashqua/outpost/internal/auth"
+	"github.com/romashqua/outpost/internal/wireguard"
 )
 
 // S2SNotifier pushes S2S config updates to connected gateways.
@@ -396,11 +397,23 @@ func (h *S2SHandler) addMember(w http.ResponseWriter, r *http.Request) {
 		subnets = []string{}
 	}
 
+	// Generate WireGuard key pair for this gateway's S2S interface.
+	privKey, err := wireguard.GeneratePrivateKey()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to generate S2S private key")
+		return
+	}
+	pubKey, err := wireguard.PublicKey(privKey)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "failed to derive S2S public key")
+		return
+	}
+
 	_, err = h.pool.Exec(r.Context(),
-		`INSERT INTO s2s_tunnel_members (tunnel_id, gateway_id, local_subnets)
-		 VALUES ($1, $2, $3::cidr[])
+		`INSERT INTO s2s_tunnel_members (tunnel_id, gateway_id, local_subnets, private_key, public_key)
+		 VALUES ($1, $2, $3::cidr[], $4, $5)
 		 ON CONFLICT (tunnel_id, gateway_id) DO UPDATE SET local_subnets = $3::cidr[]`,
-		tunnelID, gatewayID, subnets)
+		tunnelID, gatewayID, subnets, privKey, pubKey)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23503" {

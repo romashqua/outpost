@@ -390,7 +390,22 @@
     "via": "via",
     "invalidPort": "Port must be between 1 and 65535",
     "editRoute": "Edit Route Group",
-    "routeUpdated": "Route group updated"
+    "routeUpdated": "Route group updated",
+    "actionHintProxy": "Traffic will go through the selected proxy server (SOCKS5, HTTP, Shadowsocks, VLESS)",
+    "actionHintDirect": "Traffic will bypass the VPN tunnel and connect directly. For local/trusted resources",
+    "actionHintBlock": "Traffic will be blocked. Useful for ad blocking or restricting access",
+    "priorityHint": "Lower number = higher priority. First match wins",
+    "noProxiesCreateFirst": "No proxy servers configured. Create a proxy on the Proxy Servers tab first",
+    "networks": "Linked Networks",
+    "addNetwork": "Link Network",
+    "removeNetwork": "Unlink Network",
+    "noNetworks": "No linked networks. This route won't apply to any network",
+    "networkAdded": "Network linked",
+    "networkRemoved": "Network unlinked",
+    "selectNetwork": "Select network...",
+    "entryTypeHintDomain": "Exact domain match, e.g. youtube.com",
+    "entryTypeHintCidr": "IP range in CIDR notation, e.g. 10.0.0.0/8",
+    "entryTypeHintSuffix": "Domain suffix (with dot), matches all subdomains, e.g. .google.com"
   },
   "ztna": {
     "title": "Zero Trust Network Access",

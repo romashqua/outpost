@@ -19,7 +19,7 @@
   <img src="https://img.shields.io/badge/PostgreSQL-17-4169E1?style=flat-square&logo=postgresql&logoColor=white" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/%D0%9B%D0%B8%D1%86%D0%B5%D0%BD%D0%B7%D0%B8%D1%8F-Apache%202.0-green?style=flat-square" alt="Лицензия" /></a>
   <a href="https://github.com/romashqua/outpost/stargazers"><img src="https://img.shields.io/github/stars/romashqua/outpost?style=flat-square" alt="Звёзды" /></a>
-  <a href="https://github.com/romashqua/outpost/releases"><img src="https://img.shields.io/github/v/release/romashqua/outpost?style=flat-square&label=Релиз" alt="Релиз" /></a>
+  <a href="https://github.com/romashqua/outpost/releases"><img src="https://img.shields.io/github/v/release/romashqua/outpost?style=flat-square&label=Релиз&include_prereleases" alt="Релиз" /></a>
 </p>
 
 <p align="center">
@@ -129,31 +129,31 @@ docker compose -f deploy/docker/docker-compose.yml up -d
 ## Архитектура
 
 ```
-                         Internet
-                            |
-                   +--------+--------+
-                   |  outpost-proxy  |  DMZ-safe enrollment
-                   |     :8081       |  и auth прокси
-                   +--------+--------+
-                            |
-                   +--------+--------+
-                   |  Load Balancer  |  L4/L7 (nginx, envoy, HAProxy)
-                   +---+--------+---+
-                       |        |
-              +--------+--+  +--+--------+
-              | core-1    |  | core-2    |   N core-ов (stateless)
-              | :8080 HTTP|  | :8080 HTTP|   Redis Pub/Sub для
-              | :50051 gRPC  | :50051 gRPC   cross-core событий
-              +---+----+--+  +--+----+---+
-                  |    |        |    |
-         gRPC streaming     gRPC streaming
-                  |    |        |    |
-              +---+--+ +--+  +-+--+ +---+
-              | GW-1 | | GW-2 |   | GW-3 |  N gateway-ов
-              |:51820| |:51820|   |:51820|  на каждую сеть
-              +------+ +------+   +------+
-                 |        |          |
-              Клиенты  Клиенты    Клиенты
+                          Internet
+                              │
+                   ┌──────────┴──────────┐
+                   │   outpost-proxy     │  DMZ-safe enrollment
+                   │       :8081         │  и auth прокси
+                   └──────────┬──────────┘
+                              │
+                   ┌──────────┴──────────┐
+                   │   Load Balancer     │  L4/L7 (nginx, envoy, HAProxy)
+                   └────┬───────────┬────┘
+                        │           │
+              ┌─────────┴──┐  ┌────┴─────────┐
+              │  core-1    │  │  core-2      │  N core-ов (stateless)
+              │ :8080 HTTP │  │ :8080 HTTP   │  Redis Pub/Sub для
+              │ :50051 gRPC│  │ :50051 gRPC  │  cross-core событий
+              └──┬─────┬───┘  └──┬─────┬─────┘
+                 │     │         │     │
+          gRPC streaming    gRPC streaming
+                 │     │         │     │
+              ┌──┴──┐ ┌┴────┐ ┌─┴───┐
+              │GW-1 │ │GW-2 │ │GW-3 │  N gateway-ов на каждую сеть
+              │51820│ │51820│ │51820│  WireGuard UDP
+              └──┬──┘ └──┬──┘ └──┬──┘
+                 │       │       │
+             Клиенты  Клиенты  Клиенты
 ```
 
 | Компонент | Роль | Порты |
@@ -348,7 +348,7 @@ docker compose -f deploy/docker/docker-compose.yml up -d --build
 
 Все фичи полностью open-source — сейчас и всегда. Без enterprise-модулей. Без пейволлов. Без подвоха.
 
-Монетизация через [Outpost Cloud](https://outpost.dev) (управляемый SaaS), контракты поддержки и профессиональные услуги — не через ограничение open-source кода.
+Монетизация через Outpost Cloud (управляемый SaaS), контракты поддержки и профессиональные услуги — не через ограничение open-source кода.
 
 ---
 

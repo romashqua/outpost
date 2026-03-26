@@ -308,7 +308,7 @@ func TestS2SAddMember(t *testing.T) {
 	gatewayID := uuid.New()
 
 	mock.ExpectExec(`INSERT INTO s2s_tunnel_members`).
-		WithArgs(tunnelID, gatewayID, []string{"192.168.1.0/24"}).
+		WithArgs(tunnelID, gatewayID, []string{"192.168.1.0/24"}, pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnResult(pgxmock.NewResult("INSERT", 1))
 
 	body := fmt.Sprintf(`{"gateway_id":"%s","local_subnets":["192.168.1.0/24"]}`, gatewayID)

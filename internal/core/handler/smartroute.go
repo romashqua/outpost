@@ -423,11 +423,16 @@ func (h *SmartRouteHandler) addEntry(w http.ResponseWriter, r *http.Request) {
 
 	var e smartRouteEntry
 	err = h.pool.QueryRow(r.Context(),
-		`INSERT INTO smart_route_entries (smart_route_id, entry_type, value, action, proxy_id, priority)
-		 VALUES ($1, $2, $3, $4, $5, $6)
-		 RETURNING id, smart_route_id, entry_type, value, action, proxy_id, priority, created_at`,
+		`WITH inserted AS (
+			INSERT INTO smart_route_entries (smart_route_id, entry_type, value, action, proxy_id, priority)
+			VALUES ($1, $2, $3, $4, $5, $6)
+			RETURNING id, smart_route_id, entry_type, value, action, proxy_id, priority, created_at
+		)
+		SELECT i.id, i.smart_route_id, i.entry_type, i.value, i.action, i.proxy_id, p.name, i.priority, i.created_at
+		FROM inserted i
+		LEFT JOIN proxy_servers p ON p.id = i.proxy_id`,
 		routeID, req.EntryType, req.Value, req.Action, req.ProxyID, priority,
-	).Scan(&e.ID, &e.SmartRouteID, &e.EntryType, &e.Value, &e.Action, &e.ProxyID, &e.Priority, &e.CreatedAt)
+	).Scan(&e.ID, &e.SmartRouteID, &e.EntryType, &e.Value, &e.Action, &e.ProxyID, &e.ProxyName, &e.Priority, &e.CreatedAt)
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) {
@@ -754,9 +759,10 @@ func (h *SmartRouteHandler) deleteProxyServer(w http.ResponseWriter, r *http.Req
 // --- Network ↔ Smart Route associations ---
 
 type networkSmartRoute struct {
-	NetworkID    string `json:"network_id"`
-	SmartRouteID string `json:"smart_route_id"`
-	NetworkName  string `json:"network_name"`
+	NetworkID      string `json:"network_id"`
+	SmartRouteID   string `json:"smart_route_id"`
+	NetworkName    string `json:"network_name"`
+	NetworkAddress string `json:"network_address"`
 }
 
 // @Summary List smart route networks
@@ -777,7 +783,7 @@ func (h *SmartRouteHandler) listRouteNetworks(w http.ResponseWriter, r *http.Req
 	}
 
 	rows, err := h.pool.Query(r.Context(),
-		`SELECT nsr.network_id, nsr.smart_route_id, n.name
+		`SELECT nsr.network_id, nsr.smart_route_id, n.name, n.address
 		 FROM network_smart_routes nsr
 		 JOIN networks n ON n.id = nsr.network_id
 		 WHERE nsr.smart_route_id = $1
@@ -791,7 +797,7 @@ func (h *SmartRouteHandler) listRouteNetworks(w http.ResponseWriter, r *http.Req
 	result := make([]networkSmartRoute, 0)
 	for rows.Next() {
 		var nsr networkSmartRoute
-		if err := rows.Scan(&nsr.NetworkID, &nsr.SmartRouteID, &nsr.NetworkName); err != nil {
+		if err := rows.Scan(&nsr.NetworkID, &nsr.SmartRouteID, &nsr.NetworkName, &nsr.NetworkAddress); err != nil {
 			respondError(w, http.StatusInternalServerError, "failed to scan network association")
 			return
 		}

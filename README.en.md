@@ -19,7 +19,7 @@
   <img src="https://img.shields.io/badge/PostgreSQL-17-4169E1?style=flat-square&logo=postgresql&logoColor=white" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-green?style=flat-square" alt="License" /></a>
   <a href="https://github.com/romashqua/outpost/stargazers"><img src="https://img.shields.io/github/stars/romashqua/outpost?style=flat-square" alt="Stars" /></a>
-  <a href="https://github.com/romashqua/outpost/releases"><img src="https://img.shields.io/github/v/release/romashqua/outpost?style=flat-square&label=Release" alt="Release" /></a>
+  <a href="https://github.com/romashqua/outpost/releases"><img src="https://img.shields.io/github/v/release/romashqua/outpost?style=flat-square&label=Release&include_prereleases" alt="Release" /></a>
 </p>
 
 <p align="center">
@@ -129,31 +129,31 @@ That's it. Database migrations run automatically, all services start in the corr
 ## Architecture
 
 ```
-                         Internet
-                            |
-                   +--------+--------+
-                   |  outpost-proxy  |  DMZ-safe enrollment
-                   |     :8081       |  and auth proxy
-                   +--------+--------+
-                            |
-                   +--------+--------+
-                   |  Load Balancer  |  L4/L7 (nginx, envoy, HAProxy)
-                   +---+--------+---+
-                       |        |
-              +--------+--+  +--+--------+
-              | core-1    |  | core-2    |   N cores (stateless)
-              | :8080 HTTP|  | :8080 HTTP|   Redis Pub/Sub for
-              | :50051 gRPC  | :50051 gRPC   cross-core events
-              +---+----+--+  +--+----+---+
-                  |    |        |    |
-         gRPC streaming     gRPC streaming
-                  |    |        |    |
-              +---+--+ +--+  +-+--+ +---+
-              | GW-1 | | GW-2 |   | GW-3 |  N gateways
-              |:51820| |:51820|   |:51820|  per network
-              +------+ +------+   +------+
-                 |        |          |
-              Clients  Clients    Clients
+                          Internet
+                              │
+                   ┌──────────┴──────────┐
+                   │   outpost-proxy     │  DMZ-safe enrollment
+                   │       :8081         │  and auth proxy
+                   └──────────┬──────────┘
+                              │
+                   ┌──────────┴──────────┐
+                   │   Load Balancer     │  L4/L7 (nginx, envoy, HAProxy)
+                   └────┬───────────┬────┘
+                        │           │
+              ┌─────────┴──┐  ┌────┴─────────┐
+              │  core-1    │  │  core-2      │  N cores (stateless)
+              │ :8080 HTTP │  │ :8080 HTTP   │  Redis Pub/Sub for
+              │ :50051 gRPC│  │ :50051 gRPC  │  cross-core events
+              └──┬─────┬───┘  └──┬─────┬─────┘
+                 │     │         │     │
+          gRPC streaming    gRPC streaming
+                 │     │         │     │
+              ┌──┴──┐ ┌┴────┐ ┌─┴───┐
+              │GW-1 │ │GW-2 │ │GW-3 │  N gateways per network
+              │51820│ │51820│ │51820│  WireGuard UDP
+              └──┬──┘ └──┬──┘ └──┬──┘
+                 │       │       │
+             Clients  Clients  Clients
 ```
 
 | Component | Role | Default Ports |
@@ -348,7 +348,7 @@ If you discover a vulnerability, please report it responsibly. See our [Security
 
 All features are and will always be fully open-source. No enterprise tier. No feature gating. No catch.
 
-Monetization is through [Outpost Cloud](https://outpost.dev) (managed SaaS), support contracts, and professional services -- not by restricting open-source code.
+Monetization is through Outpost Cloud (managed SaaS), support contracts, and professional services -- not by restricting open-source code.
 
 ---
 
